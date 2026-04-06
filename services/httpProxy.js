@@ -117,7 +117,7 @@ export class HttpProxyService {
     });
   }
 
-  async getStreamDescriptor({ targetUrl, rangeHeader }) {
+  async getStreamDescriptor({ targetUrl, rangeHeader, requestHeaders = null }) {
     const normalizedUrl = await this.validateTargetUrl(targetUrl);
     const cachedEntry = await this.cacheManager.getHttpCacheEntry(normalizedUrl);
 
@@ -128,20 +128,24 @@ export class HttpProxyService {
 
     return this.getUpstreamStreamDescriptor({
       targetUrl: normalizedUrl,
-      rangeHeader
+      rangeHeader,
+      requestHeaders
     });
   }
 
-  async getUpstreamStreamDescriptor({ targetUrl, rangeHeader }) {
+  async getUpstreamStreamDescriptor({ targetUrl, rangeHeader, requestHeaders = null }) {
     let upstreamResponse;
+
+    const forwardedHeaders = {
+      'accept-encoding': 'identity',
+      ...(requestHeaders || {}),
+      ...(rangeHeader ? { range: rangeHeader } : {})
+    };
 
     try {
       upstreamResponse = await this.client.get(targetUrl, {
         family: 4,
-        headers: {
-          'accept-encoding': 'identity',
-          ...(rangeHeader ? { range: rangeHeader } : {})
-        },
+        headers: forwardedHeaders,
         responseType: 'stream'
       });
     } catch (error) {

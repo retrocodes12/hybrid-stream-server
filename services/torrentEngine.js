@@ -64,6 +64,11 @@ const waitForMetadata = (engine, timeoutMs) =>
 
 const waitForReady = (engine) =>
   new Promise((resolve, reject) => {
+    if (engine.torrent) {
+      resolve();
+      return;
+    }
+
     const handleReady = () => {
       cleanup();
       resolve();
@@ -130,7 +135,7 @@ export const createTorrentSession = async ({
     connections,
     uploads: 0,
     verify: true,
-    dht: false,
+    dht: true,
     tracker: true
   });
 

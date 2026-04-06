@@ -129,7 +129,18 @@ export const enhanceMagnet = (magnet) => {
     parsedUrl.searchParams.append('tr', tracker);
   }
 
-  return parsedUrl.toString();
+  const queryEntries = [];
+
+  for (const [key, value] of parsedUrl.searchParams.entries()) {
+    if (key === 'xt') {
+      queryEntries.push(`xt=${value}`);
+      continue;
+    }
+
+    queryEntries.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+  }
+
+  return `magnet:?${queryEntries.join('&')}`;
 };
 
 export const extractInfoHash = (magnetUri) => {

@@ -3,6 +3,8 @@ import express from 'express';
 import { config } from './config.js';
 import { CacheManager } from './services/cacheManager.js';
 import { HttpProxyService } from './services/httpProxy.js';
+import { ProviderService } from './services/providerService.js';
+import { SourceRegistry } from './services/sourceRegistry.js';
 import { StreamManager, HttpError } from './services/streamManager.js';
 import { TorrentEngineService } from './services/torrentEngine.js';
 import { logger } from './utils/logger.js';
@@ -13,9 +15,17 @@ const bootstrap = async () => {
 
   await cacheManager.initialize();
 
+  const sourceRegistry = new SourceRegistry();
+  const providerService = new ProviderService();
   const torrentEngine = new TorrentEngineService({ cacheManager });
   const httpProxy = new HttpProxyService({ cacheManager, torrentEngine });
-  const streamManager = new StreamManager({ torrentEngine, httpProxy, cacheManager });
+  const streamManager = new StreamManager({
+    torrentEngine,
+    httpProxy,
+    cacheManager,
+    sourceRegistry,
+    providerService
+  });
 
   app.disable('x-powered-by');
   app.set('trust proxy', true);
@@ -36,6 +46,13 @@ const bootstrap = async () => {
     }
   });
 
+  app.get('/providers', (_req, res) => {
+    res.json({
+      providers: providerService.listProviders()
+    });
+  });
+  app.get('/providers/aggregate/streams', streamManager.handleAggregateProviderStreams.bind(streamManager));
+  app.get('/providers/:provider/streams', streamManager.handleProviderStreams.bind(streamManager));
   app.get('/cache/stats', streamManager.handleCacheStats.bind(streamManager));
   app.post('/add-source', streamManager.handleAddSource.bind(streamManager));
   app.get('/stream', streamManager.handleUnifiedStream.bind(streamManager));
@@ -110,6 +127,7 @@ const bootstrap = async () => {
     }
 
     await torrentEngine.close();
+    sourceRegistry.close();
     clearTimeout(forceExitTimer);
     process.exit(0);
   };

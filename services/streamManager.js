@@ -115,10 +115,12 @@ export const parseRangeHeader = (rangeHeader, totalSize) => {
 };
 
 export class StreamManager {
-  constructor({ torrentEngine, httpProxy, cacheManager }) {
+  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService }) {
     this.torrentEngine = torrentEngine;
     this.httpProxy = httpProxy;
     this.cacheManager = cacheManager;
+    this.sourceRegistry = sourceRegistry;
+    this.providerService = providerService;
   }
 
   async handleTorrentStream(req, res, next) {
@@ -161,17 +163,16 @@ export class StreamManager {
 
   async handleAddSource(req, res, next) {
     try {
-      const preparedSource = await this.prepareSource({
+      const streamUrl = await this.createRegisteredStreamUrl(`${req.protocol}://${req.get('host')}`, {
         type: req.body?.type,
-        source: req.body?.source
+        source: req.body?.source,
+        headers: req.body?.headers,
+        metadata: req.body?.metadata
       });
 
-      const streamUrl = new URL('/stream', `${req.protocol}://${req.get('host')}`);
-      streamUrl.searchParams.set('type', preparedSource.type);
-      streamUrl.searchParams.set('source', preparedSource.streamSource ?? preparedSource.source);
-
       res.json({
-        streamUrl: streamUrl.toString()
+        streamUrl: streamUrl.toString(),
+        sourceId: streamUrl.searchParams.get('sourceId')
       });
     } catch (error) {
       logger.error('add-source failed', {
@@ -181,9 +182,114 @@ export class StreamManager {
     }
   }
 
+  async handleProviderStreams(req, res, next) {
+    try {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const provider = req.params.provider;
+      const streams = await this.providerService.getStreams({
+        provider,
+        tmdbId: req.query.tmdbId,
+        mediaType: req.query.mediaType,
+        season: req.query.season,
+        episode: req.query.episode
+      });
+
+      if (streams.length === 0) {
+        res.json({
+          provider,
+          count: 0,
+          streams: []
+        });
+        return;
+      }
+
+      const normalizedStreams = await Promise.all(streams.map(async (stream) => {
+        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+          source: stream.url,
+          headers: stream.headers,
+          metadata: {
+            provider,
+            title: stream.title || null,
+            quality: stream.quality || null,
+            name: stream.name || null
+          }
+        });
+
+        return {
+          ...stream,
+          streamUrl: streamUrl.toString(),
+          sourceId: streamUrl.searchParams.get('sourceId')
+        };
+      }));
+
+      res.json({
+        provider,
+        count: normalizedStreams.length,
+        streams: normalizedStreams
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async handleAggregateProviderStreams(req, res, next) {
+    try {
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const requestedProviders = typeof req.query.providers === 'string'
+        ? req.query.providers.split(',').map((value) => value.trim()).filter(Boolean)
+        : undefined;
+      const result = await this.providerService.getAggregateStreams({
+        providers: requestedProviders,
+        tmdbId: req.query.tmdbId,
+        mediaType: req.query.mediaType,
+        season: req.query.season,
+        episode: req.query.episode
+      });
+
+      if (result.streams.length === 0) {
+        res.json({
+          provider: null,
+          count: 0,
+          tried: result.tried,
+          streams: []
+        });
+        return;
+      }
+
+      const normalizedStreams = await Promise.all(result.streams.map(async (stream) => {
+        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+          source: stream.url,
+          headers: stream.headers,
+          metadata: {
+            provider: stream.provider || null,
+            title: stream.title || null,
+            quality: stream.quality || null,
+            name: stream.name || null
+          }
+        });
+
+        return {
+          ...stream,
+          streamUrl: streamUrl.toString(),
+          sourceId: streamUrl.searchParams.get('sourceId')
+        };
+      }));
+
+      res.json({
+        provider: null,
+        count: normalizedStreams.length,
+        tried: result.tried,
+        streams: normalizedStreams
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async handleUnifiedStream(req, res, next) {
     try {
       const descriptor = await this.handleStreamRequest({
+        sourceId: req.query.sourceId,
         type: req.query.type,
         source: req.query.source,
         rangeHeader: req.headers.range
@@ -229,6 +335,23 @@ export class StreamManager {
   }
 
   async handleStreamRequest(input = {}) {
+    if (typeof input.sourceId === 'string' && input.sourceId.trim()) {
+      const resolved = this.sourceRegistry.get(input.sourceId.trim());
+
+      if (!resolved) {
+        throw createHttpError(404, 'Source id was not found or has expired');
+      }
+
+      return this.handleStreamRequest({
+        ...input,
+        type: resolved.type,
+        source: resolved.source,
+        headers: resolved.headers,
+        metadata: resolved.metadata,
+        sourceId: null
+      });
+    }
+
     const preparedSource = await this.prepareSource(input);
     const sourceType = preparedSource.type;
     const source = preparedSource.source;
@@ -251,7 +374,8 @@ export class StreamManager {
 
     return this.httpProxy.getUpstreamStreamDescriptor({
       targetUrl: source,
-      rangeHeader: input.rangeHeader
+      rangeHeader: input.rangeHeader,
+      requestHeaders: preparedSource.headers
     });
   }
 
@@ -276,6 +400,8 @@ export class StreamManager {
         type: 'http',
         source: normalizedUrl,
         streamSource: normalizedUrl,
+        headers: input.headers && typeof input.headers === 'object' ? { ...input.headers } : null,
+        metadata: input.metadata && typeof input.metadata === 'object' ? { ...input.metadata } : null,
         cached: await this.cacheManager.isCached(this.cacheManager.getHttpCacheKey(normalizedUrl))
       };
     }
@@ -300,8 +426,23 @@ export class StreamManager {
       type: 'torrent',
       source: magnet,
       streamSource: String(rawSource).trim(),
+      headers: null,
+      metadata: input.metadata && typeof input.metadata === 'object' ? { ...input.metadata } : null,
       cached
     };
+  }
+
+  async createRegisteredStreamUrl(baseUrl, input = {}) {
+    const preparedSource = await this.prepareSource(input);
+    const sourceId = this.sourceRegistry.register({
+      type: preparedSource.type,
+      source: preparedSource.source,
+      headers: preparedSource.headers,
+      metadata: preparedSource.metadata
+    });
+    const streamUrl = new URL('/stream', baseUrl);
+    streamUrl.searchParams.set('sourceId', sourceId);
+    return streamUrl;
   }
 
   async sendStream(res, descriptor) {
