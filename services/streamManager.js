@@ -50,6 +50,10 @@ const toStremioCompatibilityScore = (stream) => {
   const title = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
   let score = 0;
 
+  if (stream.magnet || stream.torrent) {
+    return 20 + score;
+  }
+
   if (url.includes('.mp4')) {
     score += 120;
   } else if (url.includes('.m3u8')) {
@@ -85,6 +89,10 @@ const toStremioCompatibilityScore = (stream) => {
 };
 
 const getStreamFormatBadge = (stream) => {
+  if (stream.magnet || stream.torrent) {
+    return '[TORRENT]';
+  }
+
   const url = String(stream.url || '').toLowerCase();
   const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
   const parts = [];
@@ -609,10 +617,11 @@ export class StreamManager {
     const settled = await Promise.all(streams.map(async (stream) => {
       try {
         const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-          source: stream.url,
+          type: stream.magnet || stream.torrent ? 'torrent' : undefined,
+          source: stream.magnet || stream.torrent || stream.url,
           headers: stream.headers,
           deferValidation: true,
-          fallback: stream.magnet || stream.torrent ? {
+          fallback: stream.url && (stream.magnet || stream.torrent) ? {
             type: 'torrent',
             source: stream.magnet || stream.torrent
           } : null,

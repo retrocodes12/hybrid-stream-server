@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { promises as fsPromises } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
@@ -10,14 +12,27 @@ import { createHttpError } from './streamManager.js';
 
 const require = createRequire(import.meta.url);
 const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
+const execFileAsync = promisify(execFile);
 
 const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/All-in-One-Nuvio/providers');
+const LOCAL_PROVIDERS = Object.freeze({
+  'torrent-scraper': {
+    id: 'torrent-scraper',
+    label: 'Torrent Scraper',
+    modulePath: path.resolve(process.cwd(), 'providers/torrent-scraper.cjs'),
+    runnerPath: path.resolve(process.cwd(), 'providers/torrent-scraper-runner.cjs'),
+    invocation: 'subprocess'
+  }
+});
+const PROVIDER_CACHE_VERSION = '3';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
-const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u'];
+const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
+const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u', 'torrent-scraper'];
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   vidlink: 120,
   videasy: 115,
   hdhub4u: 110,
+  'torrent-scraper': 80,
   streamflix: 105,
   netmirror: 100,
   moviebox: 98,
@@ -57,6 +72,10 @@ const discoverProviders = () => {
       label: toLabel(providerId),
       modulePath: path.join(PROVIDERS_DIR, fileName)
     });
+  }
+
+  for (const provider of Object.values(LOCAL_PROVIDERS)) {
+    discovered.set(provider.id, provider);
   }
 
   return discovered;
@@ -126,6 +145,24 @@ const sanitizeHeaders = (headers) => {
 const sanitizeProviderStream = (stream) => {
   if (!stream || typeof stream !== 'object') {
     return null;
+  }
+
+  const normalizedMagnet = typeof stream.magnet === 'string'
+    ? String(stream.magnet).trim()
+    : typeof stream.torrent === 'string'
+      ? String(stream.torrent).trim()
+      : '';
+
+  if (normalizedMagnet) {
+    if (!normalizedMagnet.startsWith('magnet:?')) {
+      return null;
+    }
+
+    return {
+      ...stream,
+      magnet: normalizedMagnet,
+      headers: sanitizeHeaders(stream.headers)
+    };
   }
 
   const normalizedUrl = String(stream.url || '').trim();
@@ -231,7 +268,7 @@ const toProviderScore = (providerId, providerOrder) => {
 const rankStream = (stream, providerOrder) => {
   const providerId = String(stream.provider || '').toLowerCase();
   const qualityScore = toQualityScore(stream.quality);
-  const transportScore = toTransportScore(stream.url);
+  const transportScore = stream.magnet ? 6 : toTransportScore(stream.url);
   const headerScore = toHeaderScore(stream.headers);
   const providerScore = toProviderScore(providerId, providerOrder);
 
@@ -347,6 +384,7 @@ export class ProviderService {
     const normalizedSeason = toOptionalInteger(season);
     const normalizedEpisode = toOptionalInteger(episode);
     const cacheKey = JSON.stringify({
+      version: PROVIDER_CACHE_VERSION,
       provider: providerId,
       tmdbId: normalizedTmdbId,
       mediaType: normalizedMediaType,
@@ -370,12 +408,10 @@ export class ProviderService {
       return this.inFlight.get(cacheKey);
     }
 
-    const providerModule = this.loadProviderModule(providerConfig, providerId);
-
     const execution = this.executeProviderQuery({
       cacheKey,
       providerId,
-      providerModule,
+      providerConfig,
       normalizedTmdbId,
       normalizedMediaType,
       normalizedSeason,
@@ -394,7 +430,7 @@ export class ProviderService {
   async executeProviderQuery({
     cacheKey,
     providerId,
-    providerModule,
+    providerConfig,
     normalizedTmdbId,
     normalizedMediaType,
     normalizedSeason,
@@ -417,12 +453,12 @@ export class ProviderService {
       });
 
       const streams = await Promise.race([
-        Promise.resolve().then(() => providerModule.getStreams(
-          normalizedTmdbId,
-          normalizedMediaType,
-          normalizedSeason,
-          normalizedEpisode
-        )),
+        this.invokeProvider(providerConfig, providerId, {
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          season: normalizedSeason,
+          episode: normalizedEpisode
+        }),
         timeoutPromise
       ]);
 
@@ -443,7 +479,7 @@ export class ProviderService {
         });
       }
 
-      await this.setCachedResult(cacheKey, normalizedStreams);
+      await this.setCachedResult(cacheKey, normalizedStreams, providerId);
       logger.info('provider scrape finished', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -459,7 +495,7 @@ export class ProviderService {
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType
         });
-        await this.setCachedResult(cacheKey, []);
+        await this.setCachedResult(cacheKey, [], providerId);
         return [];
       }
 
@@ -469,7 +505,7 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         error
       });
-      await this.setCachedResult(cacheKey, []);
+      await this.setCachedResult(cacheKey, [], providerId);
       return [];
     } finally {
       clearTimeout(timeoutId);
@@ -525,7 +561,15 @@ export class ProviderService {
     }
   }
 
-  async setCachedResult(cacheKey, streams) {
+  async setCachedResult(cacheKey, streams, providerId = null) {
+    if (streams.length === 0 && providerId && NO_EMPTY_CACHE_PROVIDERS.has(providerId)) {
+      this.resultCache.delete(cacheKey);
+      try {
+        await rm(this.getCacheFilePath(cacheKey), { force: true });
+      } catch {}
+      return;
+    }
+
     const entry = {
       streams: copyStreams(streams),
       expiresAt: Date.now() + config.PROVIDER_CACHE_TTL_SECONDS * 1000
@@ -596,6 +640,45 @@ export class ProviderService {
 
     this.moduleCache.set(providerConfig.modulePath, loadedModule);
     return loadedModule;
+  }
+
+  async invokeProvider(providerConfig, providerId, params) {
+    if (providerConfig.invocation === 'subprocess') {
+      return this.invokeProviderSubprocess(providerConfig, providerId, params);
+    }
+
+    const providerModule = this.loadProviderModule(providerConfig, providerId);
+    return Promise.resolve().then(() => providerModule.getStreams(
+      params.tmdbId,
+      params.mediaType,
+      params.season,
+      params.episode
+    ));
+  }
+
+  async invokeProviderSubprocess(providerConfig, providerId, params) {
+    const { stdout } = await execFileAsync(process.execPath, [
+      providerConfig.runnerPath,
+      String(params.tmdbId),
+      String(params.mediaType),
+      params.season === null ? '' : String(params.season),
+      params.episode === null ? '' : String(params.episode)
+    ], {
+      cwd: process.cwd(),
+      timeout: Math.max(config.PROVIDER_TIMEOUT_SECONDS - 1, 1) * 1000,
+      maxBuffer: 4 * 1024 * 1024,
+      env: process.env
+    });
+
+    try {
+      return JSON.parse(stdout || '[]');
+    } catch (error) {
+      logger.warn('provider subprocess returned invalid JSON', {
+        provider: providerId,
+        error
+      });
+      return [];
+    }
   }
 
   getCacheFilePath(cacheKey) {
