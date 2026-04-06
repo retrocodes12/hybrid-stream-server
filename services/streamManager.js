@@ -45,6 +45,79 @@ const normalizeRequestedType = (type) => {
   return null;
 };
 
+const toStremioCompatibilityScore = (stream) => {
+  const url = String(stream.url || '').toLowerCase();
+  const title = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  let score = 0;
+
+  if (url.includes('.mp4')) {
+    score += 120;
+  } else if (url.includes('.m3u8')) {
+    score += 100;
+  } else if (url.includes('.webm')) {
+    score += 70;
+  } else if (url.includes('.mkv')) {
+    score += 40;
+  } else {
+    score += 50;
+  }
+
+  const qualityMatch = String(stream.quality || '').match(/(\d{3,4})/);
+
+  if (qualityMatch?.[1]) {
+    const quality = Number.parseInt(qualityMatch[1], 10);
+    score += Math.min(quality, 1080);
+  }
+
+  if (/\b(hevc|x265|10bit|hdr|dolby vision|dovi|remux|untouch)\b/u.test(title)) {
+    score -= 400;
+  }
+
+  if (/\b(x264|h264|aac)\b/u.test(title)) {
+    score += 80;
+  }
+
+  if (title.includes('auto')) {
+    score -= 40;
+  }
+
+  return score;
+};
+
+const getStreamFormatBadge = (stream) => {
+  const url = String(stream.url || '').toLowerCase();
+  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  const parts = [];
+
+  if (url.includes('.mp4')) {
+    parts.push('MP4');
+  } else if (url.includes('.m3u8')) {
+    parts.push('HLS');
+  } else if (url.includes('.mkv')) {
+    parts.push('MKV');
+  } else if (url.includes('.webm')) {
+    parts.push('WEBM');
+  } else {
+    parts.push('HTTP');
+  }
+
+  if (/\b(hevc|x265)\b/u.test(text)) {
+    parts.push('HEVC');
+  } else if (/\b(h264|x264)\b/u.test(text)) {
+    parts.push('H264');
+  }
+
+  if (/\b10bit\b/u.test(text)) {
+    parts.push('10BIT');
+  }
+
+  if (/\b(hdr|dolby vision|dovi)\b/u.test(text)) {
+    parts.push('HDR');
+  }
+
+  return `[${parts.join('/')}]`;
+};
+
 export class HttpError extends Error {
   constructor(statusCode, message, details = undefined) {
     super(message);
@@ -188,9 +261,15 @@ export class StreamManager {
       }
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+      normalizedStreams.sort((left, right) =>
+        toStremioCompatibilityScore(right) - toStremioCompatibilityScore(left)
+      );
       const stremioStreams = normalizedStreams.map((stream) => ({
-        name: stream.provider ? `Nuvio ${String(stream.provider).toUpperCase()}` : 'Nuvio',
+        name: stream.provider
+          ? `Nuvio ${String(stream.provider).toUpperCase()} ${getStreamFormatBadge(stream)}`
+          : `Nuvio ${getStreamFormatBadge(stream)}`,
         title: [
+          getStreamFormatBadge(stream),
           stream.name || null,
           stream.quality || null,
           stream.size || null
