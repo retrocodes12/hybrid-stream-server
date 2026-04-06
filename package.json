@@ -1,0 +1,21 @@
+{
+  "name": "hybrid-stream-server",
+  "version": "1.0.0",
+  "description": "Hybrid Node.js streaming server with torrent streaming, HTTP proxying, and disk cache",
+  "type": "module",
+  "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "check:syntax": "node --check index.js && node --check config.js && node --check services/cacheManager.js && node --check services/httpProxy.js && node --check services/streamManager.js && node --check services/torrentEngine.js && node --check utils/magnet.js"
+  },
+  "dependencies": {
+    "axios": "^1.14.0",
+    "express": "^5.2.1",
+    "torrent-stream": "^1.2.1"
+  }
+}
