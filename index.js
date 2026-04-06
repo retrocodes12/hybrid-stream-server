@@ -3,6 +3,7 @@ import express from 'express';
 import { config } from './config.js';
 import { CacheManager } from './services/cacheManager.js';
 import { HttpProxyService } from './services/httpProxy.js';
+import { ImdbResolverService } from './services/imdbResolver.js';
 import { ProviderService } from './services/providerService.js';
 import { SourceRegistry } from './services/sourceRegistry.js';
 import { StreamManager, HttpError } from './services/streamManager.js';
@@ -16,6 +17,7 @@ const bootstrap = async () => {
   await cacheManager.initialize();
 
   const sourceRegistry = new SourceRegistry();
+  const imdbResolver = new ImdbResolverService();
   const providerService = new ProviderService();
   await providerService.initialize();
   const torrentEngine = new TorrentEngineService({ cacheManager });
@@ -25,7 +27,8 @@ const bootstrap = async () => {
     httpProxy,
     cacheManager,
     sourceRegistry,
-    providerService
+    providerService,
+    imdbResolver
   });
 
   app.disable('x-powered-by');
@@ -49,6 +52,10 @@ const bootstrap = async () => {
     }
   });
 
+  app.get('/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/providers', (_req, res) => {
     res.json({
       providers: providerService.listProviders()

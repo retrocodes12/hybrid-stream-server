@@ -116,13 +116,100 @@ export const parseRangeHeader = (rangeHeader, totalSize) => {
 };
 
 export class StreamManager {
-  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService }) {
+  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService, imdbResolver }) {
     this.torrentEngine = torrentEngine;
     this.httpProxy = httpProxy;
     this.cacheManager = cacheManager;
     this.sourceRegistry = sourceRegistry;
     this.providerService = providerService;
+    this.imdbResolver = imdbResolver;
     this.activeStreams = 0;
+  }
+
+  async handleStremioManifest(req, res) {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+
+    res.json({
+      id: config.STREMIO_ADDON_ID,
+      version: '1.0.0',
+      name: config.STREMIO_ADDON_NAME,
+      description: 'Hybrid scraper-backed streaming addon with HTTP and torrent fallback playback',
+      resources: [{
+        name: 'stream',
+        types: ['movie', 'series'],
+        idPrefixes: ['tt']
+      }],
+      types: ['movie', 'series'],
+      idPrefixes: ['tt'],
+      catalogs: [],
+      behaviorHints: {
+        configurable: false
+      },
+      logo: `${baseUrl}/favicon.ico`
+    });
+  }
+
+  async handleStremioStreams(req, res, next) {
+    try {
+      const parsed = this.parseStremioStreamRequest(req.params.type, req.params.id);
+      let tmdbId;
+
+      try {
+        tmdbId = await this.imdbResolver.resolve({
+          imdbId: parsed.imdbId,
+          mediaType: parsed.mediaType
+        });
+      } catch (error) {
+        logger.warn('stremio imdb resolution failed', {
+          imdbId: parsed.imdbId,
+          mediaType: parsed.mediaType,
+          error
+        });
+        res.json({ streams: [] });
+        return;
+      }
+
+      if (!tmdbId) {
+        res.json({ streams: [] });
+        return;
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const result = await this.providerService.getAggregateStreams({
+        tmdbId,
+        mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
+        season: parsed.season,
+        episode: parsed.episode
+      });
+
+      if (result.streams.length === 0) {
+        res.json({ streams: [] });
+        return;
+      }
+
+      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+      const stremioStreams = normalizedStreams.map((stream) => ({
+        name: stream.provider ? `Nuvio ${String(stream.provider).toUpperCase()}` : 'Nuvio',
+        title: [
+          stream.name || null,
+          stream.quality || null,
+          stream.size || null
+        ].filter(Boolean).join(' • '),
+        url: stream.streamUrl,
+        behaviorHints: {
+          notWebReady: false,
+          bingeGroup: parsed.mediaType === 'series'
+            ? `${parsed.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
+            : undefined
+        }
+      }));
+
+      res.json({
+        streams: stremioStreams
+      });
+    } catch (error) {
+      next(error);
+    }
   }
 
   async handleTorrentStream(req, res, next) {
@@ -475,6 +562,39 @@ export class StreamManager {
     }));
 
     return settled.filter(Boolean);
+  }
+
+  parseStremioStreamRequest(type, id) {
+    const normalizedType = String(type || '').trim().toLowerCase();
+    const normalizedId = String(id || '').trim();
+
+    if (normalizedType !== 'movie' && normalizedType !== 'series') {
+      throw createHttpError(400, 'Unsupported Stremio stream type');
+    }
+
+    if (normalizedType === 'movie') {
+      return {
+        mediaType: 'movie',
+        imdbId: normalizedId,
+        season: null,
+        episode: null
+      };
+    }
+
+    const [imdbId, rawSeason, rawEpisode] = normalizedId.split(':');
+    const season = Number.parseInt(rawSeason, 10);
+    const episode = Number.parseInt(rawEpisode, 10);
+
+    if (!imdbId || !Number.isInteger(season) || !Number.isInteger(episode)) {
+      throw createHttpError(400, 'Series stream id must be in imdb:season:episode format');
+    }
+
+    return {
+      mediaType: 'series',
+      imdbId,
+      season,
+      episode
+    };
   }
 
   async prepareFallback(fallbackInput) {
