@@ -8,6 +8,8 @@ import { finished } from 'node:stream/promises';
 
 import axios from 'axios';
 
+import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
 import { createHttpError, parseRangeHeader } from './streamManager.js';
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -94,12 +96,22 @@ export class HttpProxyService {
     this.caBundle = loadSystemCaBundle();
 
     this.client = axios.create({
-      httpAgent: new http.Agent({ keepAlive: true }),
+      httpAgent: new http.Agent({
+        keepAlive: true,
+        keepAliveMsecs: config.HTTP_KEEP_ALIVE_MILLISECONDS,
+        maxSockets: config.HTTP_MAX_SOCKETS,
+        maxFreeSockets: config.HTTP_MAX_FREE_SOCKETS,
+        scheduling: 'lifo'
+      }),
       httpsAgent: new https.Agent({
         keepAlive: true,
+        keepAliveMsecs: config.HTTP_KEEP_ALIVE_MILLISECONDS,
+        maxSockets: config.HTTP_MAX_SOCKETS,
+        maxFreeSockets: config.HTTP_MAX_FREE_SOCKETS,
+        scheduling: 'lifo',
         ...(this.caBundle ? { ca: this.caBundle } : {})
       }),
-      timeout: 30_000,
+      timeout: config.HTTP_STREAM_TIMEOUT_SECONDS * 1000,
       maxRedirects: 3,
       validateStatus: (status) => status >= 200 && status < 300
     });
@@ -114,10 +126,17 @@ export class HttpProxyService {
       return this.createCachedDescriptor(cachedEntry, rangeHeader);
     }
 
+    return this.getUpstreamStreamDescriptor({
+      targetUrl: normalizedUrl,
+      rangeHeader
+    });
+  }
+
+  async getUpstreamStreamDescriptor({ targetUrl, rangeHeader }) {
     let upstreamResponse;
 
     try {
-      upstreamResponse = await this.client.get(normalizedUrl, {
+      upstreamResponse = await this.client.get(targetUrl, {
         family: 4,
         headers: {
           'accept-encoding': 'identity',
@@ -130,6 +149,11 @@ export class HttpProxyService {
     }
 
     const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers);
+    logger.info('http stream started', {
+      targetUrl,
+      statusCode: upstreamResponse.status,
+      rangeRequested: Boolean(rangeHeader)
+    });
     const rangeRequested = Boolean(rangeHeader);
     const contentLength = upstreamResponse.headers['content-length']
       ? Number.parseInt(upstreamResponse.headers['content-length'], 10)
@@ -156,7 +180,7 @@ export class HttpProxyService {
       };
     }
 
-    const cacheWrite = await this.cacheManager.createHttpCacheWrite(normalizedUrl, upstreamResponse.headers);
+    const cacheWrite = await this.cacheManager.createHttpCacheWrite(targetUrl, upstreamResponse.headers);
     const clientStream = new PassThrough();
     const cacheStream = new PassThrough();
     const writerFinished = finished(cacheWrite.writer);
@@ -187,7 +211,10 @@ export class HttpProxyService {
           await cacheWrite.commit();
           await this.cacheManager.pruneCache(this.torrentEngine.getActiveCachePaths());
         } catch (error) {
-          console.error('cache commit failed', error);
+          logger.error('cache commit failed', {
+            targetUrl,
+            error
+          });
           await cacheWrite.abort();
         }
       }
@@ -266,18 +293,40 @@ export class HttpProxyService {
   }
 
   mapUpstreamError(error) {
+    let mappedError;
+
     if (error.response) {
-      return createHttpError(502, `Upstream server returned ${error.response.status}`);
+      mappedError = createHttpError(502, `Upstream server returned ${error.response.status}`);
+      logger.error('http stream failed', {
+        statusCode: error.response.status,
+        error: mappedError
+      });
+      return mappedError;
     }
 
     if (error.code === 'ECONNABORTED') {
-      return createHttpError(504, 'Upstream request timed out');
+      mappedError = createHttpError(504, 'Upstream request timed out');
+      logger.error('http stream failed', {
+        code: error.code,
+        error: mappedError
+      });
+      return mappedError;
     }
 
     if (error.code === 'ERR_BAD_REQUEST' || error.code === 'ERR_BAD_RESPONSE') {
-      return createHttpError(502, 'Invalid upstream response');
+      mappedError = createHttpError(502, 'Invalid upstream response');
+      logger.error('http stream failed', {
+        code: error.code,
+        error: mappedError
+      });
+      return mappedError;
     }
 
-    return createHttpError(502, 'Failed to reach upstream server');
+    mappedError = createHttpError(502, 'Failed to reach upstream server');
+    logger.error('http stream failed', {
+      code: error.code,
+      error: mappedError
+    });
+    return mappedError;
   }
 }

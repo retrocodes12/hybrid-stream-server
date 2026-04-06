@@ -1,21 +1,48 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { promises as fsPromises, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, promises as fsPromises } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 
 import { cacheConfig } from '../config.js';
+import { logger } from '../utils/logger.js';
 
-const { mkdir, readFile, readdir, rm, stat, utimes, writeFile, rename } = fsPromises;
+const {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+  utimes,
+  writeFile
+} = fsPromises;
+
+const SAFE_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]*$/iu;
+
+const nowIso = () => new Date().toISOString();
+
+const isMissingFileError = (error) => error?.code === 'ENOENT';
 
 export class CacheManager {
   constructor() {
+    this.rootDir = path.dirname(cacheConfig.HTTP_CACHE_DIR);
     this.httpCacheDir = cacheConfig.HTTP_CACHE_DIR;
     this.torrentCacheDir = cacheConfig.TORRENT_CACHE_DIR;
+    this.indexDir = path.join(this.rootDir, 'index');
+    this.tempDir = path.join(this.rootDir, 'tmp');
     this.maxCacheSizeBytes = cacheConfig.MAX_CACHE_SIZE_BYTES;
   }
 
   async initialize() {
-    await mkdir(this.httpCacheDir, { recursive: true });
-    await mkdir(this.torrentCacheDir, { recursive: true });
+    await Promise.all([
+      mkdir(this.httpCacheDir, { recursive: true }),
+      mkdir(this.torrentCacheDir, { recursive: true }),
+      mkdir(this.indexDir, { recursive: true }),
+      mkdir(this.tempDir, { recursive: true })
+    ]);
+
     await this.removePartialFiles();
     await this.pruneCache();
   }
@@ -24,100 +51,251 @@ export class CacheManager {
     return crypto.createHash('sha256').update(targetUrl).digest('hex');
   }
 
-  getHttpPaths(targetUrl) {
-    const cacheKey = this.getHttpCacheKey(targetUrl);
-    const tempSuffix = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-
-    return {
-      cacheKey,
-      dataPath: path.join(this.httpCacheDir, `${cacheKey}.bin`),
-      metaPath: path.join(this.httpCacheDir, `${cacheKey}.json`),
-      tempPath: path.join(this.httpCacheDir, `${cacheKey}.${tempSuffix}.part`)
-    };
+  getTorrentPath(infoHash) {
+    return path.join(this.torrentCacheDir, this.toCacheKey(infoHash));
   }
 
-  getTorrentPath(infoHash) {
-    return path.join(this.torrentCacheDir, infoHash);
+  async isCached(id) {
+    const metadata = await this.readMetadata(id);
+
+    if (!metadata) {
+      return false;
+    }
+
+    const targetPath = this.resolveMetadataPath(metadata);
+
+    try {
+      await stat(targetPath);
+      return true;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      await this.removeMetadataByKey(metadata.key);
+      return false;
+    }
+  }
+
+  async getCachedPath(id) {
+    const metadata = await this.readMetadata(id);
+
+    if (!metadata) {
+      return null;
+    }
+
+    const targetPath = this.resolveMetadataPath(metadata);
+
+    try {
+      await stat(targetPath);
+      return targetPath;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      await this.removeMetadataByKey(metadata.key);
+      return null;
+    }
+  }
+
+  async markAccess(id) {
+    const metadata = await this.readMetadata(id);
+
+    if (!metadata) {
+      return false;
+    }
+
+    const targetPath = this.resolveMetadataPath(metadata);
+
+    try {
+      const updatedMetadata = {
+        ...metadata,
+        lastAccessedAt: nowIso()
+      };
+
+      await this.writeMetadata(updatedMetadata);
+      await this.touchFsPath(targetPath);
+      return true;
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      await this.removeMetadataByKey(metadata.key);
+      return false;
+    }
+  }
+
+  async saveToCache(id, sourcePath) {
+    const key = this.toCacheKey(id);
+    const sourceStats = await stat(sourcePath);
+    const kind = sourceStats.isDirectory() ? 'directory' : 'file';
+    const targetPath = this.getTargetPathForSave(key, sourcePath, kind);
+
+    await rm(targetPath, { recursive: true, force: true });
+
+    try {
+      await rename(sourcePath, targetPath);
+    } catch (error) {
+      if (error.code !== 'EXDEV') {
+        throw error;
+      }
+
+      await this.copyIntoCache(sourcePath, targetPath, kind);
+      await rm(sourcePath, { recursive: true, force: true });
+    }
+
+    const size = await this.getPathSize(targetPath, kind);
+    const metadata = {
+      id: String(id).trim(),
+      key,
+      kind,
+      path: path.relative(this.rootDir, targetPath),
+      size,
+      lastAccessedAt: nowIso(),
+      cachedAt: nowIso()
+    };
+
+    await this.writeMetadata(metadata);
+    await this.pruneCache();
+
+    return targetPath;
   }
 
   async getHttpCacheEntry(targetUrl) {
     const cacheKey = this.getHttpCacheKey(targetUrl);
-    const dataPath = path.join(this.httpCacheDir, `${cacheKey}.bin`);
-    const metaPath = path.join(this.httpCacheDir, `${cacheKey}.json`);
+    const metadata = await this.readMetadata(cacheKey);
+
+    if (!metadata) {
+      logger.info('cache miss', {
+        cacheKey,
+        sourceType: 'http'
+      });
+      return null;
+    }
+
+    const dataPath = this.resolveMetadataPath(metadata);
 
     try {
-      const [metadataBuffer, fileStats] = await Promise.all([
-        readFile(metaPath, 'utf8'),
-        stat(dataPath)
-      ]);
+      const fileStats = await stat(dataPath);
+      logger.info('cache hit', {
+        cacheKey,
+        size: fileStats.size,
+        sourceType: 'http'
+      });
 
       return {
         cacheKey,
         dataPath,
-        metaPath,
-        metadata: JSON.parse(metadataBuffer),
+        metaPath: this.getMetadataPath(cacheKey),
+        metadata,
         size: fileStats.size
       };
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        return null;
+      if (!isMissingFileError(error)) {
+        throw error;
       }
 
-      throw error;
+      await this.removeMetadataByKey(cacheKey);
+      logger.info('cache miss', {
+        cacheKey,
+        sourceType: 'http'
+      });
+      return null;
     }
   }
 
   async createHttpCacheWrite(targetUrl, upstreamHeaders) {
-    const paths = this.getHttpPaths(targetUrl);
-    const writer = createWriteStream(paths.tempPath, { flags: 'w' });
-
-    const metadata = {
-      url: targetUrl,
-      cachedAt: new Date().toISOString(),
-      contentType: upstreamHeaders['content-type'] ?? 'application/octet-stream',
-      contentLength: upstreamHeaders['content-length'] ? Number.parseInt(upstreamHeaders['content-length'], 10) : null,
-      etag: upstreamHeaders.etag ?? null,
-      lastModified: upstreamHeaders['last-modified'] ?? null
-    };
+    const cacheKey = this.getHttpCacheKey(targetUrl);
+    const tempPath = path.join(
+      this.tempDir,
+      `${cacheKey}.${Date.now()}-${crypto.randomBytes(4).toString('hex')}.part`
+    );
+    const dataPath = path.join(this.httpCacheDir, `${cacheKey}.bin`);
+    const writer = createWriteStream(tempPath, { flags: 'w' });
 
     return {
       writer,
-      async commit() {
-        await rm(paths.dataPath, { force: true });
-        await rm(paths.metaPath, { force: true });
-        await rename(paths.tempPath, paths.dataPath);
-        await writeFile(paths.metaPath, JSON.stringify(metadata, null, 2));
+      commit: async () => {
+        await rm(dataPath, { force: true });
+        await rename(tempPath, dataPath);
+
+        const fileStats = await stat(dataPath);
+        const metadata = {
+          id: cacheKey,
+          key: cacheKey,
+          kind: 'file',
+          path: path.relative(this.rootDir, dataPath),
+          size: fileStats.size,
+          lastAccessedAt: nowIso(),
+          cachedAt: nowIso(),
+          sourceType: 'http',
+          url: targetUrl,
+          contentType: upstreamHeaders['content-type'] ?? 'application/octet-stream',
+          contentLength: upstreamHeaders['content-length']
+            ? Number.parseInt(upstreamHeaders['content-length'], 10)
+            : fileStats.size,
+          etag: upstreamHeaders.etag ?? null,
+          lastModified: upstreamHeaders['last-modified'] ?? null
+        };
+
+        await this.writeMetadata(metadata);
+        logger.info('cache write committed', {
+          cacheKey,
+          size: fileStats.size,
+          sourceType: 'http'
+        });
       },
-      async abort() {
+      abort: async () => {
         writer.destroy();
-        await rm(paths.tempPath, { force: true });
+        await rm(tempPath, { force: true });
       }
     };
   }
 
   async touchPath(targetPath) {
-    const now = new Date();
+    const normalizedTargetPath = path.resolve(targetPath);
+    const inferredId = this.inferIdFromPath(normalizedTargetPath);
+
+    if (!inferredId) {
+      await this.touchFsPath(normalizedTargetPath);
+      return;
+    }
+
+    const existingMetadata = await this.readMetadata(inferredId);
+
+    if (existingMetadata) {
+      await this.markAccess(inferredId);
+      return;
+    }
 
     try {
-      await utimes(targetPath, now, now);
+      const targetStats = await stat(normalizedTargetPath);
+      const kind = targetStats.isDirectory() ? 'directory' : 'file';
+      const existingSize = existingMetadata?.size ?? (kind === 'file' ? targetStats.size : 0);
+      const metadata = {
+        id: inferredId,
+        key: this.toCacheKey(inferredId),
+        kind,
+        path: path.relative(this.rootDir, normalizedTargetPath),
+        size: existingSize,
+        lastAccessedAt: nowIso(),
+        cachedAt: nowIso()
+      };
+
+      await this.writeMetadata(metadata);
+      await this.touchFsPath(normalizedTargetPath);
     } catch (error) {
-      if (error.code !== 'ENOENT') {
+      if (!isMissingFileError(error)) {
         throw error;
       }
     }
   }
 
-  async removePartialFiles() {
-    const entries = await readdir(this.httpCacheDir, { withFileTypes: true });
-
-    await Promise.all(entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.part'))
-      .map((entry) => rm(path.join(this.httpCacheDir, entry.name), { force: true })));
-  }
-
   async pruneCache(excludedPaths = []) {
-    const entries = await this.collectEntries();
     const excluded = excludedPaths.map((entryPath) => path.resolve(entryPath));
+    const entries = await this.collectEntries();
     let totalSize = entries.reduce((sum, entry) => sum + entry.size, 0);
 
     if (totalSize <= this.maxCacheSizeBytes) {
@@ -125,7 +303,8 @@ export class CacheManager {
     }
 
     const removableEntries = entries
-      .filter((entry) => !excluded.some((excludedPath) => entry.path === excludedPath || entry.path.startsWith(`${excludedPath}${path.sep}`)))
+      .filter((entry) => !excluded.some((excludedPath) =>
+        entry.path === excludedPath || entry.path.startsWith(`${excludedPath}${path.sep}`)))
       .sort((left, right) => left.lastAccessed - right.lastAccessed);
 
     for (const entry of removableEntries) {
@@ -134,11 +313,12 @@ export class CacheManager {
       }
 
       await rm(entry.path, { recursive: true, force: true });
-
-      if (entry.metaPath) {
-        await rm(entry.metaPath, { force: true });
-      }
-
+      await this.removeMetadataByKey(entry.key);
+      logger.info('cache evicted', {
+        cacheKey: entry.key,
+        size: entry.size,
+        type: entry.type
+      });
       totalSize -= entry.size;
     }
   }
@@ -147,7 +327,7 @@ export class CacheManager {
     const entries = await this.collectEntries();
 
     return {
-      cacheDir: path.dirname(this.httpCacheDir),
+      cacheDir: this.rootDir,
       maxCacheSizeBytes: this.maxCacheSizeBytes,
       currentCacheSizeBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
       httpEntries: entries.filter((entry) => entry.type === 'http').length,
@@ -156,87 +336,189 @@ export class CacheManager {
     };
   }
 
-  async collectEntries() {
-    const [httpEntries, torrentEntries] = await Promise.all([
-      this.collectHttpEntries(),
-      this.collectTorrentEntries()
-    ]);
+  toCacheKey(id) {
+    const normalizedId = String(id || '').trim();
 
-    return [...httpEntries, ...torrentEntries];
-  }
-
-  async collectHttpEntries() {
-    const entries = await readdir(this.httpCacheDir, { withFileTypes: true });
-    const metadataFiles = entries.filter((entry) => entry.isFile() && entry.name.endsWith('.json'));
-    const output = [];
-
-    for (const entry of metadataFiles) {
-      const metaPath = path.join(this.httpCacheDir, entry.name);
-      const dataPath = path.join(this.httpCacheDir, entry.name.replace(/\.json$/u, '.bin'));
-
-      try {
-        const [fileStats] = await Promise.all([stat(dataPath), readFile(metaPath, 'utf8')]);
-
-        output.push({
-          type: 'http',
-          path: dataPath,
-          metaPath,
-          size: fileStats.size,
-          lastAccessed: fileStats.mtimeMs
-        });
-      } catch (error) {
-        if (error.code !== 'ENOENT') {
-          throw error;
-        }
-      }
+    if (!normalizedId) {
+      throw new TypeError('Cache id must be a non-empty string');
     }
 
-    return output;
+    if (SAFE_KEY_PATTERN.test(normalizedId)) {
+      return normalizedId.toLowerCase();
+    }
+
+    return crypto.createHash('sha256').update(normalizedId).digest('hex');
   }
 
-  async collectTorrentEntries() {
-    const entries = await readdir(this.torrentCacheDir, { withFileTypes: true });
-    const output = [];
+  getMetadataPath(id) {
+    return path.join(this.indexDir, `${this.toCacheKey(id)}.json`);
+  }
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
+  getTargetPathForSave(key, sourcePath, kind) {
+    if (kind === 'directory') {
+      return path.join(this.torrentCacheDir, key);
+    }
+
+    const extension = path.extname(sourcePath) || '.bin';
+    return path.join(this.httpCacheDir, `${key}${extension}`);
+  }
+
+  resolveMetadataPath(metadata) {
+    return path.resolve(this.rootDir, metadata.path);
+  }
+
+  inferIdFromPath(targetPath) {
+    const normalizedPath = path.resolve(targetPath);
+
+    if (normalizedPath.startsWith(`${this.httpCacheDir}${path.sep}`)) {
+      return path.basename(normalizedPath, path.extname(normalizedPath));
+    }
+
+    if (normalizedPath.startsWith(`${this.torrentCacheDir}${path.sep}`)) {
+      return path.basename(normalizedPath);
+    }
+
+    return null;
+  }
+
+  async readMetadata(id) {
+    const metadataPath = this.getMetadataPath(id);
+
+    try {
+      const buffer = await readFile(metadataPath, 'utf8');
+      return JSON.parse(buffer);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  async writeMetadata(metadata) {
+    const payload = {
+      ...metadata,
+      key: this.toCacheKey(metadata.key ?? metadata.id)
+    };
+
+    await writeFile(this.getMetadataPath(payload.key), JSON.stringify(payload, null, 2));
+  }
+
+  async removeMetadataByKey(key) {
+    await rm(this.getMetadataPath(key), { force: true });
+  }
+
+  async removePartialFiles() {
+    const tempEntries = await readdir(this.tempDir, { withFileTypes: true });
+
+    await Promise.all(tempEntries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.part'))
+      .map((entry) => rm(path.join(this.tempDir, entry.name), { force: true })));
+  }
+
+  async collectEntries() {
+    const metadataFiles = await readdir(this.indexDir, { withFileTypes: true });
+    const entries = [];
+
+    for (const entry of metadataFiles) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) {
         continue;
       }
 
-      const entryPath = path.join(this.torrentCacheDir, entry.name);
-      const [entryStats, size] = await Promise.all([
-        stat(entryPath),
-        this.getDirectorySize(entryPath)
-      ]);
+      const metadataPath = path.join(this.indexDir, entry.name);
 
-      output.push({
-        type: 'torrent',
-        path: entryPath,
-        metaPath: null,
-        size,
-        lastAccessed: entryStats.mtimeMs
-      });
+      try {
+        const metadata = JSON.parse(await readFile(metadataPath, 'utf8'));
+        const targetPath = this.resolveMetadataPath(metadata);
+        const size = metadata.kind === 'file'
+          ? (await stat(targetPath)).size
+          : Number.isFinite(metadata.size) ? metadata.size : 0;
+
+        entries.push({
+          key: metadata.key,
+          type: metadata.path.startsWith('http/') ? 'http' : 'torrent',
+          path: targetPath,
+          size,
+          lastAccessed: Date.parse(metadata.lastAccessedAt || metadata.cachedAt || nowIso()) || 0
+        });
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
+
+        await unlink(metadataPath).catch(() => {});
+      }
     }
 
-    return output;
+    return entries;
   }
 
-  async getDirectorySize(directoryPath) {
-    const entries = await readdir(directoryPath, { withFileTypes: true });
+  async getPathSize(targetPath, kind) {
+    if (kind !== 'directory') {
+      const targetStats = await stat(targetPath);
+      return targetStats.size;
+    }
+
+    const entries = await readdir(targetPath, { withFileTypes: true });
     let total = 0;
 
     for (const entry of entries) {
-      const entryPath = path.join(directoryPath, entry.name);
+      const entryPath = path.join(targetPath, entry.name);
 
       if (entry.isDirectory()) {
-        total += await this.getDirectorySize(entryPath);
+        total += await this.getPathSize(entryPath, 'directory');
         continue;
       }
 
-      const fileStats = await stat(entryPath);
-      total += fileStats.size;
+      const targetStats = await stat(entryPath);
+      total += targetStats.size;
     }
 
     return total;
+  }
+
+  async copyIntoCache(sourcePath, targetPath, kind) {
+    await mkdir(path.dirname(targetPath), { recursive: true });
+
+    if (kind === 'directory') {
+      await mkdir(targetPath, { recursive: true });
+      const entries = await readdir(sourcePath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const sourceEntryPath = path.join(sourcePath, entry.name);
+        const targetEntryPath = path.join(targetPath, entry.name);
+        const entryKind = entry.isDirectory() ? 'directory' : 'file';
+
+        await this.copyIntoCache(sourceEntryPath, targetEntryPath, entryKind);
+      }
+
+      return;
+    }
+
+    try {
+      await copyFile(sourcePath, targetPath);
+    } catch (error) {
+      if (error.code !== 'EFBIG') {
+        throw error;
+      }
+
+      await pipeline(
+        createReadStream(sourcePath),
+        createWriteStream(targetPath, { flags: 'w' })
+      );
+    }
+  }
+
+  async touchFsPath(targetPath) {
+    const now = new Date();
+
+    try {
+      await utimes(targetPath, now, now);
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+    }
   }
 }
