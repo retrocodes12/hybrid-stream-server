@@ -29,15 +29,18 @@ export class CacheManager {
   constructor() {
     this.rootDir = path.dirname(cacheConfig.HTTP_CACHE_DIR);
     this.httpCacheDir = cacheConfig.HTTP_CACHE_DIR;
+    this.providerCacheDir = cacheConfig.PROVIDER_CACHE_DIR;
     this.torrentCacheDir = cacheConfig.TORRENT_CACHE_DIR;
     this.indexDir = path.join(this.rootDir, 'index');
     this.tempDir = path.join(this.rootDir, 'tmp');
     this.maxCacheSizeBytes = cacheConfig.MAX_CACHE_SIZE_BYTES;
+    this.reservedCacheBytes = 0;
   }
 
   async initialize() {
     await Promise.all([
       mkdir(this.httpCacheDir, { recursive: true }),
+      mkdir(this.providerCacheDir, { recursive: true }),
       mkdir(this.torrentCacheDir, { recursive: true }),
       mkdir(this.indexDir, { recursive: true }),
       mkdir(this.tempDir, { recursive: true })
@@ -132,35 +135,45 @@ export class CacheManager {
     const sourceStats = await stat(sourcePath);
     const kind = sourceStats.isDirectory() ? 'directory' : 'file';
     const targetPath = this.getTargetPathForSave(key, sourcePath, kind);
+    const sourceSize = kind === 'file' ? sourceStats.size : await this.getPathSize(sourcePath, kind);
+    const reservation = await this.reserveCacheSpace(sourceSize, [targetPath]);
 
-    await rm(targetPath, { recursive: true, force: true });
-
-    try {
-      await rename(sourcePath, targetPath);
-    } catch (error) {
-      if (error.code !== 'EXDEV') {
-        throw error;
-      }
-
-      await this.copyIntoCache(sourcePath, targetPath, kind);
-      await rm(sourcePath, { recursive: true, force: true });
+    if (!reservation) {
+      throw new Error('Cache hard limit reached');
     }
 
-    const size = await this.getPathSize(targetPath, kind);
-    const metadata = {
-      id: String(id).trim(),
-      key,
-      kind,
-      path: path.relative(this.rootDir, targetPath),
-      size,
-      lastAccessedAt: nowIso(),
-      cachedAt: nowIso()
-    };
+    try {
+      await rm(targetPath, { recursive: true, force: true });
 
-    await this.writeMetadata(metadata);
-    await this.pruneCache();
+      try {
+        await rename(sourcePath, targetPath);
+      } catch (error) {
+        if (error.code !== 'EXDEV') {
+          throw error;
+        }
 
-    return targetPath;
+        await this.copyIntoCache(sourcePath, targetPath, kind);
+        await rm(sourcePath, { recursive: true, force: true });
+      }
+
+      const size = await this.getPathSize(targetPath, kind);
+      const metadata = {
+        id: String(id).trim(),
+        key,
+        kind,
+        path: path.relative(this.rootDir, targetPath),
+        size,
+        lastAccessedAt: nowIso(),
+        cachedAt: nowIso()
+      };
+
+      await this.writeMetadata(metadata);
+      await this.pruneCache();
+
+      return targetPath;
+    } finally {
+      reservation.release();
+    }
   }
 
   async getHttpCacheEntry(targetUrl) {
@@ -214,42 +227,71 @@ export class CacheManager {
     );
     const dataPath = path.join(this.httpCacheDir, `${cacheKey}.bin`);
     const writer = createWriteStream(tempPath, { flags: 'w' });
+    const expectedSize = upstreamHeaders['content-length']
+      ? Number.parseInt(upstreamHeaders['content-length'], 10)
+      : null;
+
+    if (!Number.isInteger(expectedSize) || expectedSize <= 0) {
+      writer.destroy();
+      await rm(tempPath, { force: true });
+      return null;
+    }
+
+    const reservation = await this.reserveCacheSpace(expectedSize, [dataPath]);
+
+    if (!reservation) {
+      writer.destroy();
+      await rm(tempPath, { force: true });
+      logger.warn('cache write skipped due to hard limit', {
+        cacheKey,
+        expectedSize
+      });
+      return null;
+    }
 
     return {
       writer,
       commit: async () => {
-        await rm(dataPath, { force: true });
-        await rename(tempPath, dataPath);
+        try {
+          await rm(dataPath, { force: true });
+          await rename(tempPath, dataPath);
 
-        const fileStats = await stat(dataPath);
-        const metadata = {
-          id: cacheKey,
-          key: cacheKey,
-          kind: 'file',
-          path: path.relative(this.rootDir, dataPath),
-          size: fileStats.size,
-          lastAccessedAt: nowIso(),
-          cachedAt: nowIso(),
-          sourceType: 'http',
-          url: targetUrl,
-          contentType: upstreamHeaders['content-type'] ?? 'application/octet-stream',
-          contentLength: upstreamHeaders['content-length']
-            ? Number.parseInt(upstreamHeaders['content-length'], 10)
-            : fileStats.size,
-          etag: upstreamHeaders.etag ?? null,
-          lastModified: upstreamHeaders['last-modified'] ?? null
-        };
+          const fileStats = await stat(dataPath);
+          const metadata = {
+            id: cacheKey,
+            key: cacheKey,
+            kind: 'file',
+            path: path.relative(this.rootDir, dataPath),
+            size: fileStats.size,
+            lastAccessedAt: nowIso(),
+            cachedAt: nowIso(),
+            sourceType: 'http',
+            url: targetUrl,
+            contentType: upstreamHeaders['content-type'] ?? 'application/octet-stream',
+            contentLength: upstreamHeaders['content-length']
+              ? Number.parseInt(upstreamHeaders['content-length'], 10)
+              : fileStats.size,
+            etag: upstreamHeaders.etag ?? null,
+            lastModified: upstreamHeaders['last-modified'] ?? null
+          };
 
-        await this.writeMetadata(metadata);
-        logger.info('cache write committed', {
-          cacheKey,
-          size: fileStats.size,
-          sourceType: 'http'
-        });
+          await this.writeMetadata(metadata);
+          logger.info('cache write committed', {
+            cacheKey,
+            size: fileStats.size,
+            sourceType: 'http'
+          });
+        } finally {
+          reservation.release();
+        }
       },
       abort: async () => {
-        writer.destroy();
-        await rm(tempPath, { force: true });
+        try {
+          writer.destroy();
+          await rm(tempPath, { force: true });
+        } finally {
+          reservation.release();
+        }
       }
     };
   }
@@ -293,12 +335,12 @@ export class CacheManager {
     }
   }
 
-  async pruneCache(excludedPaths = []) {
+  async pruneCache(excludedPaths = [], targetSizeBytes = this.maxCacheSizeBytes) {
     const excluded = excludedPaths.map((entryPath) => path.resolve(entryPath));
     const entries = await this.collectEntries();
     let totalSize = entries.reduce((sum, entry) => sum + entry.size, 0);
 
-    if (totalSize <= this.maxCacheSizeBytes) {
+    if (totalSize <= targetSizeBytes) {
       return;
     }
 
@@ -308,7 +350,7 @@ export class CacheManager {
       .sort((left, right) => left.lastAccessed - right.lastAccessed);
 
     for (const entry of removableEntries) {
-      if (totalSize <= this.maxCacheSizeBytes) {
+      if (totalSize <= targetSizeBytes) {
         break;
       }
 
@@ -331,6 +373,7 @@ export class CacheManager {
       maxCacheSizeBytes: this.maxCacheSizeBytes,
       currentCacheSizeBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
       httpEntries: entries.filter((entry) => entry.type === 'http').length,
+      providerEntries: entries.filter((entry) => entry.type === 'provider').length,
       torrentEntries: entries.filter((entry) => entry.type === 'torrent').length,
       activeTorrentEntries: activeTorrentPaths.length
     };
@@ -419,7 +462,7 @@ export class CacheManager {
 
   async collectEntries() {
     const metadataFiles = await readdir(this.indexDir, { withFileTypes: true });
-    const entries = [];
+    const entries = await this.collectProviderEntries();
 
     for (const entry of metadataFiles) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) {
@@ -452,6 +495,47 @@ export class CacheManager {
     }
 
     return entries;
+  }
+
+  async collectProviderEntries() {
+    let entries = [];
+
+    try {
+      entries = await readdir(this.providerCacheDir, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return [];
+      }
+
+      throw error;
+    }
+
+    const output = [];
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) {
+        continue;
+      }
+
+      const entryPath = path.join(this.providerCacheDir, entry.name);
+
+      try {
+        const fileStats = await stat(entryPath);
+        output.push({
+          key: entry.name.replace(/\.json$/u, ''),
+          type: 'provider',
+          path: entryPath,
+          size: fileStats.size,
+          lastAccessed: fileStats.mtimeMs
+        });
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return output;
   }
 
   async getPathSize(targetPath, kind) {
@@ -520,5 +604,49 @@ export class CacheManager {
         throw error;
       }
     }
+  }
+
+  async reserveCacheSpace(sizeBytes, excludedPaths = []) {
+    if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
+      return {
+        release() {}
+      };
+    }
+
+    if (sizeBytes > this.maxCacheSizeBytes) {
+      return null;
+    }
+
+    const entries = await this.collectEntries();
+    const currentSize = entries.reduce((sum, entry) => sum + entry.size, 0);
+    const targetSize = this.maxCacheSizeBytes - sizeBytes - this.reservedCacheBytes;
+
+    if (targetSize < 0) {
+      return null;
+    }
+
+    await this.pruneCache(excludedPaths, targetSize);
+
+    const refreshedEntries = await this.collectEntries();
+    const refreshedSize = refreshedEntries.reduce((sum, entry) => sum + entry.size, 0);
+
+    if (refreshedSize + this.reservedCacheBytes + sizeBytes > this.maxCacheSizeBytes) {
+      return null;
+    }
+
+    this.reservedCacheBytes += sizeBytes;
+
+    let released = false;
+
+    return {
+      release: () => {
+        if (released) {
+          return;
+        }
+
+        released = true;
+        this.reservedCacheBytes = Math.max(this.reservedCacheBytes - sizeBytes, 0);
+      }
+    };
   }
 }

@@ -15,7 +15,7 @@ export class SourceRegistry {
     this.cleanupTimer.unref();
   }
 
-  register({ type, source, headers = null, metadata = null }) {
+  register({ type, source, headers = null, metadata = null, fallback = null }) {
     const id = crypto.randomBytes(12).toString('hex');
     const expiresAt = Date.now() + this.ttlMs;
 
@@ -24,6 +24,12 @@ export class SourceRegistry {
       source,
       headers: headers && Object.keys(headers).length > 0 ? { ...headers } : null,
       metadata: metadata ? { ...metadata } : null,
+      fallback: fallback ? {
+        type: fallback.type,
+        source: fallback.source,
+        headers: fallback.headers && Object.keys(fallback.headers).length > 0 ? { ...fallback.headers } : null,
+        metadata: fallback.metadata ? { ...fallback.metadata } : null
+      } : null,
       expiresAt,
       createdAt: Date.now(),
       lastAccessedAt: Date.now()
@@ -48,7 +54,13 @@ export class SourceRegistry {
     return {
       ...entry,
       headers: entry.headers ? { ...entry.headers } : null,
-      metadata: entry.metadata ? { ...entry.metadata } : null
+      metadata: entry.metadata ? { ...entry.metadata } : null,
+      fallback: entry.fallback ? {
+        type: entry.fallback.type,
+        source: entry.fallback.source,
+        headers: entry.fallback.headers ? { ...entry.fallback.headers } : null,
+        metadata: entry.fallback.metadata ? { ...entry.fallback.metadata } : null
+      } : null
     };
   }
 

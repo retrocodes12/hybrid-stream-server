@@ -1,4 +1,5 @@
 import { pipeline } from 'node:stream/promises';
+import { config } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
 
@@ -121,6 +122,7 @@ export class StreamManager {
     this.cacheManager = cacheManager;
     this.sourceRegistry = sourceRegistry;
     this.providerService = providerService;
+    this.activeStreams = 0;
   }
 
   async handleTorrentStream(req, res, next) {
@@ -314,6 +316,7 @@ export class StreamManager {
         source: resolved.source,
         headers: resolved.headers,
         metadata: resolved.metadata,
+        fallback: resolved.fallback,
         sourceId: null
       });
     }
@@ -321,6 +324,7 @@ export class StreamManager {
     const preparedSource = await this.prepareSource(input);
     const sourceType = preparedSource.type;
     const source = preparedSource.source;
+    const fallback = preparedSource.fallback;
 
     if (sourceType === 'torrent') {
       return this.torrentEngine.getStreamDescriptor({
@@ -338,11 +342,30 @@ export class StreamManager {
       return this.httpProxy.createCachedDescriptor(cachedEntry, input.rangeHeader);
     }
 
-    return this.httpProxy.getUpstreamStreamDescriptor({
-      targetUrl: source,
-      rangeHeader: input.rangeHeader,
-      requestHeaders: preparedSource.headers
-    });
+    try {
+      return await this.httpProxy.getUpstreamStreamDescriptor({
+        targetUrl: source,
+        rangeHeader: input.rangeHeader,
+        requestHeaders: preparedSource.headers
+      });
+    } catch (error) {
+      if (fallback?.type === 'torrent') {
+        logger.warn('http source failed, falling back to torrent', {
+          source,
+          fallbackSource: fallback.source,
+          error
+        });
+
+        return this.torrentEngine.getStreamDescriptor({
+          magnet: fallback.source,
+          fileIndex: input.fileIndex,
+          fileName: input.fileName,
+          rangeHeader: input.rangeHeader
+        });
+      }
+
+      throw error;
+    }
   }
 
   async prepareSource(input = {}) {
@@ -360,7 +383,9 @@ export class StreamManager {
     }
 
     if (normalizedDetectedType === 'http') {
-      const normalizedUrl = await this.httpProxy.validateTargetUrl(rawSource);
+      const normalizedUrl = input.deferValidation
+        ? this.normalizeHttpSource(rawSource)
+        : await this.httpProxy.validateTargetUrl(rawSource);
 
       return {
         type: 'http',
@@ -368,6 +393,7 @@ export class StreamManager {
         streamSource: normalizedUrl,
         headers: input.headers && typeof input.headers === 'object' ? { ...input.headers } : null,
         metadata: input.metadata && typeof input.metadata === 'object' ? { ...input.metadata } : null,
+        fallback: await this.prepareFallback(input.fallback),
         cached: await this.cacheManager.isCached(this.cacheManager.getHttpCacheKey(normalizedUrl))
       };
     }
@@ -394,6 +420,7 @@ export class StreamManager {
       streamSource: String(rawSource).trim(),
       headers: null,
       metadata: input.metadata && typeof input.metadata === 'object' ? { ...input.metadata } : null,
+      fallback: null,
       cached
     };
   }
@@ -404,7 +431,8 @@ export class StreamManager {
       type: preparedSource.type,
       source: preparedSource.source,
       headers: preparedSource.headers,
-      metadata: preparedSource.metadata
+      metadata: preparedSource.metadata,
+      fallback: preparedSource.fallback
     });
     const streamUrl = new URL('/stream', baseUrl);
     streamUrl.searchParams.set('sourceId', sourceId);
@@ -417,6 +445,11 @@ export class StreamManager {
         const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
           source: stream.url,
           headers: stream.headers,
+          deferValidation: true,
+          fallback: stream.magnet || stream.torrent ? {
+            type: 'torrent',
+            source: stream.magnet || stream.torrent
+          } : null,
           metadata: {
             provider: stream.provider || fallbackProvider,
             title: stream.title || null,
@@ -444,7 +477,70 @@ export class StreamManager {
     return settled.filter(Boolean);
   }
 
+  async prepareFallback(fallbackInput) {
+    if (!fallbackInput || typeof fallbackInput !== 'object') {
+      return null;
+    }
+
+    const fallbackType = normalizeRequestedType(fallbackInput.type);
+
+    if (fallbackType !== 'torrent' || typeof fallbackInput.source !== 'string') {
+      return null;
+    }
+
+    let magnet;
+
+    try {
+      magnet = enhanceMagnet(fallbackInput.source);
+    } catch {
+      return null;
+    }
+
+    const infoHash = extractInfoHash(magnet);
+
+    if (!infoHash) {
+      return null;
+    }
+
+    return {
+      type: 'torrent',
+      source: magnet,
+      headers: null,
+      metadata: fallbackInput.metadata && typeof fallbackInput.metadata === 'object'
+        ? { ...fallbackInput.metadata }
+        : null
+    };
+  }
+
+  normalizeHttpSource(source) {
+    let parsedUrl;
+
+    try {
+      parsedUrl = new URL(String(source || '').trim());
+    } catch {
+      throw createHttpError(400, 'Invalid upstream URL');
+    }
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw createHttpError(400, 'Only HTTP and HTTPS upstream URLs are supported');
+    }
+
+    if (!parsedUrl.hostname) {
+      throw createHttpError(400, 'Invalid upstream URL');
+    }
+
+    return parsedUrl.toString();
+  }
+
   async sendStream(res, descriptor) {
+    if (this.activeStreams >= config.MAX_ACTIVE_STREAMS) {
+      logger.warn('stream rejected due to active stream limit', {
+        activeStreams: this.activeStreams,
+        maxActiveStreams: config.MAX_ACTIVE_STREAMS
+      });
+      throw createHttpError(503, 'Server is at active stream capacity');
+    }
+
     const {
       stream,
       statusCode = 200,
@@ -453,6 +549,7 @@ export class StreamManager {
     } = descriptor;
 
     let completed = false;
+    this.activeStreams += 1;
 
     try {
       res.status(statusCode);
@@ -467,10 +564,13 @@ export class StreamManager {
       completed = true;
     } catch (error) {
       logger.error('stream pipeline failed', {
+        activeStreams: this.activeStreams,
         error
       });
       throw error;
     } finally {
+      this.activeStreams = Math.max(this.activeStreams - 1, 0);
+
       if (typeof cleanup === 'function') {
         await cleanup({ completed });
       }

@@ -45,11 +45,13 @@ export const config = Object.freeze({
   HTTP_KEEP_ALIVE_MILLISECONDS: toPositiveInteger(process.env.HTTP_KEEP_ALIVE_MILLISECONDS, 1000),
   PROVIDER_TIMEOUT_SECONDS: toPositiveInteger(process.env.PROVIDER_TIMEOUT_SECONDS, 10),
   PROVIDER_CACHE_TTL_SECONDS: toPositiveInteger(process.env.PROVIDER_CACHE_TTL_SECONDS, 300),
-  PROVIDER_MAX_CONCURRENCY: toBoundedInteger(process.env.PROVIDER_MAX_CONCURRENCY, 4, 1, 8)
+  PROVIDER_MAX_CONCURRENCY: toBoundedInteger(process.env.PROVIDER_MAX_CONCURRENCY, 4, 1, 8),
+  MAX_ACTIVE_STREAMS: toBoundedInteger(process.env.MAX_ACTIVE_STREAMS, 8, 1, 32)
 });
 
 export const cacheConfig = Object.freeze({
   HTTP_CACHE_DIR: path.join(config.CACHE_DIR, 'http'),
+  PROVIDER_CACHE_DIR: path.join(config.CACHE_DIR, 'provider-results'),
   TORRENT_CACHE_DIR: path.join(config.CACHE_DIR, 'torrents'),
   MAX_CACHE_SIZE_BYTES: Math.floor(config.MAX_CACHE_SIZE_GB * 1024 * 1024 * 1024)
 });

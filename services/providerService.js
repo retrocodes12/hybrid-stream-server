@@ -1,16 +1,33 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { promises as fsPromises } from 'node:fs';
 
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createHttpError } from './streamManager.js';
 
 const require = createRequire(import.meta.url);
+const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
 
 const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/All-in-One-Nuvio/providers');
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u'];
+const PROVIDER_RELIABILITY_SCORES = Object.freeze({
+  vidlink: 120,
+  videasy: 115,
+  hdhub4u: 110,
+  streamflix: 105,
+  netmirror: 100,
+  moviebox: 98,
+  movix: 96,
+  dooflix: 94,
+  vixsrc: 92,
+  hdmovie2: 90,
+  lamovie: 88,
+  purstream: 86
+});
 
 const toLabel = (providerId) =>
   providerId
@@ -79,12 +96,160 @@ const mapConcurrent = async (items, concurrency, iteratee) => {
   return results;
 };
 
+const copyStreams = (streams) => streams.map((stream) => ({ ...stream }));
+
+const sanitizeHeaders = (headers) => {
+  if (!headers || typeof headers !== 'object') {
+    return null;
+  }
+
+  const sanitized = {};
+
+  for (const [headerName, headerValue] of Object.entries(headers)) {
+    if (typeof headerName !== 'string' || typeof headerValue !== 'string') {
+      continue;
+    }
+
+    const normalizedName = headerName.trim();
+    const normalizedValue = headerValue.trim();
+
+    if (!normalizedName || !normalizedValue) {
+      continue;
+    }
+
+    sanitized[normalizedName] = normalizedValue;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+};
+
+const sanitizeProviderStream = (stream) => {
+  if (!stream || typeof stream !== 'object') {
+    return null;
+  }
+
+  const normalizedUrl = String(stream.url || '').trim();
+
+  if (!normalizedUrl) {
+    return null;
+  }
+
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(normalizedUrl);
+  } catch {
+    return null;
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return null;
+  }
+
+  return {
+    ...stream,
+    url: parsedUrl.toString(),
+    headers: sanitizeHeaders(stream.headers)
+  };
+};
+
+const toQualityScore = (quality) => {
+  const normalized = String(quality || '').trim().toLowerCase();
+
+  if (!normalized) {
+    return 0;
+  }
+
+  if (normalized === '4k') {
+    return 2160;
+  }
+
+  if (normalized === 'auto' || normalized === 'adaptive') {
+    return 850;
+  }
+
+  const match = normalized.match(/(\d{3,4})/);
+
+  if (match?.[1]) {
+    return Number.parseInt(match[1], 10);
+  }
+
+  return 0;
+};
+
+const toTransportScore = (url) => {
+  const normalized = String(url || '').toLowerCase();
+
+  if (normalized.includes('.mp4') || normalized.includes('.mkv') || normalized.includes('.avi') || normalized.includes('.webm')) {
+    return 40;
+  }
+
+  if (normalized.includes('.m3u8')) {
+    return 32;
+  }
+
+  if (normalized.includes('pixeldrain') || normalized.includes('vidlink') || normalized.includes('videasy')) {
+    return 24;
+  }
+
+  return 10;
+};
+
+const toHeaderScore = (headers) => {
+  if (!headers || typeof headers !== 'object') {
+    return 0;
+  }
+
+  const headerNames = Object.keys(headers).map((headerName) => headerName.toLowerCase());
+  let score = 0;
+
+  if (headerNames.includes('referer')) {
+    score += 2;
+  }
+
+  if (headerNames.includes('user-agent')) {
+    score += 1;
+  }
+
+  return score;
+};
+
+const toProviderScore = (providerId, providerOrder) => {
+  if (Object.hasOwn(PROVIDER_RELIABILITY_SCORES, providerId)) {
+    return PROVIDER_RELIABILITY_SCORES[providerId];
+  }
+
+  const index = providerOrder.indexOf(providerId);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  return Math.max(60 - index, 1);
+};
+
+const rankStream = (stream, providerOrder) => {
+  const providerId = String(stream.provider || '').toLowerCase();
+  const qualityScore = toQualityScore(stream.quality);
+  const transportScore = toTransportScore(stream.url);
+  const headerScore = toHeaderScore(stream.headers);
+  const providerScore = toProviderScore(providerId, providerOrder);
+
+  return (providerScore * 10000) + (qualityScore * 100) + (transportScore * 10) + headerScore;
+};
+
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
+    this.providerCacheDir = path.join(config.CACHE_DIR, 'provider-results');
     this.moduleCache = new Map();
     this.resultCache = new Map();
     this.inFlight = new Map();
+  }
+
+  async initialize() {
+    await mkdir(this.providerCacheDir, { recursive: true });
+    await this.removeExpiredDiskEntries();
   }
 
   listProviders() {
@@ -140,6 +305,18 @@ export class ProviderService {
       }
     }
 
+    mergedStreams.sort((left, right) => {
+      const scoreDelta = rankStream(right, normalizedProviders) - rankStream(left, normalizedProviders);
+
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+
+      return String(left.name || left.title || left.url).localeCompare(
+        String(right.name || right.title || right.url)
+      );
+    });
+
     return {
       providers: normalizedProviders,
       tried,
@@ -177,7 +354,7 @@ export class ProviderService {
       episode: normalizedEpisode
     });
 
-    const cached = this.getCachedResult(cacheKey);
+    const cached = await this.getCachedResult(cacheKey);
 
     if (cached) {
       logger.info('provider cache hit', {
@@ -253,14 +430,20 @@ export class ProviderService {
         throw createHttpError(502, `Provider ${providerId} returned an invalid stream payload`);
       }
 
-      const normalizedStreams = streams.filter((stream) =>
-        stream
-        && typeof stream === 'object'
-        && typeof stream.url === 'string'
-        && stream.url.trim()
-      );
+      const normalizedStreams = streams
+        .map((stream) => sanitizeProviderStream(stream))
+        .filter(Boolean);
 
-      this.setCachedResult(cacheKey, normalizedStreams);
+      if (normalizedStreams.length !== streams.length) {
+        logger.warn('provider returned invalid streams', {
+          provider: providerId,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          droppedCount: streams.length - normalizedStreams.length
+        });
+      }
+
+      await this.setCachedResult(cacheKey, normalizedStreams);
       logger.info('provider scrape finished', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -276,7 +459,7 @@ export class ProviderService {
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType
         });
-        this.setCachedResult(cacheKey, []);
+        await this.setCachedResult(cacheKey, []);
         return [];
       }
 
@@ -286,33 +469,78 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         error
       });
-      this.setCachedResult(cacheKey, []);
+      await this.setCachedResult(cacheKey, []);
       return [];
     } finally {
       clearTimeout(timeoutId);
     }
   }
 
-  getCachedResult(cacheKey) {
+  async getCachedResult(cacheKey) {
     const entry = this.resultCache.get(cacheKey);
 
     if (!entry) {
-      return null;
+      return this.getDiskCachedResult(cacheKey);
     }
 
     if (entry.expiresAt <= Date.now()) {
       this.resultCache.delete(cacheKey);
-      return null;
+      return this.getDiskCachedResult(cacheKey);
     }
 
-    return entry.streams.map((stream) => ({ ...stream }));
+    return copyStreams(entry.streams);
   }
 
-  setCachedResult(cacheKey, streams) {
-    this.resultCache.set(cacheKey, {
-      streams: streams.map((stream) => ({ ...stream })),
+  async getDiskCachedResult(cacheKey) {
+    const cachePath = this.getCacheFilePath(cacheKey);
+
+    try {
+      const payload = JSON.parse(await readFile(cachePath, 'utf8'));
+
+      if (!payload || payload.expiresAt <= Date.now() || !Array.isArray(payload.streams)) {
+        await rm(cachePath, { force: true });
+        return null;
+      }
+
+      const entry = {
+        streams: copyStreams(payload.streams),
+        expiresAt: payload.expiresAt
+      };
+
+      this.resultCache.set(cacheKey, entry);
+      logger.info('provider disk cache hit', {
+        cacheKey: this.hashCacheKey(cacheKey),
+        resultCount: payload.streams.length
+      });
+      return copyStreams(payload.streams);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        logger.warn('provider disk cache read failed', {
+          cacheKey: this.hashCacheKey(cacheKey),
+          error
+        });
+      }
+
+      return null;
+    }
+  }
+
+  async setCachedResult(cacheKey, streams) {
+    const entry = {
+      streams: copyStreams(streams),
       expiresAt: Date.now() + config.PROVIDER_CACHE_TTL_SECONDS * 1000
-    });
+    };
+
+    this.resultCache.set(cacheKey, entry);
+
+    try {
+      await writeFile(this.getCacheFilePath(cacheKey), JSON.stringify(entry));
+    } catch (error) {
+      logger.warn('provider disk cache write failed', {
+        cacheKey: this.hashCacheKey(cacheKey),
+        error
+      });
+    }
   }
 
   normalizeProviders(providers) {
@@ -368,5 +596,42 @@ export class ProviderService {
 
     this.moduleCache.set(providerConfig.modulePath, loadedModule);
     return loadedModule;
+  }
+
+  getCacheFilePath(cacheKey) {
+    return path.join(this.providerCacheDir, `${this.hashCacheKey(cacheKey)}.json`);
+  }
+
+  hashCacheKey(cacheKey) {
+    return crypto.createHash('sha256').update(cacheKey).digest('hex');
+  }
+
+  async removeExpiredDiskEntries() {
+    let entries = [];
+
+    try {
+      entries = await readdir(this.providerCacheDir, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+      return;
+    }
+
+    await Promise.all(entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+      .map(async (entry) => {
+        const filePath = path.join(this.providerCacheDir, entry.name);
+
+        try {
+          const payload = JSON.parse(await readFile(filePath, 'utf8'));
+
+          if (!payload || payload.expiresAt <= Date.now()) {
+            await rm(filePath, { force: true });
+          }
+        } catch {
+          await rm(filePath, { force: true });
+        }
+      }));
   }
 }

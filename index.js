@@ -17,6 +17,7 @@ const bootstrap = async () => {
 
   const sourceRegistry = new SourceRegistry();
   const providerService = new ProviderService();
+  await providerService.initialize();
   const torrentEngine = new TorrentEngineService({ cacheManager });
   const httpProxy = new HttpProxyService({ cacheManager, torrentEngine });
   const streamManager = new StreamManager({
@@ -39,6 +40,8 @@ const bootstrap = async () => {
         status: 'ok',
         uptimeSeconds: Math.round(process.uptime()),
         activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
+        activeStreams: streamManager.activeStreams,
+        maxActiveStreams: config.MAX_ACTIVE_STREAMS,
         cache: cacheStats
       });
     } catch (error) {

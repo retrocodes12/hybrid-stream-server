@@ -185,6 +185,23 @@ export class HttpProxyService {
     }
 
     const cacheWrite = await this.cacheManager.createHttpCacheWrite(targetUrl, upstreamResponse.headers);
+
+    if (!cacheWrite) {
+      return {
+        statusCode: upstreamResponse.status,
+        stream: upstreamResponse.data,
+        headers: {
+          ...upstreamHeaders,
+          'Cache-Control': 'no-store'
+        },
+        cleanup: async ({ completed }) => {
+          if (!completed && !upstreamResponse.data.destroyed) {
+            upstreamResponse.data.destroy();
+          }
+        }
+      };
+    }
+
     const clientStream = new PassThrough();
     const cacheStream = new PassThrough();
     const writerFinished = finished(cacheWrite.writer);
