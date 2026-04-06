@@ -203,24 +203,7 @@ export class StreamManager {
         return;
       }
 
-      const normalizedStreams = await Promise.all(streams.map(async (stream) => {
-        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-          source: stream.url,
-          headers: stream.headers,
-          metadata: {
-            provider,
-            title: stream.title || null,
-            quality: stream.quality || null,
-            name: stream.name || null
-          }
-        });
-
-        return {
-          ...stream,
-          streamUrl: streamUrl.toString(),
-          sourceId: streamUrl.searchParams.get('sourceId')
-        };
-      }));
+      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, streams, provider);
 
       res.json({
         provider,
@@ -256,24 +239,7 @@ export class StreamManager {
         return;
       }
 
-      const normalizedStreams = await Promise.all(result.streams.map(async (stream) => {
-        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-          source: stream.url,
-          headers: stream.headers,
-          metadata: {
-            provider: stream.provider || null,
-            title: stream.title || null,
-            quality: stream.quality || null,
-            name: stream.name || null
-          }
-        });
-
-        return {
-          ...stream,
-          streamUrl: streamUrl.toString(),
-          sourceId: streamUrl.searchParams.get('sourceId')
-        };
-      }));
+      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
 
       res.json({
         provider: null,
@@ -443,6 +409,39 @@ export class StreamManager {
     const streamUrl = new URL('/stream', baseUrl);
     streamUrl.searchParams.set('sourceId', sourceId);
     return streamUrl;
+  }
+
+  async normalizeProviderStreams(baseUrl, streams, fallbackProvider = null) {
+    const settled = await Promise.all(streams.map(async (stream) => {
+      try {
+        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+          source: stream.url,
+          headers: stream.headers,
+          metadata: {
+            provider: stream.provider || fallbackProvider,
+            title: stream.title || null,
+            quality: stream.quality || null,
+            name: stream.name || null
+          }
+        });
+
+        return {
+          ...stream,
+          provider: stream.provider || fallbackProvider,
+          streamUrl: streamUrl.toString(),
+          sourceId: streamUrl.searchParams.get('sourceId')
+        };
+      } catch (error) {
+        logger.warn('provider stream skipped', {
+          provider: stream.provider || fallbackProvider,
+          source: stream.url,
+          error
+        });
+        return null;
+      }
+    }));
+
+    return settled.filter(Boolean);
   }
 
   async sendStream(res, descriptor) {

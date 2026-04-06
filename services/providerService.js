@@ -54,6 +54,31 @@ const toOptionalInteger = (value) => {
   return Number.isInteger(parsed) ? parsed : null;
 };
 
+const mapConcurrent = async (items, concurrency, iteratee) => {
+  const results = new Array(items.length);
+  let currentIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const index = currentIndex;
+      currentIndex += 1;
+
+      if (index >= items.length) {
+        return;
+      }
+
+      results[index] = await iteratee(items[index], index);
+    }
+  };
+
+  const workers = Array.from({
+    length: Math.min(concurrency, items.length)
+  }, () => worker());
+
+  await Promise.all(workers);
+  return results;
+};
+
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
@@ -80,7 +105,7 @@ export class ProviderService {
       throw createHttpError(400, 'No valid providers were supplied for aggregate search');
     }
 
-    const settledResults = await Promise.all(normalizedProviders.map(async (provider) => {
+    const settledResults = await mapConcurrent(normalizedProviders, config.PROVIDER_MAX_CONCURRENCY, async (provider) => {
       const streams = await this.getStreams({
         provider,
         ...rest
@@ -90,7 +115,7 @@ export class ProviderService {
         provider,
         streams
       };
-    }));
+    });
 
     const tried = settledResults.map((result) => ({
       provider: result.provider,
@@ -144,7 +169,6 @@ export class ProviderService {
 
     const normalizedSeason = toOptionalInteger(season);
     const normalizedEpisode = toOptionalInteger(episode);
-    const providerModule = this.loadProviderModule(providerConfig);
     const cacheKey = JSON.stringify({
       provider: providerId,
       tmdbId: normalizedTmdbId,
@@ -152,10 +176,6 @@ export class ProviderService {
       season: normalizedSeason,
       episode: normalizedEpisode
     });
-
-    if (typeof providerModule.getStreams !== 'function') {
-      throw createHttpError(500, `Provider ${providerId} does not export getStreams`);
-    }
 
     const cached = this.getCachedResult(cacheKey);
 
@@ -172,6 +192,8 @@ export class ProviderService {
     if (this.inFlight.has(cacheKey)) {
       return this.inFlight.get(cacheKey);
     }
+
+    const providerModule = this.loadProviderModule(providerConfig, providerId);
 
     const execution = this.executeProviderQuery({
       cacheKey,
@@ -218,12 +240,12 @@ export class ProviderService {
       });
 
       const streams = await Promise.race([
-        providerModule.getStreams(
+        Promise.resolve().then(() => providerModule.getStreams(
           normalizedTmdbId,
           normalizedMediaType,
           normalizedSeason,
           normalizedEpisode
-        ),
+        )),
         timeoutPromise
       ]);
 
@@ -322,12 +344,28 @@ export class ProviderService {
     return ordered;
   }
 
-  loadProviderModule(providerConfig) {
+  loadProviderModule(providerConfig, providerId = providerConfig.id) {
     if (this.moduleCache.has(providerConfig.modulePath)) {
       return this.moduleCache.get(providerConfig.modulePath);
     }
 
-    const loadedModule = require(providerConfig.modulePath);
+    let loadedModule;
+
+    try {
+      loadedModule = require(providerConfig.modulePath);
+    } catch (error) {
+      logger.error('provider module load failed', {
+        provider: providerId,
+        modulePath: providerConfig.modulePath,
+        error
+      });
+      throw createHttpError(500, `Provider ${providerId} could not be loaded`);
+    }
+
+    if (!loadedModule || typeof loadedModule.getStreams !== 'function') {
+      throw createHttpError(500, `Provider ${providerId} does not export getStreams`);
+    }
+
     this.moduleCache.set(providerConfig.modulePath, loadedModule);
     return loadedModule;
   }
