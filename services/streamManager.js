@@ -1,4 +1,5 @@
 import { pipeline } from 'node:stream/promises';
+import { createHash } from 'node:crypto';
 import { config } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
@@ -126,6 +127,71 @@ const getStreamFormatBadge = (stream) => {
   return `[${parts.join('/')}]`;
 };
 
+const toTitleCaseLabel = (providerId) =>
+  String(providerId || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const DEFAULT_QUALITY_PRIORITY = Object.freeze([
+  '2160p',
+  '1440p',
+  '1080p',
+  '720p',
+  '480p',
+  '360p',
+  'auto',
+  'unknown'
+]);
+
+const normalizeQualityKey = (quality) => {
+  const normalized = String(quality || '').trim().toLowerCase();
+
+  if (!normalized) {
+    return 'unknown';
+  }
+
+  if (normalized.includes('2160') || normalized === '4k') {
+    return '2160p';
+  }
+
+  if (normalized.includes('1440')) {
+    return '1440p';
+  }
+
+  if (normalized.includes('1080')) {
+    return '1080p';
+  }
+
+  if (normalized.includes('720')) {
+    return '720p';
+  }
+
+  if (normalized.includes('480') || normalized.includes('sd') || normalized.includes('low hd')) {
+    return '480p';
+  }
+
+  if (normalized.includes('360')) {
+    return '360p';
+  }
+
+  if (normalized.includes('auto') || normalized.includes('adaptive') || normalized.includes('mid hd')) {
+    return 'auto';
+  }
+
+  return 'unknown';
+};
+
+const getQualityPriorityScore = (stream, qualityPriority) => {
+  const normalizedQuality = normalizeQualityKey(stream.quality);
+  const index = qualityPriority.indexOf(normalizedQuality);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  return (qualityPriority.length - index) * 10000;
+};
+
 export class HttpError extends Error {
   constructor(statusCode, message, details = undefined) {
     super(message);
@@ -207,14 +273,102 @@ export class StreamManager {
     this.activeStreams = 0;
   }
 
+  getRequestedProviders(req) {
+    const rawConfig = typeof req.params?.providerConfig === 'string'
+      ? req.params.providerConfig
+      : typeof req.query?.providers === 'string'
+        ? req.query.providers
+        : '';
+    const decoded = rawConfig ? decodeURIComponent(rawConfig) : '';
+
+    if (!decoded || decoded === 'all') {
+      return [];
+    }
+
+    const requestedProviders = decoded
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    return this.providerService.normalizeProviders(requestedProviders);
+  }
+
+  getRequestedQualityPriority(req) {
+    const rawConfig = typeof req.params?.qualityConfig === 'string'
+      ? req.params.qualityConfig
+      : typeof req.query?.qualities === 'string'
+        ? req.query.qualities
+        : '';
+    const decoded = rawConfig ? decodeURIComponent(rawConfig) : '';
+
+    if (!decoded) {
+      return [...DEFAULT_QUALITY_PRIORITY];
+    }
+
+    const requestedQualities = decoded
+      .split(',')
+      .map((value) => normalizeQualityKey(value))
+      .filter(Boolean);
+    const uniqueQualities = requestedQualities.filter((quality, index) =>
+      requestedQualities.indexOf(quality) === index
+    );
+
+    if (uniqueQualities.length === 0) {
+      return [...DEFAULT_QUALITY_PRIORITY];
+    }
+
+    for (const quality of DEFAULT_QUALITY_PRIORITY) {
+      if (!uniqueQualities.includes(quality)) {
+        uniqueQualities.push(quality);
+      }
+    }
+
+    return uniqueQualities;
+  }
+
+  getAddonPresentation(req) {
+    const providers = this.getRequestedProviders(req);
+    const qualityPriority = this.getRequestedQualityPriority(req);
+    const hasDefaultQualityPriority = qualityPriority.join(',') === DEFAULT_QUALITY_PRIORITY.join(',');
+
+    if (providers.length === 0 && hasDefaultQualityPriority) {
+      return {
+        providers,
+        qualityPriority,
+        addonId: config.STREMIO_ADDON_ID,
+        addonName: config.STREMIO_ADDON_NAME,
+        configurable: true,
+        description: 'Hybrid scraper-backed streaming addon with HTTP and torrent fallback playback'
+      };
+    }
+
+    const providerHash = createHash('sha1')
+      .update(`${providers.join(',')}|${qualityPriority.join(',')}`)
+      .digest('hex')
+      .slice(0, 10);
+    const providerLabel = providers.length > 0
+      ? providers.map((provider) => toTitleCaseLabel(provider)).join(', ')
+      : 'All Providers';
+
+    return {
+      providers,
+      qualityPriority,
+      addonId: `${config.STREMIO_ADDON_ID}.${providerHash}`,
+      addonName: `${config.STREMIO_ADDON_NAME} [${providerLabel}]`,
+      configurable: true,
+      description: `Hybrid scraper-backed streaming addon filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}`
+    };
+  }
+
   async handleStremioManifest(req, res) {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const addonPresentation = this.getAddonPresentation(req);
 
     res.json({
-      id: config.STREMIO_ADDON_ID,
+      id: addonPresentation.addonId,
       version: '1.0.0',
-      name: config.STREMIO_ADDON_NAME,
-      description: 'Hybrid scraper-backed streaming addon with HTTP and torrent fallback playback',
+      name: addonPresentation.addonName,
+      description: addonPresentation.description,
       resources: [{
         name: 'stream',
         types: ['movie', 'series'],
@@ -224,7 +378,7 @@ export class StreamManager {
       idPrefixes: ['tt'],
       catalogs: [],
       behaviorHints: {
-        configurable: false
+        configurable: addonPresentation.configurable
       },
       logo: `${baseUrl}/favicon.ico`
     });
@@ -256,7 +410,10 @@ export class StreamManager {
       }
 
       const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const requestedProviders = this.getRequestedProviders(req);
+      const qualityPriority = this.getRequestedQualityPriority(req);
       const result = await this.providerService.getAggregateStreams({
+        providers: requestedProviders.length > 0 ? requestedProviders : null,
         tmdbId,
         mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
         season: parsed.season,
@@ -270,7 +427,8 @@ export class StreamManager {
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
       normalizedStreams.sort((left, right) =>
-        toStremioCompatibilityScore(right) - toStremioCompatibilityScore(left)
+        (getQualityPriorityScore(right, qualityPriority) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + toStremioCompatibilityScore(left))
       );
       const stremioStreams = normalizedStreams.map((stream) => ({
         name: stream.provider
@@ -614,39 +772,73 @@ export class StreamManager {
   }
 
   async normalizeProviderStreams(baseUrl, streams, fallbackProvider = null) {
-    const settled = await Promise.all(streams.map(async (stream) => {
-      try {
-        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-          type: stream.magnet || stream.torrent ? 'torrent' : undefined,
-          source: stream.magnet || stream.torrent || stream.url,
-          headers: stream.headers,
-          deferValidation: true,
-          fallback: stream.url && (stream.magnet || stream.torrent) ? {
-            type: 'torrent',
-            source: stream.magnet || stream.torrent
-          } : null,
-          metadata: {
-            provider: stream.provider || fallbackProvider,
-            title: stream.title || null,
-            quality: stream.quality || null,
-            name: stream.name || null
-          }
-        });
+    const settled = await Promise.all(streams.flatMap((stream) => {
+      const provider = stream.provider || fallbackProvider;
+      const variants = [];
+      const normalizedUrl = typeof stream.url === 'string' ? stream.url.trim() : '';
+      const normalizedMagnet = typeof stream.magnet === 'string'
+        ? stream.magnet.trim()
+        : typeof stream.torrent === 'string'
+          ? stream.torrent.trim()
+          : '';
 
-        return {
-          ...stream,
-          provider: stream.provider || fallbackProvider,
-          streamUrl: streamUrl.toString(),
-          sourceId: streamUrl.searchParams.get('sourceId')
-        };
-      } catch (error) {
-        logger.warn('provider stream skipped', {
-          provider: stream.provider || fallbackProvider,
-          source: stream.url,
-          error
+      if (normalizedUrl) {
+        variants.push({
+          transport: 'http',
+          source: normalizedUrl,
+          headers: stream.headers
         });
-        return null;
       }
+
+      if (normalizedMagnet) {
+        variants.push({
+          transport: 'torrent',
+          source: normalizedMagnet,
+          headers: null
+        });
+      }
+
+      return variants.map(async (variant) => {
+        try {
+          const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+            type: variant.transport === 'torrent' ? 'torrent' : undefined,
+            source: variant.source,
+            headers: variant.headers,
+            deferValidation: true,
+            metadata: {
+              provider,
+              title: stream.title || null,
+              quality: stream.quality || null,
+              name: stream.name || null,
+              transport: variant.transport
+            }
+          });
+          const {
+            url: _url,
+            magnet: _magnet,
+            torrent: _torrent,
+            ...rest
+          } = stream;
+
+          return {
+            ...rest,
+            provider,
+            headers: variant.headers,
+            transport: variant.transport,
+            ...(variant.transport === 'http' ? { url: normalizedUrl } : { magnet: normalizedMagnet }),
+            streamUrl: streamUrl.toString(),
+            sourceId: streamUrl.searchParams.get('sourceId')
+          };
+        } catch (error) {
+          logger.warn('provider stream skipped', {
+            provider,
+            source: variant.source,
+            transport: variant.transport,
+            error
+          });
+          return null;
+        }
+      });
     }));
 
     return settled.filter(Boolean);

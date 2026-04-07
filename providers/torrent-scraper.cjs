@@ -24,6 +24,11 @@ const client = axios.create({
   headers: HEADERS,
   validateStatus: (status) => status >= 200 && status < 300
 });
+const fastClient = axios.create({
+  timeout: 4_000,
+  headers: HEADERS,
+  validateStatus: (status) => status >= 200 && status < 300
+});
 
 const toInt = (value) => {
   const parsed = Number.parseInt(String(value || '').replaceAll(',', ''), 10);
@@ -51,6 +56,29 @@ const getQuality = (name) => {
   return match ? `${match[1]}p` : 'Torrent';
 };
 
+const sleep = (delayMs) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, delayMs);
+  timer.unref?.();
+});
+
+const withRetries = async (task, delaysMs = [250, 750]) => {
+  let lastError;
+
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < delaysMs.length) {
+        await sleep(delaysMs[attempt]);
+      }
+    }
+  }
+
+  throw lastError;
+};
+
 const buildSearchQuery = (mediaInfo, mediaType, season, episode) => {
   if (mediaType === 'tv' && season && episode) {
     return `${mediaInfo.title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
@@ -65,11 +93,11 @@ const buildSearchQuery = (mediaInfo, mediaType, season, episode) => {
 
 const getTmdbInfo = async (tmdbId, mediaType) => {
   const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
-  const response = await client.get(`${TMDB_BASE_URL}/${endpoint}/${tmdbId}`, {
+  const response = await withRetries(() => client.get(`${TMDB_BASE_URL}/${endpoint}/${tmdbId}`, {
     params: {
       api_key: TMDB_API_KEY
     }
-  });
+  }), [300, 900, 1800]);
 
   return {
     title: response.data.title || response.data.name || '',
@@ -78,7 +106,7 @@ const getTmdbInfo = async (tmdbId, mediaType) => {
 };
 
 const search1337x = async (query) => {
-  const response = await client.get(`${SOURCES[0].baseUrl}/search/${encodeURIComponent(query)}/1/`);
+  const response = await fastClient.get(`${SOURCES[0].baseUrl}/search/${encodeURIComponent(query)}/1/`);
   const $ = cheerio.load(response.data);
   const rows = [];
 
@@ -104,7 +132,7 @@ const search1337x = async (query) => {
 };
 
 const get1337xMagnet = async (detailsUrl) => {
-  const response = await client.get(detailsUrl);
+  const response = await fastClient.get(detailsUrl);
   const $ = cheerio.load(response.data);
   const magnet = $('ul.dropdown-menu > li').last().find('a').attr('href') || null;
   return magnet;
@@ -148,14 +176,15 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
     const mediaInfo = await getTmdbInfo(tmdbId, mediaType);
     const query = buildSearchQuery(mediaInfo, mediaType, season, episode);
 
-    const [torrents1337x, torrentsTpb] = await Promise.all([
-      search1337x(query).catch(() => []),
-      searchThePirateBay(query).catch(() => [])
-    ]);
+    const torrentsTpb = await searchThePirateBay(query).catch(() => []);
+    const shouldTry1337x = torrentsTpb.length < 3;
+    const torrents1337x = shouldTry1337x
+      ? await search1337x(query).catch(() => [])
+      : [];
 
     const enriched1337x = [];
 
-    for (const torrent of torrents1337x.slice(0, 3)) {
+    for (const torrent of torrents1337x.slice(0, Math.max(0, 5 - torrentsTpb.length))) {
       try {
         const magnet = await get1337xMagnet(torrent.detailsUrl);
 
@@ -174,8 +203,8 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
     }
 
     const merged = [
-      ...enriched1337x.map((torrent) => normalizeTorrent(torrent, '1337x')),
-      ...torrentsTpb.slice(0, 5).map((torrent) => normalizeTorrent(torrent, 'ThePirateBay'))
+      ...torrentsTpb.slice(0, 5).map((torrent) => normalizeTorrent(torrent, 'ThePirateBay')),
+      ...enriched1337x.map((torrent) => normalizeTorrent(torrent, '1337x'))
     ].filter((torrent) => torrent.magnet);
 
     merged.sort((left, right) => {

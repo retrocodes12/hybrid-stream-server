@@ -153,39 +153,41 @@ const sanitizeProviderStream = (stream) => {
       ? String(stream.torrent).trim()
       : '';
 
-  if (normalizedMagnet) {
-    if (!normalizedMagnet.startsWith('magnet:?')) {
-      return null;
-    }
-
-    return {
-      ...stream,
-      magnet: normalizedMagnet,
-      headers: sanitizeHeaders(stream.headers)
-    };
+  if (normalizedMagnet && !normalizedMagnet.startsWith('magnet:?')) {
+    return null;
   }
 
   const normalizedUrl = String(stream.url || '').trim();
+  let parsedUrl = null;
 
-  if (!normalizedUrl) {
+  if (normalizedUrl) {
+    try {
+      parsedUrl = new URL(normalizedUrl);
+    } catch {
+      parsedUrl = null;
+    }
+  }
+
+  if (parsedUrl && !['http:', 'https:'].includes(parsedUrl.protocol)) {
+    parsedUrl = null;
+  }
+
+  if (!normalizedMagnet && !parsedUrl) {
     return null;
   }
 
-  let parsedUrl;
-
-  try {
-    parsedUrl = new URL(normalizedUrl);
-  } catch {
-    return null;
-  }
-
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    return null;
-  }
+  const {
+    headers: _headers,
+    magnet: _magnet,
+    torrent: _torrent,
+    url: _url,
+    ...rest
+  } = stream;
 
   return {
-    ...stream,
-    url: parsedUrl.toString(),
+    ...rest,
+    ...(parsedUrl ? { url: parsedUrl.toString() } : {}),
+    ...(normalizedMagnet ? { magnet: normalizedMagnet } : {}),
     headers: sanitizeHeaders(stream.headers)
   };
 };
@@ -268,7 +270,7 @@ const toProviderScore = (providerId, providerOrder) => {
 const rankStream = (stream, providerOrder) => {
   const providerId = String(stream.provider || '').toLowerCase();
   const qualityScore = toQualityScore(stream.quality);
-  const transportScore = stream.magnet ? 6 : toTransportScore(stream.url);
+  const transportScore = stream.url ? toTransportScore(stream.url) : stream.magnet ? 6 : 10;
   const headerScore = toHeaderScore(stream.headers);
   const providerScore = toProviderScore(providerId, providerOrder);
 
@@ -324,17 +326,22 @@ export class ProviderService {
       count: result.streams.length
     }));
     const mergedStreams = [];
-    const seenUrls = new Set();
+    const seenSources = new Set();
 
     for (const result of settledResults) {
       for (const stream of result.streams) {
         const normalizedUrl = String(stream.url || '').trim();
+        const normalizedMagnet = String(stream.magnet || stream.torrent || '').trim();
+        const dedupeKey = JSON.stringify({
+          url: normalizedUrl || null,
+          magnet: normalizedMagnet || null
+        });
 
-        if (!normalizedUrl || seenUrls.has(normalizedUrl)) {
+        if ((!normalizedUrl && !normalizedMagnet) || seenSources.has(dedupeKey)) {
           continue;
         }
 
-        seenUrls.add(normalizedUrl);
+        seenSources.add(dedupeKey);
         mergedStreams.push({
           ...stream,
           provider: stream.provider || result.provider
@@ -665,7 +672,7 @@ export class ProviderService {
       params.episode === null ? '' : String(params.episode)
     ], {
       cwd: process.cwd(),
-      timeout: Math.max(config.PROVIDER_TIMEOUT_SECONDS - 1, 1) * 1000,
+      timeout: (config.PROVIDER_TIMEOUT_SECONDS * 1000) + 2000,
       maxBuffer: 4 * 1024 * 1024,
       env: process.env
     });
