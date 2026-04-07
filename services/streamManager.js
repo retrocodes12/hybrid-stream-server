@@ -192,6 +192,21 @@ const getQualityPriorityScore = (stream, qualityPriority) => {
   return (qualityPriority.length - index) * 10000;
 };
 
+const hasForwardHeaders = (headers) =>
+  Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
+
+const getDeliveryPriorityScore = (stream) => {
+  if (stream.transport === 'http') {
+    return stream.sourceId ? -5000 : 5000;
+  }
+
+  if (stream.transport === 'torrent') {
+    return -12000;
+  }
+
+  return 0;
+};
+
 export class HttpError extends Error {
   constructor(statusCode, message, details = undefined) {
     super(message);
@@ -427,8 +442,8 @@ export class StreamManager {
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
       normalizedStreams.sort((left, right) =>
-        (getQualityPriorityScore(right, qualityPriority) + toStremioCompatibilityScore(right)) -
-        (getQualityPriorityScore(left, qualityPriority) + toStremioCompatibilityScore(left))
+        (getQualityPriorityScore(right, qualityPriority) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
       const stremioStreams = normalizedStreams.map((stream) => ({
         name: stream.provider
@@ -800,25 +815,34 @@ export class StreamManager {
 
       return variants.map(async (variant) => {
         try {
-          const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-            type: variant.transport === 'torrent' ? 'torrent' : undefined,
-            source: variant.source,
-            headers: variant.headers,
-            deferValidation: true,
-            metadata: {
-              provider,
-              title: stream.title || null,
-              quality: stream.quality || null,
-              name: stream.name || null,
-              transport: variant.transport
-            }
-          });
           const {
             url: _url,
             magnet: _magnet,
             torrent: _torrent,
             ...rest
           } = stream;
+          const canUseDirectUrl = variant.transport === 'http' && !hasForwardHeaders(variant.headers);
+          let streamUrl = variant.source;
+          let sourceId = null;
+
+          if (!canUseDirectUrl) {
+            const registeredStreamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+              type: variant.transport === 'torrent' ? 'torrent' : undefined,
+              source: variant.source,
+              headers: variant.headers,
+              deferValidation: true,
+              metadata: {
+                provider,
+                title: stream.title || null,
+                quality: stream.quality || null,
+                name: stream.name || null,
+                transport: variant.transport
+              }
+            });
+
+            streamUrl = registeredStreamUrl.toString();
+            sourceId = registeredStreamUrl.searchParams.get('sourceId');
+          }
 
           return {
             ...rest,
@@ -826,8 +850,8 @@ export class StreamManager {
             headers: variant.headers,
             transport: variant.transport,
             ...(variant.transport === 'http' ? { url: normalizedUrl } : { magnet: normalizedMagnet }),
-            streamUrl: streamUrl.toString(),
-            sourceId: streamUrl.searchParams.get('sourceId')
+            streamUrl,
+            sourceId
           };
         } catch (error) {
           logger.warn('provider stream skipped', {
