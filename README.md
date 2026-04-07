@@ -1,6 +1,6 @@
 <div align="center">
 
-# 📺 Hybrid Stream Server
+# 📺 NebulaStreams
 
 Lightweight scraper-backed streaming backend for Stremio, built for local testing and playback experiments.
 

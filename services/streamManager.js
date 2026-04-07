@@ -432,8 +432,8 @@ export class StreamManager {
       );
       const stremioStreams = normalizedStreams.map((stream) => ({
         name: stream.provider
-          ? `Nuvio ${String(stream.provider).toUpperCase()} ${getStreamFormatBadge(stream)}`
-          : `Nuvio ${getStreamFormatBadge(stream)}`,
+          ? `NebulaStreams ${String(stream.provider).toUpperCase()} ${getStreamFormatBadge(stream)}`
+          : `NebulaStreams ${getStreamFormatBadge(stream)}`,
         title: [
           getStreamFormatBadge(stream),
           stream.name || null,

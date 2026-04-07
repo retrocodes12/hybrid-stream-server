@@ -1,5 +1,5 @@
 {
-  "name": "hybrid-stream-server",
+  "name": "nebulastreams",
   "version": "1.0.0",
   "description": "Hybrid Node.js streaming server with torrent streaming, HTTP proxying, and disk cache",
   "type": "module",

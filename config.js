@@ -33,8 +33,8 @@ const toBoundedInteger = (value, fallback, min, max) => {
 export const config = Object.freeze({
   PORT: toPositiveInteger(process.env.PORT, 3000),
   CACHE_DIR: path.resolve(process.cwd(), process.env.CACHE_DIR || './cache'),
-  STREMIO_ADDON_ID: process.env.STREMIO_ADDON_ID || 'community.hybrid.nuvio',
-  STREMIO_ADDON_NAME: process.env.STREMIO_ADDON_NAME || 'Hybrid Nuvio Streams',
+  STREMIO_ADDON_ID: process.env.STREMIO_ADDON_ID || 'community.nebulastreams',
+  STREMIO_ADDON_NAME: process.env.STREMIO_ADDON_NAME || 'NebulaStreams',
   TMDB_API_KEY: process.env.TMDB_API_KEY || '439c478a771f35c05022f9feabcca01c',
   MAX_CACHE_SIZE_GB: toPositiveNumber(process.env.MAX_CACHE_SIZE_GB, 10),
   MAX_ACTIVE_TORRENTS: toBoundedInteger(process.env.MAX_ACTIVE_TORRENTS, 1, 1, 2),
