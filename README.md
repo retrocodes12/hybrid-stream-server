@@ -1,22 +1,32 @@
-# Hybrid Stream Server
+<div align="center">
 
-Hybrid Node.js streaming backend with:
+# 📺 Hybrid Stream Server
 
-- scraper-backed source discovery
-- HTTP proxy streaming
-- torrent fallback streaming
-- disk-backed caching
-- Stremio-compatible addon endpoints
+Lightweight scraper-backed streaming backend for Stremio, built for always-on Ubuntu servers.
+
+[![stremio addon](https://img.shields.io/badge/stremio-addon-blue)](http://YOUR_SERVER_IP:3000/manifest.json)
+[![node](https://img.shields.io/badge/node-%3E%3D20-339933)](https://nodejs.org/)
+[![platform](https://img.shields.io/badge/platform-Ubuntu%20Server-orange)](#ubuntu-247-deployment)
+[![playback](https://img.shields.io/badge/playback-HTTP%20%2B%20Torrent-green)](#features)
+[![cache](https://img.shields.io/badge/cache-disk%20backed-6f42c1)](#features)
+[![runtime](https://img.shields.io/badge/runtime-low--end%20friendly-success)](#notes)
+
+[Features](#features) • [Stremio Addon](#stremio-addon) • [Endpoints](#endpoints) • [Ubuntu 24/7 Deployment](#ubuntu-247-deployment) • [Quick Checks](#quick-checks) • [Notes](#notes)
+
+</div>
+
+---
 
 ## Features
 
-- Unified playback route: `/stream`
-- Source registration: `POST /add-source`
-- Provider discovery and aggregate scraping
-- Cache-first playback policy
-- HTTP-first with optional torrent fallback
-- Stremio manifest and stream endpoints
-- Runtime limits for low-end hardware
+- Scraper-backed stream discovery across multiple providers
+- Unified playback route through the same server-owned stream pipeline
+- HTTP proxy streaming with range support
+- Torrent playback with fallback support
+- Disk-backed cache with hard cap enforcement
+- Persistent scrape-result cache to reduce repeat CPU and network usage
+- Stream prioritization for Stremio native-player compatibility
+- Runtime limits for low-end always-on systems
 
 ## Stremio Addon
 
@@ -26,18 +36,71 @@ Install URL:
 http://YOUR_SERVER_IP:3000/manifest.json
 ```
 
-Available addon endpoints:
+Alternative manifest path:
 
-- `/manifest.json`
-- `/stremio/manifest.json`
-- `/stream/:type/:id.json`
-- `/stremio/stream/:type/:id.json`
+```text
+http://YOUR_SERVER_IP:3000/stremio/manifest.json
+```
 
-Example:
+Example Stremio stream request:
 
 ```text
 http://YOUR_SERVER_IP:3000/stream/movie/tt0133093.json
 ```
+
+Supported Stremio resources:
+
+- `stream`
+
+Supported types:
+
+- `movie`
+- `series`
+
+Supported id prefixes:
+
+- `tt`
+
+## Endpoints
+
+Core routes:
+
+- `GET /health`
+- `GET /providers`
+- `GET /providers/:provider/streams`
+- `GET /providers/aggregate/streams`
+- `POST /add-source`
+- `GET /stream`
+- `GET /stream/http`
+- `GET /stream/torrent`
+- `GET /stream/torrent/:infoHash/:filename`
+
+Stremio routes:
+
+- `GET /manifest.json`
+- `GET /stremio/manifest.json`
+- `GET /stream/:type/:id.json`
+- `GET /stremio/stream/:type/:id.json`
+
+## Playback Model
+
+Playback policy:
+
+1. If cached:
+   instant play from disk
+2. Else if HTTP:
+   validate and stream
+3. Else:
+   torrent fallback
+
+Returned Stremio stream cards also expose lightweight format hints such as:
+
+- `[MP4/H264]`
+- `[HLS]`
+- `[MKV/HEVC]`
+- `[TORRENT]`
+
+This makes it easier to choose native-player-friendly streams on TV and keep heavier formats for external players like VLC.
 
 ## Ubuntu 24/7 Deployment
 
@@ -169,6 +232,7 @@ sudo ufw allow 3000/tcp
 curl http://127.0.0.1:3000/health
 curl http://127.0.0.1:3000/providers
 curl http://127.0.0.1:3000/manifest.json
+curl "http://127.0.0.1:3000/providers/aggregate/streams?tmdbId=603&mediaType=movie"
 curl "http://127.0.0.1:3000/stream/movie/tt0133093.json"
 ```
 
@@ -176,5 +240,6 @@ curl "http://127.0.0.1:3000/stream/movie/tt0133093.json"
 
 - Keep `MAX_ACTIVE_TORRENTS=1` on low-end systems.
 - Put `CACHE_DIR` on a disk with enough free space.
-- The server is designed to keep playback inside its own `/stream` pipeline instead of returning third-party URLs directly.
+- The server keeps playback inside its own `/stream` pipeline instead of returning third-party URLs directly.
 - Aggregate scraping can be slow on cold requests and much faster after cache warm-up.
+- Some upstream scrapers return imperfect title matches; the backend can rank and filter them, but source quality still depends on upstream behavior.
