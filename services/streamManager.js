@@ -380,7 +380,7 @@ export class StreamManager {
       behaviorHints: {
         configurable: addonPresentation.configurable
       },
-      logo: `${baseUrl}/favicon.ico`
+      logo: `${baseUrl}/assets/nebulastreams-logo.jpeg`
     });
   }
 

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./assets/nebulastreams-logo.jpeg" alt="NebulaStreams logo" width="220" />
+
 # 📺 NebulaStreams
 
 Lightweight scraper-backed streaming backend for Stremio, built for local testing and playback experiments.
