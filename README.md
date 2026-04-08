@@ -6,13 +6,15 @@
 
 Lightweight scraper-backed streaming backend for Stremio.
 
+[![live addon](https://img.shields.io/badge/live-nebulastreams.onrender.com-4f46e5)](https://nebulastreams.onrender.com/manifest.json)
+[![configure](https://img.shields.io/badge/configure-nebulastreams.onrender.com%2Fconfigure-0ea5e9)](https://nebulastreams.onrender.com/configure)
 [![node](https://img.shields.io/badge/node-%3E%3D20-339933)](https://nodejs.org/)
 [![platform](https://img.shields.io/badge/platform-Render%20ready-46e3b7)](#render-deployment)
 [![playback](https://img.shields.io/badge/playback-HTTP%20%2B%20Torrent-green)](#)
 [![cache](https://img.shields.io/badge/cache-disk%20backed-6f42c1)](#)
 [![runtime](https://img.shields.io/badge/runtime-low--end%20friendly-success)](#)
 
-[Features](#features) • [Render Deployment](#render-deployment) • [Local Development](#local-development)
+[Features](#features) • [Live Addon](https://nebulastreams.onrender.com/manifest.json) • [Configure](https://nebulastreams.onrender.com/configure) • [Render Deployment](#render-deployment) • [Local Development](#local-development)
 
 </div>
 
@@ -35,8 +37,6 @@ This repo includes [render.yaml](/home/sohil/hybrid-stream-server/render.yaml) f
    `https://<your-service>.onrender.com/manifest.json`
 5. The provider/quality configure page will be:
    `https://<your-service>.onrender.com/configure`
-
-Recommended env vars are listed in [.env.example](/home/sohil/hybrid-stream-server/.env.example).
 
 Important:
 - Render free web services spin down after idle time, so the first request after sleeping will cold start.
