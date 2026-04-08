@@ -197,7 +197,7 @@ const hasForwardHeaders = (headers) =>
 
 const getDeliveryPriorityScore = (stream) => {
   if (stream.transport === 'http') {
-    return stream.sourceId ? -5000 : 5000;
+    return hasForwardHeaders(stream.headers) ? -5000 : 5000;
   }
 
   if (stream.transport === 'torrent') {
@@ -286,6 +286,91 @@ const formatStremioCardTitle = (stream) => {
   ];
 
   return lines.join('\n');
+};
+
+const extractFilenameFromUrl = (streamUrl) => {
+  try {
+    const parsedUrl = new URL(String(streamUrl || '').trim());
+    const filename = decodeURIComponent(parsedUrl.pathname.split('/').pop() || '').trim();
+    return filename || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const isPlainMp4Url = (streamUrl) => {
+  try {
+    const parsedUrl = new URL(String(streamUrl || '').trim());
+    return parsedUrl.protocol === 'https:' && parsedUrl.pathname.toLowerCase().endsWith('.mp4');
+  } catch {
+    return false;
+  }
+};
+
+const getTorrentSources = (magnet) => {
+  try {
+    const parsedUrl = new URL(String(magnet || '').trim());
+    const trackers = parsedUrl.searchParams.getAll('tr')
+      .map((trackerUrl) => trackerUrl.trim())
+      .filter((trackerUrl) => /^https?:\/\/|^udp:\/\//u.test(trackerUrl))
+      .map((trackerUrl) => `tracker:${trackerUrl}`);
+
+    return trackers.filter((source, index) => trackers.indexOf(source) === index);
+  } catch {
+    return [];
+  }
+};
+
+const toStremioStreamObject = (stream, parsedRequest) => {
+  const base = {
+    name: stream.provider
+      ? `NebulaStreams | ${toTitleCaseLabel(stream.provider)}`
+      : 'NebulaStreams',
+    title: formatStremioCardTitle(stream),
+    behaviorHints: {
+      bingeGroup: parsedRequest.mediaType === 'series'
+        ? `${parsedRequest.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
+        : undefined
+    }
+  };
+
+  if (stream.transport === 'torrent' && stream.magnet) {
+    const infoHash = extractInfoHash(stream.magnet);
+
+    if (!infoHash) {
+      return null;
+    }
+
+    const sources = getTorrentSources(stream.magnet);
+
+    return {
+      ...base,
+      infoHash,
+      ...(sources.length > 0 ? { sources } : {})
+    };
+  }
+
+  if (!stream.url) {
+    return null;
+  }
+
+  const requestHeaders = hasForwardHeaders(stream.headers) ? { ...stream.headers } : null;
+  const isWebReady = isPlainMp4Url(stream.url) && !requestHeaders;
+
+  return {
+    ...base,
+    url: stream.url,
+    ...(extractFilenameFromUrl(stream.url) ? { filename: extractFilenameFromUrl(stream.url) } : {}),
+    behaviorHints: {
+      ...base.behaviorHints,
+      notWebReady: !isWebReady,
+      ...(requestHeaders ? {
+        proxyHeaders: {
+          request: requestHeaders
+        }
+      } : {})
+    }
+  };
 };
 
 export class HttpError extends Error {
@@ -526,19 +611,9 @@ export class StreamManager {
         (getQualityPriorityScore(right, qualityPriority) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
         (getQualityPriorityScore(left, qualityPriority) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
-      const stremioStreams = normalizedStreams.map((stream) => ({
-        name: stream.provider
-          ? `NebulaStreams | ${toTitleCaseLabel(stream.provider)}`
-          : 'NebulaStreams',
-        title: formatStremioCardTitle(stream),
-        url: stream.streamUrl,
-        behaviorHints: {
-          notWebReady: false,
-          bingeGroup: parsed.mediaType === 'series'
-            ? `${parsed.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
-            : undefined
-        }
-      }));
+      const stremioStreams = normalizedStreams
+        .map((stream) => toStremioStreamObject(stream, parsed))
+        .filter(Boolean);
 
       res.json({
         streams: stremioStreams
@@ -862,7 +937,7 @@ export class StreamManager {
     return streamUrl;
   }
 
-  async normalizeProviderStreams(baseUrl, streams, fallbackProvider = null) {
+  async normalizeProviderStreams(_baseUrl, streams, fallbackProvider = null) {
     const settled = await Promise.all(streams.flatMap((stream) => {
       const provider = stream.provider || fallbackProvider;
       const variants = [];
@@ -897,37 +972,22 @@ export class StreamManager {
             torrent: _torrent,
             ...rest
           } = stream;
-          const canUseDirectUrl = variant.transport === 'http' && !hasForwardHeaders(variant.headers);
-          let streamUrl = variant.source;
-          let sourceId = null;
-
-          if (!canUseDirectUrl) {
-            const registeredStreamUrl = await this.createRegisteredStreamUrl(baseUrl, {
-              type: variant.transport === 'torrent' ? 'torrent' : undefined,
-              source: variant.source,
-              headers: variant.headers,
-              deferValidation: true,
-              metadata: {
-                provider,
-                title: stream.title || null,
-                quality: stream.quality || null,
-                name: stream.name || null,
-                transport: variant.transport
-              }
-            });
-
-            streamUrl = registeredStreamUrl.toString();
-            sourceId = registeredStreamUrl.searchParams.get('sourceId');
-          }
 
           return {
             ...rest,
             provider,
             headers: variant.headers,
             transport: variant.transport,
-            ...(variant.transport === 'http' ? { url: normalizedUrl } : { magnet: normalizedMagnet }),
-            streamUrl,
-            sourceId
+            ...(variant.transport === 'http'
+              ? {
+                  url: normalizedUrl,
+                  filename: extractFilenameFromUrl(normalizedUrl)
+                }
+              : {
+                  magnet: normalizedMagnet,
+                  infoHash: extractInfoHash(normalizedMagnet) || null,
+                  sources: getTorrentSources(normalizedMagnet)
+                })
           };
         } catch (error) {
           logger.warn('provider stream skipped', {
