@@ -207,6 +207,87 @@ const getDeliveryPriorityScore = (stream) => {
   return 0;
 };
 
+const getCompactTags = (stream) => {
+  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  const tags = [];
+
+  if (text.includes('hdr10+') || text.includes('hdr10')) {
+    tags.push('HDR10+');
+  } else if (text.includes('hdr')) {
+    tags.push('HDR');
+  }
+
+  if (text.includes('dolby vision') || text.includes('dovi')) {
+    tags.push('Dolby Vision');
+  }
+
+  if (text.includes('web-dl') || text.includes('webrip')) {
+    tags.push('WEB-DL');
+  } else if (text.includes('bluray') || text.includes('blu-ray')) {
+    tags.push('BluRay');
+  }
+
+  if (text.includes('hevc') || text.includes('x265')) {
+    tags.push('hevc');
+  } else if (text.includes('x264') || text.includes('h264')) {
+    tags.push('h264');
+  }
+
+  if (text.includes('atmos')) {
+    tags.push('Atmos');
+  } else if (text.includes('aac')) {
+    tags.push('AAC');
+  }
+
+  return tags;
+};
+
+const getLanguageLabel = (stream) => {
+  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  const languages = [];
+
+  if (text.includes('hindi')) languages.push('Hindi');
+  if (text.includes('english')) languages.push('English');
+  if (text.includes('tamil')) languages.push('Tamil');
+  if (text.includes('telugu')) languages.push('Telugu');
+  if (text.includes('malayalam')) languages.push('Malayalam');
+  if (text.includes('kannada')) languages.push('Kannada');
+  if (text.includes('french')) languages.push('French');
+  if (text.includes('german')) languages.push('German');
+
+  if (languages.length === 0) {
+    return 'Unknown';
+  }
+
+  return [...new Set(languages)].join(' + ');
+};
+
+const getSourceLabel = (stream) => {
+  if (stream.sourceSite) {
+    return stream.sourceSite;
+  }
+
+  return toTitleCaseLabel(stream.provider || 'default');
+};
+
+const formatStremioCardTitle = (stream) => {
+  const tags = getCompactTags(stream);
+  const topLine = [
+    `🎬 ${stream.quality || 'Unknown'}`,
+    ...tags
+  ].join(' ✦ ');
+
+  const lines = [
+    topLine,
+    `💾 ${stream.size || 'Unknown size'}`,
+    `🌐 ${getLanguageLabel(stream)}`,
+    `🔗 ${getSourceLabel(stream)}`,
+    `${String(stream.quality || 'Unknown').toUpperCase()}`
+  ];
+
+  return lines.join('\n');
+};
+
 export class HttpError extends Error {
   constructor(statusCode, message, details = undefined) {
     super(message);
@@ -447,14 +528,9 @@ export class StreamManager {
       );
       const stremioStreams = normalizedStreams.map((stream) => ({
         name: stream.provider
-          ? `NebulaStreams ${String(stream.provider).toUpperCase()} ${getStreamFormatBadge(stream)}`
-          : `NebulaStreams ${getStreamFormatBadge(stream)}`,
-        title: [
-          getStreamFormatBadge(stream),
-          stream.name || null,
-          stream.quality || null,
-          stream.size || null
-        ].filter(Boolean).join(' • '),
+          ? `NebulaStreams | ${toTitleCaseLabel(stream.provider)}`
+          : 'NebulaStreams',
+        title: formatStremioCardTitle(stream),
         url: stream.streamUrl,
         behaviorHints: {
           notWebReady: false,
