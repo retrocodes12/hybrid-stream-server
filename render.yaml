@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: nebulastreams
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: CACHE_DIR
+        value: /tmp/nebulastreams-cache
+      - key: STREMIO_ADDON_ID
+        value: community.nebulastreams
+      - key: STREMIO_ADDON_NAME
+        value: NebulaStreams
+      - key: MAX_CACHE_SIZE_GB
+        value: "1"
+      - key: PROVIDER_MAX_CONCURRENCY
+        value: "3"
+      - key: HTTP_MAX_SOCKETS
+        value: "4"
