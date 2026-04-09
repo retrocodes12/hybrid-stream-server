@@ -496,6 +496,19 @@ const bootstrap = async () => {
 
   app.disable('x-powered-by');
   app.set('trust proxy', true);
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept, Origin, User-Agent');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+
+    next();
+  });
   app.use(express.json({ limit: '32kb' }));
   app.use('/assets', express.static('assets', {
     maxAge: '7d',
