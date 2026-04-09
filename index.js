@@ -497,7 +497,10 @@ const bootstrap = async () => {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
   app.use(express.json({ limit: '32kb' }));
-  app.use('/assets', express.static('assets'));
+  app.use('/assets', express.static('assets', {
+    maxAge: '7d',
+    immutable: true
+  }));
 
   app.get('/health', async (_req, res, next) => {
     try {
