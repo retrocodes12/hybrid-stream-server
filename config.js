@@ -40,6 +40,8 @@ export const config = Object.freeze({
   DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || '',
   DONATION_SECONDARY_URL: process.env.DONATION_SECONDARY_URL || '',
   DONATION_UPI_ID: process.env.DONATION_UPI_ID || '',
+  DONATION_CRYPTO_LABEL: process.env.DONATION_CRYPTO_LABEL || 'USDT (TRC20)',
+  DONATION_CRYPTO_ADDRESS: process.env.DONATION_CRYPTO_ADDRESS || 'TF1WTj7BZVdU64rtMHsKwKrbqVXWtSynoD',
   TMDB_API_KEY: process.env.TMDB_API_KEY || '439c478a771f35c05022f9feabcca01c',
   MAX_CACHE_SIZE_GB: toPositiveNumber(process.env.MAX_CACHE_SIZE_GB, 10),
   MAX_ACTIVE_TORRENTS: toBoundedInteger(process.env.MAX_ACTIVE_TORRENTS, 1, 1, 2),

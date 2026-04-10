@@ -669,6 +669,15 @@ const renderDonatePage = ({ baseUrl }) => {
       </div>
     `
     : '';
+  const cryptoSection = config.DONATION_CRYPTO_ADDRESS
+    ? `
+      <div class="support-card">
+        <div class="support-label">${escapeHtml(config.DONATION_CRYPTO_LABEL || 'Crypto')}</div>
+        <div class="support-value" id="crypto-value">${escapeHtml(config.DONATION_CRYPTO_ADDRESS)}</div>
+        <button type="button" class="copy-button" id="copy-crypto">Copy Wallet Address</button>
+      </div>
+    `
+    : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -877,7 +886,7 @@ const renderDonatePage = ({ baseUrl }) => {
 
           ${primaryButton || secondaryButton ? `<div class="actions">${primaryButton}${secondaryButton}</div>` : ''}
 
-          ${upiSection ? `<div class="support-grid">${upiSection}</div>` : ''}
+          ${upiSection || cryptoSection ? `<div class="support-grid">${upiSection}${cryptoSection}</div>` : ''}
 
           <div class="flash" id="flash" aria-live="polite"></div>
           <p class="footer-note">Main site: <a href="${escapeHtml(baseUrl)}" target="_blank" rel="noopener">${escapeHtml(baseUrl)}</a></p>
@@ -886,33 +895,44 @@ const renderDonatePage = ({ baseUrl }) => {
     </main>
     <script>
       const flash = document.getElementById('flash');
-      const copyButton = document.getElementById('copy-upi');
+      const copyText = async (value, successMessage) => {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+          } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+          }
+
+          flash.textContent = successMessage;
+          clearTimeout(flash._timer);
+          flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
+        } catch {
+          flash.textContent = 'Copy failed. Please copy manually.';
+        }
+      };
+
+      const copyUpiButton = document.getElementById('copy-upi');
       const upiValue = document.getElementById('upi-value');
 
-      if (copyButton && upiValue) {
-        copyButton.addEventListener('click', async () => {
-          try {
-            const value = upiValue.textContent.trim();
+      if (copyUpiButton && upiValue) {
+        copyUpiButton.addEventListener('click', () => {
+          void copyText(upiValue.textContent.trim(), 'UPI ID copied.');
+        });
+      }
 
-            if (navigator.clipboard?.writeText) {
-              await navigator.clipboard.writeText(value);
-            } else {
-              const textarea = document.createElement('textarea');
-              textarea.value = value;
-              textarea.style.position = 'fixed';
-              textarea.style.opacity = '0';
-              document.body.appendChild(textarea);
-              textarea.select();
-              document.execCommand('copy');
-              document.body.removeChild(textarea);
-            }
+      const copyCryptoButton = document.getElementById('copy-crypto');
+      const cryptoValue = document.getElementById('crypto-value');
 
-            flash.textContent = 'UPI ID copied.';
-            clearTimeout(flash._timer);
-            flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
-          } catch {
-            flash.textContent = 'Copy failed. Please copy manually.';
-          }
+      if (copyCryptoButton && cryptoValue) {
+        copyCryptoButton.addEventListener('click', () => {
+          void copyText(cryptoValue.textContent.trim(), 'Wallet address copied.');
         });
       }
     </script>
