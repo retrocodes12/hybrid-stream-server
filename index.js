@@ -29,6 +29,17 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     .slice(0, 12)
     .map((provider) => escapeHtml(provider.id))
     .join(', ');
+  const hasDonationSupport = Boolean(
+    config.DONATION_CRYPTO_ADDRESS ||
+    config.DONATION_PRIMARY_URL ||
+    config.DONATION_SECONDARY_URL ||
+    config.DONATION_UPI_ID
+  );
+  const donateCryptoLabel = escapeHtml(config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)');
+  const donateCryptoAddress = escapeHtml(config.DONATION_CRYPTO_ADDRESS || '');
+  const donatePrimaryUrl = escapeHtml(config.DONATION_PRIMARY_URL || '');
+  const donateSecondaryUrl = escapeHtml(config.DONATION_SECONDARY_URL || '');
+  const donateUpiId = escapeHtml(config.DONATION_UPI_ID || '');
 
   return `<!doctype html>
 <html lang="en">
@@ -236,11 +247,267 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         color: #e4ebff;
         font-size: 13px;
       }
+      .notes {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+      .notes-title {
+        margin: 0 0 12px;
+        color: #f2d469;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        text-align: center;
+      }
+      .notes-list {
+        display: grid;
+        gap: 10px;
+      }
+      .note-item {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+      }
+      .note-item strong {
+        color: #e7ecff;
+      }
 
       .support {
         margin-top: 22px;
         padding-top: 18px;
         border-top: 1px solid rgba(255,255,255,0.08);
+      }
+      .support-promo {
+        margin-top: 18px;
+        padding: 16px 18px 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.04);
+        box-shadow: 0 14px 34px rgba(0,0,0,0.18);
+      }
+      .support-promo-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .support-promo-title {
+        margin: 0;
+        font-size: 15px;
+        color: #eef2ff;
+        font-weight: 700;
+      }
+      .support-hearts {
+        color: #ff90c2;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+      }
+      .support-promo-copy {
+        margin: 10px 0 0;
+        color: #ced8f6;
+        font-size: 14px;
+      }
+      .support-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 14px;
+        min-height: 42px;
+        padding: 0 16px;
+        border-radius: 999px;
+        text-decoration: none;
+        color: #f8fbff;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.1);
+        transition: transform 140ms ease, box-shadow 160ms ease, background 140ms ease;
+      }
+      .support-link:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.11);
+        box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+      }
+      .free-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.035);
+      }
+      .free-copy {
+        min-width: 0;
+      }
+      .free-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: #eef2ff;
+      }
+      .free-title strong {
+        color: #8cf0c0;
+      }
+      .free-copy p {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .donate-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 118px;
+        padding: 12px 16px;
+        border-radius: 14px;
+        border: 0;
+        background: linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.95));
+        color: #f7fffb;
+        box-shadow: 0 12px 24px rgba(16,185,129,0.22);
+      }
+      .donate-toggle.close-state {
+        background: rgba(255,255,255,0.08);
+        color: #eef2ff;
+        box-shadow: none;
+      }
+      .donation-panel {
+        display: none;
+        margin-top: 16px;
+        padding: 18px;
+        border-radius: 22px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
+        border: 1px solid rgba(255,255,255,0.09);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+      }
+      .donation-panel.open {
+        display: block;
+      }
+      .donation-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 176px;
+        gap: 16px;
+      }
+      .donation-title {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.05;
+      }
+      .donation-subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .donation-fields {
+        display: grid;
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .donation-select,
+      .donation-input {
+        width: 100%;
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+        color: var(--text);
+        font: inherit;
+        outline: none;
+      }
+      .donation-select:focus,
+      .donation-input:focus {
+        border-color: rgba(99, 102, 241, 0.6);
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
+      }
+      .donation-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 120px;
+        gap: 10px;
+      }
+      .donation-hint {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .donation-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .mini-button {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        text-decoration: none;
+        cursor: pointer;
+        font: inherit;
+        transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+      }
+      .mini-button:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.1);
+      }
+      .mini-button.primary {
+        border: 0;
+        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+        color: #f7fbff;
+        box-shadow: 0 12px 26px rgba(99, 102, 241, 0.22);
+      }
+      .wallet-box {
+        margin-top: 14px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(12,14,22,0.42);
+        border: 1px solid rgba(255,255,255,0.07);
+      }
+      .wallet-label {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .wallet-address {
+        margin: 0;
+        color: #eef2ff;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.55;
+        word-break: break-word;
+      }
+      .qr-side {
+        display: grid;
+        align-content: start;
+        gap: 10px;
+      }
+      .qr-frame {
+        display: grid;
+        place-items: center;
+        aspect-ratio: 1;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.98);
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 14px 28px rgba(0,0,0,0.18);
+      }
+      .qr-frame img {
+        width: 88%;
+        height: 88%;
+        object-fit: contain;
+      }
+      .qr-note {
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
       }
 
       .support-title {
@@ -272,6 +539,16 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         }
 
         .actions {
+          grid-template-columns: 1fr;
+        }
+        .free-strip {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .donation-shell {
+          grid-template-columns: 1fr;
+        }
+        .donation-row {
           grid-template-columns: 1fr;
         }
       }
@@ -314,9 +591,77 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
           <div class="flash" id="flash" aria-live="polite"></div>
 
+          <div class="notes">
+            <div class="notes-title">Important Notes</div>
+            <div class="notes-list">
+              <p class="note-item"><strong>Playback compatibility:</strong> lighter MP4 or HLS sources usually work best with Stremio native players. Heavy MKV, HEVC, HDR, or 10-bit files may work better in VLC or another external player.</p>
+              <p class="note-item"><strong>Provider matches:</strong> NebulaStreams aggregates results from public sources. A stream can occasionally be missing, slow, or imperfect, so if one card fails, try another source.</p>
+              <p class="note-item"><strong>Cold starts:</strong> the first request can take longer while the hosted backend wakes up and providers are queried in parallel.</p>
+              <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store the media files themselves. It discovers external links and passes them through the configured playback flow.</p>
+            </div>
+          </div>
+
           <div class="support">
             <div class="support-title">Support</div>
             <p>Use the manifest directly in Stremio if install does not open automatically. You can also paste a small provider list above to keep results focused.</p>
+            ${hasDonationSupport ? `
+              <div class="support-promo">
+                <div class="free-strip">
+                  <div class="free-copy">
+                    <div class="free-title">This addon is <strong>completely free</strong>.</div>
+                    <p>You can donate to support the developer and keep this project alive.</p>
+                  </div>
+                  <button type="button" class="donate-toggle" id="donate-toggle">
+                    <span>♥</span>
+                    <span id="donate-toggle-text">Donate</span>
+                  </button>
+                </div>
+                <div class="donation-panel" id="donation-panel">
+                  <div class="donation-shell">
+                    <div>
+                      <h3 class="donation-title">Donation</h3>
+                      <p class="donation-subtitle">Support NebulaStreams directly with crypto. Use the wallet or QR and send on the exact network shown below.</p>
+                      <div class="donation-fields">
+                        <select class="donation-select" id="donation-network">
+                          ${config.DONATION_CRYPTO_ADDRESS ? `<option>${donateCryptoLabel}</option>` : ''}
+                          ${config.DONATION_UPI_ID ? `<option>UPI</option>` : ''}
+                        </select>
+                        <div class="donation-row">
+                          <input class="donation-input" id="donation-amount" type="number" min="1" step="1" placeholder="Enter amount">
+                          <input class="donation-input" value="USD" readonly>
+                        </div>
+                        <p class="donation-hint" id="donation-hint">Suggested support amount in USD. Send the equivalent amount in ${donateCryptoLabel || 'the selected method'}.</p>
+                      </div>
+                      <div class="wallet-box">
+                        <div class="wallet-label" id="wallet-label">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoLabel : 'Payment method'}</div>
+                        <p class="wallet-address" id="wallet-address">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoAddress : donateUpiId}</p>
+                      </div>
+                      <div class="donation-actions">
+                        <button type="button" class="mini-button primary" id="copy-donation-address">Copy address</button>
+                        <a class="mini-button" href="${escapeHtml(baseUrl)}/donate">Open full donation page</a>
+                        ${config.DONATION_PRIMARY_URL ? `<a class="mini-button" href="${donatePrimaryUrl}" target="_blank" rel="noopener">External checkout</a>` : ''}
+                        ${config.DONATION_SECONDARY_URL ? `<a class="mini-button" href="${donateSecondaryUrl}" target="_blank" rel="noopener">More options</a>` : ''}
+                      </div>
+                    </div>
+                    <div class="qr-side">
+                      <div class="qr-frame">
+                        <img id="donation-qr" alt="Donation QR">
+                      </div>
+                      <div class="qr-note">Scan to open the payment address quickly in your wallet.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : `
+              <div class="support-promo">
+                <div class="support-promo-head">
+                  <div class="support-promo-title">Feeling generous?</div>
+                  <div class="support-hearts">♥ ♥ ♥</div>
+                </div>
+                <p class="support-promo-copy">If NebulaStreams saves you time, helps your setup, or just feels solid, you can support the project and keep it improving.</p>
+                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Open Donation Page</a>
+              </div>
+            `}
           </div>
         </div>
       </section>
@@ -329,6 +674,25 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const flash = document.getElementById('flash');
       const copyButton = document.getElementById('copy-url');
       const installButton = document.getElementById('install-addon');
+      const donateToggle = document.getElementById('donate-toggle');
+      const donateToggleText = document.getElementById('donate-toggle-text');
+      const donationPanel = document.getElementById('donation-panel');
+      const donationNetwork = document.getElementById('donation-network');
+      const donationQr = document.getElementById('donation-qr');
+      const walletLabel = document.getElementById('wallet-label');
+      const walletAddress = document.getElementById('wallet-address');
+      const copyDonationAddress = document.getElementById('copy-donation-address');
+      const donationHint = document.getElementById('donation-hint');
+      const donationMethods = {
+        crypto: {
+          label: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS ? config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)' : '')},
+          value: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')}
+        },
+        upi: {
+          label: 'UPI',
+          value: ${JSON.stringify(config.DONATION_UPI_ID || '')}
+        }
+      };
 
       const update = () => {
         const rawValue = providerInput.value
@@ -353,6 +717,50 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
       };
 
+      const copyText = async (value, successMessage) => {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+          } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+          }
+
+          showFlash(successMessage);
+        } catch (error) {
+          console.error('Copy failed', error);
+          showFlash('Copy failed. Please copy manually.', true);
+        }
+      };
+
+      const setDonationMethod = () => {
+        if (!donationNetwork || !walletLabel || !walletAddress || !donationQr) {
+          return;
+        }
+
+        const method = donationNetwork.value === 'UPI' && donationMethods.upi.value
+          ? donationMethods.upi
+          : donationMethods.crypto;
+
+        walletLabel.textContent = method.label || 'Payment method';
+        walletAddress.textContent = method.value || 'Not configured';
+        donationQr.src = method.value
+          ? 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&data=' + encodeURIComponent(method.value)
+          : '';
+
+        if (donationHint) {
+          donationHint.textContent = method.value
+            ? 'Suggested support amount in USD. Send the equivalent amount using ' + method.label + '.'
+            : 'No donation method is configured yet.';
+        }
+      };
+
       const getManifestUrl = () => manifestUrl.textContent.trim();
 
       installButton.addEventListener('click', () => {
@@ -364,25 +772,31 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         const manifest = getManifestUrl();
 
         try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(manifest);
-          } else {
-            const textarea = document.createElement('textarea');
-            textarea.value = manifest;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-          }
-
-          showFlash('Manifest URL copied.');
-        } catch (error) {
-          console.error('Copy failed', error);
-          showFlash('Copy failed. Please copy manually.', true);
-        }
+          await copyText(manifest, 'Manifest URL copied.');
+        } catch {}
       });
+
+      if (donateToggle && donationPanel) {
+        donateToggle.addEventListener('click', () => {
+          const isOpen = donationPanel.classList.toggle('open');
+          donateToggle.classList.toggle('close-state', isOpen);
+
+          if (donateToggleText) {
+            donateToggleText.textContent = isOpen ? 'Close' : 'Donate';
+          }
+        });
+      }
+
+      if (donationNetwork) {
+        donationNetwork.addEventListener('change', setDonationMethod);
+        setDonationMethod();
+      }
+
+      if (copyDonationAddress && walletAddress) {
+        copyDonationAddress.addEventListener('click', () => {
+          void copyText(walletAddress.textContent.trim(), 'Donation address copied.');
+        });
+      }
 
       providerInput.addEventListener('input', update);
       update();
@@ -654,6 +1068,8 @@ const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
 </html>`;
 
 const renderDonatePage = ({ baseUrl }) => {
+  const cryptoLabel = config.DONATION_CRYPTO_LABEL || 'Crypto';
+  const cryptoAddress = config.DONATION_CRYPTO_ADDRESS || '';
   const primaryButton = config.DONATION_PRIMARY_URL
     ? `<a class="button button-primary" href="${escapeHtml(config.DONATION_PRIMARY_URL)}" target="_blank" rel="noopener">Support NebulaStreams</a>`
     : '';
@@ -671,11 +1087,35 @@ const renderDonatePage = ({ baseUrl }) => {
     : '';
   const cryptoSection = config.DONATION_CRYPTO_ADDRESS
     ? `
-      <div class="support-card">
-        <div class="support-label">${escapeHtml(config.DONATION_CRYPTO_LABEL || 'Crypto')}</div>
-        <div class="support-value" id="crypto-value">${escapeHtml(config.DONATION_CRYPTO_ADDRESS)}</div>
-        <button type="button" class="copy-button" id="copy-crypto">Copy Wallet Address</button>
-      </div>
+      <section class="payment-panel">
+        <div class="qr-card">
+          <div class="qr-shell">
+            <img id="crypto-qr" alt="${escapeHtml(cryptoLabel)} QR">
+          </div>
+          <div class="qr-help">Scan with any wallet that supports ${escapeHtml(cryptoLabel)}.</div>
+        </div>
+        <div class="payment-details">
+          <div class="support-card">
+            <div class="support-label">Network</div>
+            <div class="support-value">${escapeHtml(cryptoLabel)}</div>
+          </div>
+          <div class="support-card">
+            <div class="support-label">Wallet address</div>
+            <div class="support-value mono" id="crypto-value">${escapeHtml(cryptoAddress)}</div>
+            <button type="button" class="copy-button" id="copy-crypto">Copy Wallet Address</button>
+          </div>
+          <div class="support-card">
+            <div class="support-label">Suggested support</div>
+            <div class="amount-chips" id="amount-chips">
+              <button type="button" class="amount-chip active" data-amount="5">$5</button>
+              <button type="button" class="amount-chip" data-amount="10">$10</button>
+              <button type="button" class="amount-chip" data-amount="25">$25</button>
+              <button type="button" class="amount-chip" data-amount="50">$50</button>
+            </div>
+            <div class="amount-note" id="amount-note">Suggested donation: $5 in ${escapeHtml(cryptoLabel)}.</div>
+          </div>
+        </div>
+      </section>
     `
     : '';
 
@@ -820,11 +1260,49 @@ const renderDonatePage = ({ baseUrl }) => {
         gap: 14px;
         margin-top: 22px;
       }
+      .payment-panel {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 16px;
+        margin-top: 22px;
+      }
+      .payment-details {
+        display: grid;
+        gap: 14px;
+      }
+      .qr-card,
       .support-card {
         padding: 18px;
         border-radius: 22px;
         background: rgba(255,255,255,0.045);
         border: 1px solid rgba(255,255,255,0.08);
+      }
+      .qr-card {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .qr-shell {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 20px;
+        background: rgba(255,255,255,0.96);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 14px 34px rgba(0,0,0,0.18);
+        overflow: hidden;
+      }
+      .qr-shell img {
+        width: 86%;
+        height: 86%;
+        object-fit: contain;
+      }
+      .qr-help {
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 13px;
+        text-align: center;
       }
       .support-label {
         color: var(--muted);
@@ -837,6 +1315,40 @@ const renderDonatePage = ({ baseUrl }) => {
         font-size: 18px;
         color: #eef2ff;
         word-break: break-word;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 15px;
+      }
+      .amount-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .amount-chip {
+        appearance: none;
+        border: 1px solid rgba(255,255,255,0.09);
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+      .amount-chip:hover {
+        transform: translateY(-1px);
+      }
+      .amount-chip.active {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.26), rgba(59, 130, 246, 0.2));
+        border-color: rgba(123, 97, 255, 0.5);
+        box-shadow: 0 10px 22px rgba(99, 102, 241, 0.2);
+      }
+      .amount-note {
+        margin-top: 12px;
+        color: #d7e4ff;
+        font-size: 14px;
       }
       .copy-button {
         margin-top: 14px;
@@ -867,6 +1379,9 @@ const renderDonatePage = ({ baseUrl }) => {
         .actions {
           grid-template-columns: 1fr;
         }
+        .payment-panel {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
@@ -886,7 +1401,8 @@ const renderDonatePage = ({ baseUrl }) => {
 
           ${primaryButton || secondaryButton ? `<div class="actions">${primaryButton}${secondaryButton}</div>` : ''}
 
-          ${upiSection || cryptoSection ? `<div class="support-grid">${upiSection}${cryptoSection}</div>` : ''}
+          ${cryptoSection}
+          ${upiSection ? `<div class="support-grid">${upiSection}</div>` : ''}
 
           <div class="flash" id="flash" aria-live="polite"></div>
           <p class="footer-note">Main site: <a href="${escapeHtml(baseUrl)}" target="_blank" rel="noopener">${escapeHtml(baseUrl)}</a></p>
@@ -895,6 +1411,7 @@ const renderDonatePage = ({ baseUrl }) => {
     </main>
     <script>
       const flash = document.getElementById('flash');
+      const amountNote = document.getElementById('amount-note');
       const copyText = async (value, successMessage) => {
         try {
           if (navigator.clipboard?.writeText) {
@@ -929,12 +1446,29 @@ const renderDonatePage = ({ baseUrl }) => {
 
       const copyCryptoButton = document.getElementById('copy-crypto');
       const cryptoValue = document.getElementById('crypto-value');
+      const qrImage = document.getElementById('crypto-qr');
 
       if (copyCryptoButton && cryptoValue) {
         copyCryptoButton.addEventListener('click', () => {
           void copyText(cryptoValue.textContent.trim(), 'Wallet address copied.');
         });
       }
+
+      if (qrImage && cryptoValue) {
+        const qrPayload = encodeURIComponent(cryptoValue.textContent.trim());
+        qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=' + qrPayload;
+      }
+
+      document.querySelectorAll('.amount-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+          document.querySelectorAll('.amount-chip').forEach((button) => button.classList.remove('active'));
+          chip.classList.add('active');
+
+          if (amountNote) {
+            amountNote.textContent = 'Suggested donation: $' + chip.dataset.amount + ' in ' + ${JSON.stringify(cryptoLabel)} + '.';
+          }
+        });
+      });
     </script>
   </body>
 </html>`;
@@ -1134,7 +1668,7 @@ const bootstrap = async () => {
     }
   });
 
-  app.get('/configure', (req, res) => {
+  const renderConfigureResponse = (req, res) => {
     res
       .status(200)
       .type('html')
@@ -1142,7 +1676,10 @@ const bootstrap = async () => {
         baseUrl: `${req.protocol}://${req.get('host')}`,
         providers: providerService.listProviders()
       }));
-  });
+  };
+
+  app.get('/', renderConfigureResponse);
+  app.get('/configure', renderConfigureResponse);
 
   app.get('/donate', (req, res) => {
     res
