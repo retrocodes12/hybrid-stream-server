@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 
 import { config } from './config.js';
@@ -29,6 +30,9 @@ const DEFAULT_QUALITY_PRIORITY = Object.freeze([
   'auto',
   'unknown'
 ]);
+
+const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
+const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const renderConfigurePage = ({ baseUrl, providers }) => {
   const providerCards = providers.map((provider) => `
@@ -510,9 +514,28 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         margin: 0 0 8px;
         font-size: 34px;
       }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+      }
       p {
         margin: 0;
         color: var(--muted);
+      }
+      .logout-form {
+        margin: 0;
+      }
+      .logout-form button {
+        appearance: none;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
       }
       .grid {
         display: grid;
@@ -563,8 +586,15 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
   </head>
   <body>
     <main>
-      <h1>NebulaStreams Admin</h1>
-      <p>Private runtime dashboard for service health, usage, cache, provider state, and source registry.</p>
+      <div class="header">
+        <div>
+          <h1>NebulaStreams Admin</h1>
+          <p>Private runtime dashboard for service health, usage, cache, provider state, and source registry.</p>
+        </div>
+        <form class="logout-form" method="post" action="/admin/logout">
+          <button type="submit">Sign out</button>
+        </form>
+      </div>
 
       <section class="grid">
         <div class="card"><div class="label">Uptime</div><div class="value">${stats.runtime.uptimeSeconds}s</div></div>
@@ -609,6 +639,107 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
   </body>
 </html>`;
 
+const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NebulaStreams Admin Login</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0f19;
+        --panel: #141b2a;
+        --text: #eef3ff;
+        --muted: #98a7c7;
+        --accent: #66b6ff;
+        --danger: #ff7b8a;
+        --border: rgba(255,255,255,0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top left, rgba(102,182,255,0.18), transparent 24%),
+          radial-gradient(circle at top right, rgba(123,112,255,0.18), transparent 20%),
+          var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      .panel {
+        width: min(420px, calc(100vw - 32px));
+        padding: 28px;
+        border-radius: 22px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+        box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      form {
+        display: grid;
+        gap: 14px;
+        margin-top: 22px;
+      }
+      label {
+        display: grid;
+        gap: 8px;
+      }
+      input {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        font: inherit;
+      }
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 16px;
+        background: linear-gradient(135deg, var(--accent), #7b70ff);
+        color: #081018;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .error {
+        margin-top: 14px;
+        color: var(--danger);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>NebulaStreams Admin</h1>
+      <p>Sign in to view private runtime stats and usage data.</p>
+      ${errorMessage ? `<div class="error">${escapeHtml(errorMessage)}</div>` : ''}
+      <form method="post" action="/admin/login">
+        <label>
+          <span>Username</span>
+          <input name="username" type="text" autocomplete="username" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>`;
+
 const parseBasicAuth = (headerValue) => {
   if (!headerValue || !headerValue.startsWith('Basic ')) {
     return null;
@@ -631,15 +762,108 @@ const parseBasicAuth = (headerValue) => {
   }
 };
 
-const requireAdminAuth = (req, res, next) => {
-  const credentials = parseBasicAuth(req.headers.authorization);
+const parseCookies = (cookieHeader) => {
+  if (!cookieHeader) {
+    return {};
+  }
 
-  if (!credentials || credentials.username !== config.ADMIN_USERNAME || credentials.password !== config.ADMIN_PASSWORD) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="NebulaStreams Admin"');
-    res.status(401).send('Authentication required');
+  return cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((cookies, part) => {
+      const separatorIndex = part.indexOf('=');
+
+      if (separatorIndex === -1) {
+        return cookies;
+      }
+
+      const key = part.slice(0, separatorIndex);
+      const value = part.slice(separatorIndex + 1);
+      cookies[key] = decodeURIComponent(value);
+      return cookies;
+    }, {});
+};
+
+const createAdminSessionToken = () => {
+  const payload = Buffer.from(JSON.stringify({
+    username: config.ADMIN_USERNAME,
+    expiresAt: Date.now() + ADMIN_SESSION_TTL_MS
+  })).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', `${config.ADMIN_USERNAME}:${config.ADMIN_PASSWORD}`)
+    .update(payload)
+    .digest('base64url');
+
+  return `${payload}.${signature}`;
+};
+
+const verifyAdminSessionToken = (token) => {
+  if (!token || !token.includes('.')) {
+    return false;
+  }
+
+  const [payload, signature] = token.split('.', 2);
+  const expectedSignature = crypto
+    .createHmac('sha256', `${config.ADMIN_USERNAME}:${config.ADMIN_PASSWORD}`)
+    .update(payload)
+    .digest('base64url');
+
+  if (signature.length !== expectedSignature.length) {
+    return false;
+  }
+
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    return false;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return decoded.username === config.ADMIN_USERNAME && Number(decoded.expiresAt) > Date.now();
+  } catch {
+    return false;
+  }
+};
+
+const setAdminSessionCookie = (req, res) => {
+  const cookieParts = [
+    `${ADMIN_COOKIE_NAME}=${encodeURIComponent(createAdminSessionToken())}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(ADMIN_SESSION_TTL_MS / 1000)}`
+  ];
+
+  if (req.secure) {
+    cookieParts.push('Secure');
+  }
+
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+};
+
+const clearAdminSessionCookie = (res) => {
+  res.setHeader('Set-Cookie', `${ADMIN_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+};
+
+const hasValidAdminSession = (req) => {
+  const cookies = parseCookies(req.headers.cookie);
+  return verifyAdminSessionToken(cookies[ADMIN_COOKIE_NAME]);
+};
+
+const requireAdminAuth = (req, res, next) => {
+  if (hasValidAdminSession(req)) {
+    next();
     return;
   }
 
+  const credentials = parseBasicAuth(req.headers.authorization);
+
+  if (!credentials || credentials.username !== config.ADMIN_USERNAME || credentials.password !== config.ADMIN_PASSWORD) {
+    res.redirect(302, '/admin/login');
+    return;
+  }
+
+  setAdminSessionCookie(req, res);
   next();
 };
 
@@ -686,6 +910,7 @@ const bootstrap = async () => {
     next();
   });
   app.use(express.json({ limit: '32kb' }));
+  app.use(express.urlencoded({ extended: false, limit: '8kb' }));
   app.use('/assets', express.static('assets', {
     maxAge: '7d',
     immutable: true
@@ -717,6 +942,35 @@ const bootstrap = async () => {
         baseUrl: `${req.protocol}://${req.get('host')}`,
         providers: providerService.listProviders()
       }));
+  });
+
+  app.get('/admin/login', (req, res) => {
+    if (hasValidAdminSession(req)) {
+      res.redirect(302, '/admin');
+      return;
+    }
+
+    res.status(200).type('html').send(renderAdminLoginPage({
+      errorMessage: req.query.error === 'invalid' ? 'Invalid admin credentials.' : ''
+    }));
+  });
+
+  app.post('/admin/login', (req, res) => {
+    const { username = '', password = '' } = req.body ?? {};
+
+    if (username !== config.ADMIN_USERNAME || password !== config.ADMIN_PASSWORD) {
+      clearAdminSessionCookie(res);
+      res.redirect(302, '/admin/login?error=invalid');
+      return;
+    }
+
+    setAdminSessionCookie(req, res);
+    res.redirect(302, '/admin');
+  });
+
+  app.post('/admin/logout', (req, res) => {
+    clearAdminSessionCookie(res);
+    res.redirect(302, '/admin/login');
   });
 
   app.get('/admin', requireAdminAuth, async (req, res, next) => {
