@@ -1,8 +1,12 @@
 import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
-import { config } from '../config.js';
+import path from 'node:path';
+import { promises as fsPromises } from 'node:fs';
+import { config, cacheConfig } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
+
+const { mkdir, readFile, rm, writeFile } = fsPromises;
 
 const detectSourceType = (source) => {
   const normalized = String(source || '').trim();
@@ -452,6 +456,90 @@ export class StreamManager {
     this.providerService = providerService;
     this.imdbResolver = imdbResolver;
     this.activeStreams = 0;
+    this.stremioResultCache = new Map();
+    this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
+    this.stremioResultCacheDirReady = null;
+  }
+
+  async ensureStremioResultCacheDir() {
+    if (!this.stremioResultCacheDirReady) {
+      this.stremioResultCacheDirReady = mkdir(this.stremioResultCacheDir, { recursive: true });
+    }
+
+    await this.stremioResultCacheDirReady;
+  }
+
+  buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority }) {
+    return JSON.stringify({
+      version: 1,
+      tmdbId,
+      mediaType,
+      season: season ?? null,
+      episode: episode ?? null,
+      providers: providers ?? [],
+      qualityPriority
+    });
+  }
+
+  getStremioResultCachePath(cacheKey) {
+    const fileName = `${createHash('sha1').update(cacheKey).digest('hex')}.json`;
+    return path.join(this.stremioResultCacheDir, fileName);
+  }
+
+  async getCachedStremioStreams(cacheKey) {
+    const cached = this.stremioResultCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.streams.map((stream) => ({ ...stream }));
+    }
+
+    if (cached) {
+      this.stremioResultCache.delete(cacheKey);
+    }
+
+    await this.ensureStremioResultCacheDir();
+
+    try {
+      const payload = JSON.parse(await readFile(this.getStremioResultCachePath(cacheKey), 'utf8'));
+
+      if (!payload || payload.expiresAt <= Date.now() || !Array.isArray(payload.streams)) {
+        await rm(this.getStremioResultCachePath(cacheKey), { force: true });
+        return null;
+      }
+
+      this.stremioResultCache.set(cacheKey, {
+        expiresAt: payload.expiresAt,
+        streams: payload.streams.map((stream) => ({ ...stream }))
+      });
+
+      return payload.streams.map((stream) => ({ ...stream }));
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        logger.warn('stremio result cache read failed', {
+          error
+        });
+      }
+
+      return null;
+    }
+  }
+
+  async setCachedStremioStreams(cacheKey, streams) {
+    const entry = {
+      expiresAt: Date.now() + (config.STREMIO_RESULT_CACHE_TTL_SECONDS * 1000),
+      streams: streams.map((stream) => ({ ...stream }))
+    };
+
+    this.stremioResultCache.set(cacheKey, entry);
+    await this.ensureStremioResultCacheDir();
+
+    try {
+      await writeFile(this.getStremioResultCachePath(cacheKey), JSON.stringify(entry));
+    } catch (error) {
+      logger.warn('stremio result cache write failed', {
+        error
+      });
+    }
   }
 
   getRequestedProviders(req) {
@@ -597,6 +685,23 @@ export class StreamManager {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
+      const resultCacheKey = this.buildStremioResultCacheKey({
+        tmdbId,
+        mediaType: parsed.mediaType,
+        season: parsed.season,
+        episode: parsed.episode,
+        providers: requestedProviders,
+        qualityPriority
+      });
+      const cachedStreams = await this.getCachedStremioStreams(resultCacheKey);
+
+      if (cachedStreams) {
+        res.json({
+          streams: cachedStreams
+        });
+        return;
+      }
+
       const result = await this.providerService.getFastStreams({
         providers: requestedProviders.length > 0 ? requestedProviders : null,
         tmdbId,
@@ -606,6 +711,7 @@ export class StreamManager {
       });
 
       if (result.streams.length === 0) {
+        await this.setCachedStremioStreams(resultCacheKey, []);
         res.json({ streams: [] });
         return;
       }
@@ -613,6 +719,7 @@ export class StreamManager {
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
       const httpOnlyStreams = normalizedStreams.filter((stream) => stream.transport !== 'torrent' && !stream.magnet);
       if (httpOnlyStreams.length === 0) {
+        await this.setCachedStremioStreams(resultCacheKey, []);
         res.json({ streams: [] });
         return;
       }
@@ -623,6 +730,8 @@ export class StreamManager {
       const stremioStreams = httpOnlyStreams
         .map((stream) => toStremioStreamObject(stream, parsed))
         .filter(Boolean);
+
+      await this.setCachedStremioStreams(resultCacheKey, stremioStreams);
 
       res.json({
         streams: stremioStreams

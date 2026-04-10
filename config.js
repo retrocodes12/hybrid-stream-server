@@ -65,15 +65,20 @@ export const config = Object.freeze({
   PROVIDER_CACHE_TTL_SECONDS: toPositiveInteger(process.env.PROVIDER_CACHE_TTL_SECONDS, 300),
   PROVIDER_FAILURE_THRESHOLD: toPositiveInteger(process.env.PROVIDER_FAILURE_THRESHOLD, 3),
   PROVIDER_COOLDOWN_SECONDS: toPositiveInteger(process.env.PROVIDER_COOLDOWN_SECONDS, 180),
+  PROVIDER_HOST_FAILURE_THRESHOLD: toPositiveInteger(process.env.PROVIDER_HOST_FAILURE_THRESHOLD, 4),
+  PROVIDER_HOST_COOLDOWN_SECONDS: toPositiveInteger(process.env.PROVIDER_HOST_COOLDOWN_SECONDS, 180),
+  PROVIDER_HOST_MAX_INFLIGHT: toBoundedInteger(process.env.PROVIDER_HOST_MAX_INFLIGHT, 2, 1, 4),
   PROVIDER_MAX_CONCURRENCY: toBoundedInteger(process.env.PROVIDER_MAX_CONCURRENCY, 4, 1, 8),
   MAX_ACTIVE_STREAMS: toBoundedInteger(process.env.MAX_ACTIVE_STREAMS, 8, 1, 32),
   STREMIO_FAST_PROVIDER_CONCURRENCY: toBoundedInteger(process.env.STREMIO_FAST_PROVIDER_CONCURRENCY, 4, 1, 8),
-  STREMIO_FAST_STREAM_LIMIT: toBoundedInteger(process.env.STREMIO_FAST_STREAM_LIMIT, 24, 4, 60)
+  STREMIO_FAST_STREAM_LIMIT: toBoundedInteger(process.env.STREMIO_FAST_STREAM_LIMIT, 24, 4, 60),
+  STREMIO_RESULT_CACHE_TTL_SECONDS: toPositiveInteger(process.env.STREMIO_RESULT_CACHE_TTL_SECONDS, 180)
 });
 
 export const cacheConfig = Object.freeze({
   HTTP_CACHE_DIR: path.join(config.CACHE_DIR, 'http'),
   PROVIDER_CACHE_DIR: path.join(config.CACHE_DIR, 'provider-results'),
+  STREMIO_RESULT_CACHE_DIR: path.join(config.CACHE_DIR, 'stremio-results'),
   TORRENT_CACHE_DIR: path.join(config.CACHE_DIR, 'torrents'),
   MAX_CACHE_SIZE_BYTES: Math.floor(config.MAX_CACHE_SIZE_GB * 1024 * 1024 * 1024)
 });

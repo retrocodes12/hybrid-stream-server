@@ -286,6 +286,8 @@ export class ProviderService {
     this.resultCache = new Map();
     this.inFlight = new Map();
     this.providerHealth = new Map();
+    this.providerHostHealth = new Map();
+    this.providerHostInflight = new Map();
   }
 
   async initialize() {
@@ -307,10 +309,17 @@ export class ProviderService {
   getStats() {
     const now = Date.now();
     let coolingDownProviders = 0;
+    let coolingDownHosts = 0;
 
     for (const state of this.providerHealth.values()) {
       if ((state.cooldownUntil || 0) > now) {
         coolingDownProviders += 1;
+      }
+    }
+
+    for (const state of this.providerHostHealth.values()) {
+      if ((state.cooldownUntil || 0) > now) {
+        coolingDownHosts += 1;
       }
     }
 
@@ -319,7 +328,8 @@ export class ProviderService {
       inMemoryCacheEntries: this.resultCache.size,
       inFlightRequests: this.inFlight.size,
       providerCacheDir: this.providerCacheDir,
-      coolingDownProviders
+      coolingDownProviders,
+      coolingDownHosts
     };
   }
 
@@ -476,6 +486,7 @@ export class ProviderService {
     if (!providerConfig) {
       throw createHttpError(404, `Unknown provider: ${provider}`);
     }
+    const providerHostKey = this.getProviderHostKey(providerId);
 
     const normalizedTmdbId = toOptionalInteger(tmdbId);
 
@@ -524,6 +535,19 @@ export class ProviderService {
       return [];
     }
 
+    const hostCooldownState = this.providerHostHealth.get(providerHostKey);
+
+    if (hostCooldownState?.cooldownUntil && hostCooldownState.cooldownUntil > Date.now()) {
+      logger.warn('provider skipped due to host cooldown', {
+        provider: providerId,
+        hostKey: providerHostKey,
+        tmdbId: normalizedTmdbId,
+        mediaType: normalizedMediaType,
+        cooldownUntil: new Date(hostCooldownState.cooldownUntil).toISOString()
+      });
+      return [];
+    }
+
     if (this.inFlight.has(cacheKey)) {
       return this.inFlight.get(cacheKey);
     }
@@ -532,6 +556,7 @@ export class ProviderService {
       cacheKey,
       providerId,
       providerConfig,
+      providerHostKey,
       normalizedTmdbId,
       normalizedMediaType,
       normalizedSeason,
@@ -551,6 +576,7 @@ export class ProviderService {
     cacheKey,
     providerId,
     providerConfig,
+    providerHostKey,
     normalizedTmdbId,
     normalizedMediaType,
     normalizedSeason,
@@ -573,12 +599,12 @@ export class ProviderService {
       });
 
       const streams = await Promise.race([
-        this.invokeProvider(providerConfig, providerId, {
+        this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType,
           season: normalizedSeason,
           episode: normalizedEpisode
-        }),
+        })),
         timeoutPromise
       ]);
 
@@ -601,8 +627,10 @@ export class ProviderService {
 
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
       this.providerHealth.delete(providerId);
+      this.providerHostHealth.delete(providerHostKey);
       logger.info('provider scrape finished', {
         provider: providerId,
+        hostKey: providerHostKey,
         tmdbId: normalizedTmdbId,
         mediaType: normalizedMediaType,
         resultCount: normalizedStreams.length
@@ -612,8 +640,10 @@ export class ProviderService {
     } catch (error) {
       if (error?.statusCode === 504) {
         this.recordProviderFailure(providerId);
+        this.recordProviderHostFailure(providerHostKey);
         logger.warn('provider scrape timed out', {
           provider: providerId,
+          hostKey: providerHostKey,
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType
         });
@@ -622,8 +652,10 @@ export class ProviderService {
       }
 
       this.recordProviderFailure(providerId);
+      this.recordProviderHostFailure(providerHostKey);
       logger.error('provider scrape failed', {
         provider: providerId,
+        hostKey: providerHostKey,
         tmdbId: normalizedTmdbId,
         mediaType: normalizedMediaType,
         error
@@ -632,6 +664,38 @@ export class ProviderService {
       return [];
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  getProviderHostKey(providerId) {
+    return String(providerId || '')
+      .trim()
+      .toLowerCase()
+      .replace(/(?:_tv|-tv)$/u, '');
+  }
+
+  async withProviderHostSlot(hostKey, fn) {
+    const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
+
+    while ((this.providerHostInflight.get(normalizedHostKey) || 0) >= config.PROVIDER_HOST_MAX_INFLIGHT) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    this.providerHostInflight.set(
+      normalizedHostKey,
+      (this.providerHostInflight.get(normalizedHostKey) || 0) + 1
+    );
+
+    try {
+      return await fn();
+    } finally {
+      const remaining = Math.max((this.providerHostInflight.get(normalizedHostKey) || 1) - 1, 0);
+
+      if (remaining === 0) {
+        this.providerHostInflight.delete(normalizedHostKey);
+      } else {
+        this.providerHostInflight.set(normalizedHostKey, remaining);
+      }
     }
   }
 
@@ -651,6 +715,29 @@ export class ProviderService {
     if (nextState.cooldownUntil > now) {
       logger.warn('provider entered cooldown', {
         provider: providerId,
+        failures,
+        cooldownUntil: new Date(nextState.cooldownUntil).toISOString()
+      });
+    }
+  }
+
+  recordProviderHostFailure(hostKey) {
+    const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
+    const now = Date.now();
+    const current = this.providerHostHealth.get(normalizedHostKey) || { failures: 0, cooldownUntil: 0 };
+    const failures = current.failures + 1;
+    const nextState = {
+      failures,
+      cooldownUntil: failures >= config.PROVIDER_HOST_FAILURE_THRESHOLD
+        ? now + (config.PROVIDER_HOST_COOLDOWN_SECONDS * 1000)
+        : 0
+    };
+
+    this.providerHostHealth.set(normalizedHostKey, nextState);
+
+    if (nextState.cooldownUntil > now) {
+      logger.warn('provider host entered cooldown', {
+        hostKey: normalizedHostKey,
         failures,
         cooldownUntil: new Date(nextState.cooldownUntil).toISOString()
       });
