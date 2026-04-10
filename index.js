@@ -1386,6 +1386,69 @@ const clearAdminSessionCookie = (res) => {
   res.setHeader('Set-Cookie', `${ADMIN_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 };
 
+const getClientAddress = (req) => {
+  const forwarded = req.headers?.['x-forwarded-for'];
+
+  if (typeof forwarded === 'string' && forwarded.trim()) {
+    return forwarded.split(',')[0].trim();
+  }
+
+  return String(req.ip || req.socket?.remoteAddress || 'unknown').trim();
+};
+
+const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
+  const buckets = new Map();
+
+  return (req, res, next) => {
+    if (!matcher(req)) {
+      next();
+      return;
+    }
+
+    const now = Date.now();
+    const key = `${name}:${getClientAddress(req)}`;
+    const current = buckets.get(key);
+
+    if (!current || current.resetAt <= now) {
+      buckets.set(key, {
+        count: 1,
+        resetAt: now + windowMs
+      });
+      next();
+      return;
+    }
+
+    current.count += 1;
+
+    if (current.count <= limit) {
+      next();
+      return;
+    }
+
+    const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+
+    logger.warn('request rate limited', {
+      limiter: name,
+      path: req.path,
+      ip: getClientAddress(req),
+      retryAfterSeconds
+    });
+
+    const acceptsHtml = String(req.headers.accept || '').includes('text/html');
+
+    if (acceptsHtml) {
+      res.status(429).type('html').send('Too many requests. Please try again shortly.');
+      return;
+    }
+
+    res.status(429).json({
+      error: 'Too many requests',
+      retryAfterSeconds
+    });
+  };
+};
+
 const hasValidAdminSession = (req) => {
   const cookies = parseCookies(req.headers.cookie);
   return verifyAdminSessionToken(cookies[ADMIN_COOKIE_NAME]);
@@ -1455,6 +1518,35 @@ const bootstrap = async () => {
   app.use('/assets', express.static('assets', {
     maxAge: '7d',
     immutable: true
+  }));
+  app.use(createRateLimiter({
+    name: 'public',
+    windowMs: config.PUBLIC_RATE_LIMIT_WINDOW_SECONDS * 1000,
+    limit: config.PUBLIC_RATE_LIMIT_MAX_REQUESTS,
+    matcher: (req) => {
+      if (req.path.startsWith('/admin')) {
+        return false;
+      }
+
+      return req.path === '/' || req.path === '/configure' || req.path === '/manifest.json' || req.path === '/stremio/manifest.json' || req.path.startsWith('/configured/');
+    }
+  }));
+  app.use(createRateLimiter({
+    name: 'streams',
+    windowMs: config.STREAM_RATE_LIMIT_WINDOW_SECONDS * 1000,
+    limit: config.STREAM_RATE_LIMIT_MAX_REQUESTS,
+    matcher: (req) => req.path.startsWith('/stream/')
+      || req.path === '/stream'
+      || req.path === '/http-stream'
+      || req.path === '/stream/http'
+      || req.path === '/stream/torrent'
+      || req.path.startsWith('/stremio/stream/')
+  }));
+  app.use(createRateLimiter({
+    name: 'providers',
+    windowMs: config.PROVIDER_RATE_LIMIT_WINDOW_SECONDS * 1000,
+    limit: config.PROVIDER_RATE_LIMIT_MAX_REQUESTS,
+    matcher: (req) => req.path.startsWith('/providers')
   }));
 
   app.get('/health', async (_req, res, next) => {

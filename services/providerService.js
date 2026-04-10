@@ -285,6 +285,7 @@ export class ProviderService {
     this.moduleCache = new Map();
     this.resultCache = new Map();
     this.inFlight = new Map();
+    this.providerHealth = new Map();
   }
 
   async initialize() {
@@ -304,11 +305,21 @@ export class ProviderService {
   }
 
   getStats() {
+    const now = Date.now();
+    let coolingDownProviders = 0;
+
+    for (const state of this.providerHealth.values()) {
+      if ((state.cooldownUntil || 0) > now) {
+        coolingDownProviders += 1;
+      }
+    }
+
     return {
       discoveredProviders: this.providers.size,
       inMemoryCacheEntries: this.resultCache.size,
       inFlightRequests: this.inFlight.size,
-      providerCacheDir: this.providerCacheDir
+      providerCacheDir: this.providerCacheDir,
+      coolingDownProviders
     };
   }
 
@@ -501,6 +512,18 @@ export class ProviderService {
       return cached;
     }
 
+    const cooldownState = this.providerHealth.get(providerId);
+
+    if (cooldownState?.cooldownUntil && cooldownState.cooldownUntil > Date.now()) {
+      logger.warn('provider skipped due to cooldown', {
+        provider: providerId,
+        tmdbId: normalizedTmdbId,
+        mediaType: normalizedMediaType,
+        cooldownUntil: new Date(cooldownState.cooldownUntil).toISOString()
+      });
+      return [];
+    }
+
     if (this.inFlight.has(cacheKey)) {
       return this.inFlight.get(cacheKey);
     }
@@ -577,6 +600,7 @@ export class ProviderService {
       }
 
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
+      this.providerHealth.delete(providerId);
       logger.info('provider scrape finished', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -587,6 +611,7 @@ export class ProviderService {
       return normalizedStreams;
     } catch (error) {
       if (error?.statusCode === 504) {
+        this.recordProviderFailure(providerId);
         logger.warn('provider scrape timed out', {
           provider: providerId,
           tmdbId: normalizedTmdbId,
@@ -596,6 +621,7 @@ export class ProviderService {
         return [];
       }
 
+      this.recordProviderFailure(providerId);
       logger.error('provider scrape failed', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -606,6 +632,28 @@ export class ProviderService {
       return [];
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  recordProviderFailure(providerId) {
+    const now = Date.now();
+    const current = this.providerHealth.get(providerId) || { failures: 0, cooldownUntil: 0 };
+    const failures = current.failures + 1;
+    const nextState = {
+      failures,
+      cooldownUntil: failures >= config.PROVIDER_FAILURE_THRESHOLD
+        ? now + (config.PROVIDER_COOLDOWN_SECONDS * 1000)
+        : 0
+    };
+
+    this.providerHealth.set(providerId, nextState);
+
+    if (nextState.cooldownUntil > now) {
+      logger.warn('provider entered cooldown', {
+        provider: providerId,
+        failures,
+        cooldownUntil: new Date(nextState.cooldownUntil).toISOString()
+      });
     }
   }
 
