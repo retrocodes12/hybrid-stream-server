@@ -436,6 +436,34 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           <h1>NebulaStreams</h1>
           <p class="subtitle">Self-hosted streaming backend</p>
 
+          <div class="support">
+            <div class="support-title">Support</div>
+            <p>Use the manifest directly in Stremio if install does not open automatically. You can also paste a small provider list above to keep results focused.</p>
+            ${hasDonationSupport ? `
+              <div class="support-promo">
+                <div class="free-strip">
+                  <div class="free-copy">
+                    <div class="free-title">This addon is <strong>completely free</strong>.</div>
+                    <p>You can donate to support the developer and keep this project alive.</p>
+                  </div>
+                  <a class="donate-toggle" href="${escapeHtml(baseUrl)}/donate">
+                    <span>♥</span>
+                    <span>Donate</span>
+                  </a>
+                </div>
+              </div>
+            ` : `
+              <div class="support-promo">
+                <div class="support-promo-head">
+                  <div class="support-promo-title">Feeling generous?</div>
+                  <div class="support-hearts">♥ ♥ ♥</div>
+                </div>
+                <p class="support-promo-copy">If NebulaStreams saves you time, helps your setup, or just feels solid, you can support the project and keep it improving.</p>
+                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Open Donation Page</a>
+              </div>
+            `}
+          </div>
+
           <div class="field">
             <label class="field-label" for="provider-input">Optional provider filter</label>
             <input
@@ -478,33 +506,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             </div>
           </div>
 
-          <div class="support">
-            <div class="support-title">Support</div>
-            <p>Use the manifest directly in Stremio if install does not open automatically. You can also paste a small provider list above to keep results focused.</p>
-            ${hasDonationSupport ? `
-              <div class="support-promo">
-                <div class="free-strip">
-                  <div class="free-copy">
-                    <div class="free-title">This addon is <strong>completely free</strong>.</div>
-                    <p>You can donate to support the developer and keep this project alive.</p>
-                  </div>
-                  <a class="donate-toggle" href="${escapeHtml(baseUrl)}/donate">
-                    <span>♥</span>
-                    <span>Donate</span>
-                  </a>
-                </div>
-              </div>
-            ` : `
-              <div class="support-promo">
-                <div class="support-promo-head">
-                  <div class="support-promo-title">Feeling generous?</div>
-                  <div class="support-hearts">♥ ♥ ♥</div>
-                </div>
-                <p class="support-promo-copy">If NebulaStreams saves you time, helps your setup, or just feels solid, you can support the project and keep it improving.</p>
-                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Open Donation Page</a>
-              </div>
-            `}
-          </div>
         </div>
       </section>
     </main>
