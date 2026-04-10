@@ -379,153 +379,15 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         padding: 12px 16px;
         border-radius: 14px;
         border: 0;
+        text-decoration: none;
         background: linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.95));
         color: #f7fffb;
         box-shadow: 0 12px 24px rgba(16,185,129,0.22);
+        transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
       }
-      .donate-toggle.close-state {
-        background: rgba(255,255,255,0.08);
-        color: #eef2ff;
-        box-shadow: none;
-      }
-      .donation-panel {
-        display: none;
-        margin-top: 16px;
-        padding: 18px;
-        border-radius: 22px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03));
-        border: 1px solid rgba(255,255,255,0.09);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
-      }
-      .donation-panel.open {
-        display: block;
-      }
-      .donation-shell {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 176px;
-        gap: 16px;
-      }
-      .donation-title {
-        margin: 0;
-        font-size: 28px;
-        line-height: 1.05;
-      }
-      .donation-subtitle {
-        margin: 8px 0 0;
-        color: var(--muted);
-        font-size: 14px;
-      }
-      .donation-fields {
-        display: grid;
-        gap: 14px;
-        margin-top: 16px;
-      }
-      .donation-methods {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-      .donation-method {
-        appearance: none;
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 999px;
-        padding: 12px 16px;
-        background: rgba(255,255,255,0.04);
-        color: var(--text);
-        cursor: pointer;
-        font: inherit;
-        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
-      }
-      .donation-method:hover {
+      .donate-toggle:hover {
         transform: translateY(-1px);
-      }
-      .donation-method.active {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.28), rgba(59, 130, 246, 0.22));
-        border-color: rgba(123, 97, 255, 0.5);
-        box-shadow: 0 10px 22px rgba(99, 102, 241, 0.18);
-      }
-      .donation-hint {
-        margin: 4px 0 0;
-        color: var(--muted);
-        font-size: 12px;
-      }
-      .donation-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 14px;
-      }
-      .mini-button {
-        appearance: none;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 42px;
-        padding: 0 14px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.08);
-        background: rgba(255,255,255,0.06);
-        color: var(--text);
-        text-decoration: none;
-        cursor: pointer;
-        font: inherit;
-        transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
-      }
-      .mini-button:hover {
-        transform: translateY(-1px);
-        background: rgba(255,255,255,0.1);
-      }
-      .mini-button.primary {
-        border: 0;
-        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
-        color: #f7fbff;
-        box-shadow: 0 12px 26px rgba(99, 102, 241, 0.22);
-      }
-      .wallet-box {
-        margin-top: 14px;
-        padding: 14px;
-        border-radius: 16px;
-        background: rgba(12,14,22,0.42);
-        border: 1px solid rgba(255,255,255,0.07);
-      }
-      .wallet-label {
-        margin: 0 0 8px;
-        color: var(--muted);
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }
-      .wallet-address {
-        margin: 0;
-        color: #eef2ff;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 13px;
-        line-height: 1.55;
-        word-break: break-word;
-      }
-      .qr-side {
-        display: grid;
-        align-content: start;
-        gap: 10px;
-      }
-      .qr-frame {
-        display: grid;
-        place-items: center;
-        aspect-ratio: 1;
-        border-radius: 20px;
-        background: rgba(255,255,255,0.98);
-        overflow: hidden;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 14px 28px rgba(0,0,0,0.18);
-      }
-      .qr-frame img {
-        width: 88%;
-        height: 88%;
-        object-fit: contain;
-      }
-      .qr-note {
-        color: var(--muted);
-        font-size: 12px;
-        text-align: center;
+        box-shadow: 0 16px 30px rgba(16,185,129,0.26);
       }
 
       .support-title {
@@ -562,9 +424,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         .free-strip {
           flex-direction: column;
           align-items: stretch;
-        }
-        .donation-shell {
-          grid-template-columns: 1fr;
         }
       }
     </style>
@@ -629,42 +488,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <div class="free-title">This addon is <strong>completely free</strong>.</div>
                     <p>You can donate to support the developer and keep this project alive.</p>
                   </div>
-                  <button type="button" class="donate-toggle" id="donate-toggle">
+                  <a class="donate-toggle" href="${escapeHtml(baseUrl)}/donate">
                     <span>♥</span>
-                    <span id="donate-toggle-text">Donate</span>
-                  </button>
-                </div>
-                <div class="donation-panel" id="donation-panel">
-                  <div class="donation-shell">
-                    <div>
-                      <h3 class="donation-title">Donation</h3>
-                      <p class="donation-subtitle">Support NebulaStreams directly with crypto. Use the wallet or QR and send on the exact network shown below.</p>
-                      <div class="donation-fields">
-                        <div class="donation-methods" id="donation-methods">
-                          ${config.DONATION_CRYPTO_ADDRESS ? `<button type="button" class="donation-method active" data-method="crypto">${donateCryptoLabel}</button>` : ''}
-                          ${config.DONATION_UPI_ID ? `<button type="button" class="donation-method" data-method="upi">UPI</button>` : ''}
-                        </div>
-                        <p class="donation-hint" id="donation-hint">Open the wallet flow directly or scan the QR to load the destination in a supported wallet.</p>
-                      </div>
-                      <div class="wallet-box">
-                        <div class="wallet-label" id="wallet-label">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoLabel : 'Payment method'}</div>
-                        <p class="wallet-address" id="wallet-address">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoAddress : donateUpiId}</p>
-                      </div>
-                      <div class="donation-actions">
-                        <a class="mini-button primary" href="#" id="open-wallet-link">Open in Wallet</a>
-                        <button type="button" class="mini-button primary" id="copy-donation-address">Copy address</button>
-                        <a class="mini-button" href="${escapeHtml(baseUrl)}/donate">Open full donation page</a>
-                        ${config.DONATION_PRIMARY_URL ? `<a class="mini-button" href="${donatePrimaryUrl}" target="_blank" rel="noopener">External checkout</a>` : ''}
-                        ${config.DONATION_SECONDARY_URL ? `<a class="mini-button" href="${donateSecondaryUrl}" target="_blank" rel="noopener">More options</a>` : ''}
-                      </div>
-                    </div>
-                    <div class="qr-side">
-                      <div class="qr-frame">
-                        <img id="donation-qr" alt="Donation QR">
-                      </div>
-                      <div class="qr-note">Scan to open the payment address quickly in your wallet.</div>
-                    </div>
-                  </div>
+                    <span>Donate</span>
+                  </a>
                 </div>
               </div>
             ` : `
@@ -689,43 +516,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const flash = document.getElementById('flash');
       const copyButton = document.getElementById('copy-url');
       const installButton = document.getElementById('install-addon');
-      const donateToggle = document.getElementById('donate-toggle');
-      const donateToggleText = document.getElementById('donate-toggle-text');
-      const donationPanel = document.getElementById('donation-panel');
-      const donationMethodsElement = document.getElementById('donation-methods');
-      const donationQr = document.getElementById('donation-qr');
-      const walletLabel = document.getElementById('wallet-label');
-      const walletAddress = document.getElementById('wallet-address');
-      const copyDonationAddress = document.getElementById('copy-donation-address');
-      const openWalletLink = document.getElementById('open-wallet-link');
-      const donationHint = document.getElementById('donation-hint');
-      let activeDonationMethod = donationMethods.crypto.value ? 'crypto' : 'upi';
-      const donationMethods = {
-        crypto: {
-          label: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS ? config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)' : '')},
-          displayValue: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')},
-          value: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')},
-          copyLabel: 'Copy address',
-          openLabel: 'Open in Wallet',
-          walletUrl: ${JSON.stringify(
-            config.DONATION_CRYPTO_ADDRESS
-              ? `https://link.trustwallet.com/send?asset=c195_tTR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t&address=${config.DONATION_CRYPTO_ADDRESS}`
-              : ''
-          )}
-        },
-        upi: {
-          label: 'UPI',
-          displayValue: 'UPI is ready. Open the app or copy the ID.',
-          value: ${JSON.stringify(config.DONATION_UPI_ID || '')},
-          copyLabel: 'Copy UPI ID',
-          openLabel: 'Open UPI App',
-          walletUrl: ${JSON.stringify(
-            config.DONATION_UPI_ID
-              ? `upi://pay?pa=${encodeURIComponent(config.DONATION_UPI_ID)}`
-              : ''
-          )}
-        }
-      };
 
       const update = () => {
         const rawValue = providerInput.value
@@ -832,41 +622,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           await copyText(manifest, 'Manifest URL copied.');
         } catch {}
       });
-
-      if (donateToggle && donationPanel) {
-        donateToggle.addEventListener('click', () => {
-          const isOpen = donationPanel.classList.toggle('open');
-          donateToggle.classList.toggle('close-state', isOpen);
-
-          if (donateToggleText) {
-            donateToggleText.textContent = isOpen ? 'Close' : 'Donate';
-          }
-        });
-      }
-
-      if (donationMethodsElement) {
-        donationMethodsElement.addEventListener('click', (event) => {
-          const button = event.target.closest('.donation-method');
-
-          if (!button) {
-            return;
-          }
-
-          activeDonationMethod = button.dataset.method === 'upi' ? 'upi' : 'crypto';
-          setDonationMethod();
-        });
-        setDonationMethod();
-      }
-
-      if (copyDonationAddress && walletAddress) {
-        copyDonationAddress.addEventListener('click', () => {
-          const rawValue = copyDonationAddress.dataset.copyValue || walletAddress.textContent.trim();
-          const successMessage = activeDonationMethod === 'upi'
-            ? 'UPI ID copied.'
-            : 'Donation address copied.';
-          void copyText(rawValue, successMessage);
-        });
-      }
 
       providerInput.addEventListener('input', update);
       update();
