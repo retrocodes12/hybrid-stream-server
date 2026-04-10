@@ -653,6 +653,273 @@ const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
   </body>
 </html>`;
 
+const renderDonatePage = ({ baseUrl }) => {
+  const primaryButton = config.DONATION_PRIMARY_URL
+    ? `<a class="button button-primary" href="${escapeHtml(config.DONATION_PRIMARY_URL)}" target="_blank" rel="noopener">Support NebulaStreams</a>`
+    : '';
+  const secondaryButton = config.DONATION_SECONDARY_URL
+    ? `<a class="button button-secondary" href="${escapeHtml(config.DONATION_SECONDARY_URL)}" target="_blank" rel="noopener">Alternative Payment</a>`
+    : '';
+  const upiSection = config.DONATION_UPI_ID
+    ? `
+      <div class="support-card">
+        <div class="support-label">UPI</div>
+        <div class="support-value" id="upi-value">${escapeHtml(config.DONATION_UPI_ID)}</div>
+        <button type="button" class="copy-button" id="copy-upi">Copy UPI ID</button>
+      </div>
+    `
+    : '';
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NebulaStreams Donate</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f0f0f;
+        --card-bg: rgba(255, 255, 255, 0.07);
+        --card-border: rgba(255, 255, 255, 0.12);
+        --text: #f5f7ff;
+        --muted: #a7afc6;
+        --accent-start: #8b5cf6;
+        --accent-end: #3b82f6;
+        --surface: rgba(255, 255, 255, 0.05);
+        --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(139, 92, 246, 0.22), transparent 26%),
+          radial-gradient(circle at top right, rgba(59, 130, 246, 0.18), transparent 28%),
+          radial-gradient(circle at bottom center, rgba(99, 102, 241, 0.14), transparent 32%),
+          var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      main {
+        width: min(100%, 680px);
+      }
+      .shell {
+        position: relative;
+        overflow: hidden;
+        padding: 34px 28px 26px;
+        border-radius: 30px;
+        border: 1px solid var(--card-border);
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+      .shell::before {
+        content: '';
+        position: absolute;
+        inset: -2px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(59, 130, 246, 0.14), transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+      .content {
+        position: relative;
+        z-index: 1;
+      }
+      .logo-wrap {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 82px;
+        height: 82px;
+        border-radius: 24px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.02), 0 12px 38px rgba(99, 102, 241, 0.18);
+      }
+      .logo-wrap img {
+        width: 62px;
+        height: 62px;
+        object-fit: cover;
+        border-radius: 18px;
+      }
+      h1 {
+        margin: 18px 0 10px;
+        font-size: clamp(34px, 8vw, 52px);
+        line-height: 1.04;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+        font-size: 17px;
+        max-width: 560px;
+      }
+      .blurb {
+        margin-top: 22px;
+        padding: 18px;
+        border-radius: 20px;
+        background: rgba(12, 14, 22, 0.45);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+      .blurb p {
+        margin: 0;
+        color: #dbe4ff;
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 22px;
+      }
+      .button, .copy-button {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 54px;
+        border-radius: 999px;
+        padding: 14px 18px;
+        font: inherit;
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
+      }
+      .button:hover, .copy-button:hover {
+        transform: translateY(-1px);
+      }
+      .button:active, .copy-button:active {
+        transform: translateY(0);
+      }
+      .button-primary {
+        border: 0;
+        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+        color: #f8fbff;
+        box-shadow: 0 12px 30px rgba(99, 102, 241, 0.28);
+      }
+      .button-secondary, .copy-button {
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+      }
+      .support-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+        margin-top: 22px;
+      }
+      .support-card {
+        padding: 18px;
+        border-radius: 22px;
+        background: rgba(255,255,255,0.045);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+      .support-label {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .support-value {
+        margin-top: 8px;
+        font-size: 18px;
+        color: #eef2ff;
+        word-break: break-word;
+      }
+      .copy-button {
+        margin-top: 14px;
+        width: 100%;
+      }
+      .footer-note {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .footer-note a {
+        color: #cfd8ff;
+      }
+      .flash {
+        min-height: 20px;
+        margin-top: 12px;
+        color: #dce7ff;
+        font-size: 13px;
+      }
+      @media (max-width: 560px) {
+        body {
+          padding: 16px;
+        }
+        .shell {
+          padding: 28px 20px 22px;
+          border-radius: 24px;
+        }
+        .actions {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="shell">
+        <div class="content">
+          <div class="logo-wrap">
+            <img src="${escapeHtml(baseUrl)}/assets/nebulastreams-icon.jpg" alt="NebulaStreams">
+          </div>
+          <h1>Support NebulaStreams</h1>
+          <p class="subtitle">Help keep the self-hosted streaming backend online, maintained, and improving over time.</p>
+
+          <div class="blurb">
+            <p>If NebulaStreams is useful to you, your support helps cover hosting, testing, and new provider work. Every contribution keeps the project more reliable.</p>
+          </div>
+
+          ${primaryButton || secondaryButton ? `<div class="actions">${primaryButton}${secondaryButton}</div>` : ''}
+
+          ${upiSection ? `<div class="support-grid">${upiSection}</div>` : ''}
+
+          <div class="flash" id="flash" aria-live="polite"></div>
+          <p class="footer-note">Main site: <a href="${escapeHtml(baseUrl)}" target="_blank" rel="noopener">${escapeHtml(baseUrl)}</a></p>
+        </div>
+      </section>
+    </main>
+    <script>
+      const flash = document.getElementById('flash');
+      const copyButton = document.getElementById('copy-upi');
+      const upiValue = document.getElementById('upi-value');
+
+      if (copyButton && upiValue) {
+        copyButton.addEventListener('click', async () => {
+          try {
+            const value = upiValue.textContent.trim();
+
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(value);
+            } else {
+              const textarea = document.createElement('textarea');
+              textarea.value = value;
+              textarea.style.position = 'fixed';
+              textarea.style.opacity = '0';
+              document.body.appendChild(textarea);
+              textarea.select();
+              document.execCommand('copy');
+              document.body.removeChild(textarea);
+            }
+
+            flash.textContent = 'UPI ID copied.';
+            clearTimeout(flash._timer);
+            flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
+          } catch {
+            flash.textContent = 'Copy failed. Please copy manually.';
+          }
+        });
+      }
+    </script>
+  </body>
+</html>`;
+};
+
 const parseBasicAuth = (headerValue) => {
   if (!headerValue || !headerValue.startsWith('Basic ')) {
     return null;
@@ -854,6 +1121,15 @@ const bootstrap = async () => {
       .send(renderConfigurePage({
         baseUrl: `${req.protocol}://${req.get('host')}`,
         providers: providerService.listProviders()
+      }));
+  });
+
+  app.get('/donate', (req, res) => {
+    res
+      .status(200)
+      .type('html')
+      .send(renderDonatePage({
+        baseUrl: `${req.protocol}://${req.get('host')}`
       }));
   });
 
