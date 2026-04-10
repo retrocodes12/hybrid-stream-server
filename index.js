@@ -1134,16 +1134,6 @@ const renderDonatePage = ({ baseUrl }) => {
             <div class="support-value mono" id="crypto-value">${escapeHtml(cryptoAddress)}</div>
             <button type="button" class="copy-button" id="copy-crypto">Copy Wallet Address</button>
           </div>
-          <div class="support-card">
-            <div class="support-label">Suggested support</div>
-            <div class="amount-chips" id="amount-chips">
-              <button type="button" class="amount-chip active" data-amount="5">$5</button>
-              <button type="button" class="amount-chip" data-amount="10">$10</button>
-              <button type="button" class="amount-chip" data-amount="25">$25</button>
-              <button type="button" class="amount-chip" data-amount="50">$50</button>
-            </div>
-            <div class="amount-note" id="amount-note">Suggested donation: $5 in ${escapeHtml(cryptoLabel)}.</div>
-          </div>
         </div>
       </section>
     `
@@ -1350,36 +1340,6 @@ const renderDonatePage = ({ baseUrl }) => {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 15px;
       }
-      .amount-chips {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 10px;
-      }
-      .amount-chip {
-        appearance: none;
-        border: 1px solid rgba(255,255,255,0.09);
-        border-radius: 999px;
-        padding: 10px 14px;
-        background: rgba(255,255,255,0.06);
-        color: var(--text);
-        cursor: pointer;
-        font: inherit;
-        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
-      }
-      .amount-chip:hover {
-        transform: translateY(-1px);
-      }
-      .amount-chip.active {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.26), rgba(59, 130, 246, 0.2));
-        border-color: rgba(123, 97, 255, 0.5);
-        box-shadow: 0 10px 22px rgba(99, 102, 241, 0.2);
-      }
-      .amount-note {
-        margin-top: 12px;
-        color: #d7e4ff;
-        font-size: 14px;
-      }
       .copy-button {
         margin-top: 14px;
         width: 100%;
@@ -1446,7 +1406,6 @@ const renderDonatePage = ({ baseUrl }) => {
     </main>
     <script>
       const flash = document.getElementById('flash');
-      const amountNote = document.getElementById('amount-note');
       const upiId = ${JSON.stringify(upiId)};
       const copyText = async (value, successMessage) => {
         try {
@@ -1503,16 +1462,6 @@ const renderDonatePage = ({ baseUrl }) => {
         }
       }
 
-      document.querySelectorAll('.amount-chip').forEach((chip) => {
-        chip.addEventListener('click', () => {
-          document.querySelectorAll('.amount-chip').forEach((button) => button.classList.remove('active'));
-          chip.classList.add('active');
-
-          if (amountNote) {
-            amountNote.textContent = 'Suggested donation: $' + chip.dataset.amount + ' in ' + ${JSON.stringify(cryptoLabel)} + '.';
-          }
-        });
-      });
     </script>
   </body>
 </html>`;
