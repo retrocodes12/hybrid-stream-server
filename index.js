@@ -273,6 +273,21 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       .note-item strong {
         color: #e7ecff;
       }
+      .disclaimer {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+      .disclaimer-text {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+        line-height: 1.6;
+      }
+      .disclaimer-text strong {
+        color: #ff929f;
+      }
 
       .support {
         margin-top: 22px;
@@ -405,21 +420,29 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         gap: 14px;
         margin-top: 16px;
       }
-      .donation-select,
-      .donation-input {
-        width: 100%;
-        padding: 14px 16px;
-        border-radius: 16px;
+      .donation-methods {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .donation-method {
+        appearance: none;
         border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 999px;
+        padding: 12px 16px;
         background: rgba(255,255,255,0.04);
         color: var(--text);
+        cursor: pointer;
         font: inherit;
-        outline: none;
+        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
       }
-      .donation-select:focus,
-      .donation-input:focus {
-        border-color: rgba(99, 102, 241, 0.6);
-        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
+      .donation-method:hover {
+        transform: translateY(-1px);
+      }
+      .donation-method.active {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.28), rgba(59, 130, 246, 0.22));
+        border-color: rgba(123, 97, 255, 0.5);
+        box-shadow: 0 10px 22px rgba(99, 102, 241, 0.18);
       }
       .donation-hint {
         margin: 4px 0 0;
@@ -591,6 +614,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               <p class="note-item"><strong>Cold starts:</strong> the first request can take longer while the hosted backend wakes up and providers are queried in parallel.</p>
               <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store the media files themselves. It discovers external links and passes them through the configured playback flow.</p>
             </div>
+            <div class="disclaimer">
+              <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own the media itself. Always respect the laws and content rights in your region.</p>
+            </div>
           </div>
 
           <div class="support">
@@ -614,10 +640,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <h3 class="donation-title">Donation</h3>
                       <p class="donation-subtitle">Support NebulaStreams directly with crypto. Use the wallet or QR and send on the exact network shown below.</p>
                       <div class="donation-fields">
-                        <select class="donation-select" id="donation-network">
-                          ${config.DONATION_CRYPTO_ADDRESS ? `<option>${donateCryptoLabel}</option>` : ''}
-                          ${config.DONATION_UPI_ID ? `<option>UPI</option>` : ''}
-                        </select>
+                        <div class="donation-methods" id="donation-methods">
+                          ${config.DONATION_CRYPTO_ADDRESS ? `<button type="button" class="donation-method active" data-method="crypto">${donateCryptoLabel}</button>` : ''}
+                          ${config.DONATION_UPI_ID ? `<button type="button" class="donation-method" data-method="upi">UPI</button>` : ''}
+                        </div>
                         <p class="donation-hint" id="donation-hint">Open the wallet flow directly or scan the QR to load the destination in a supported wallet.</p>
                       </div>
                       <div class="wallet-box">
@@ -666,13 +692,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const donateToggle = document.getElementById('donate-toggle');
       const donateToggleText = document.getElementById('donate-toggle-text');
       const donationPanel = document.getElementById('donation-panel');
-      const donationNetwork = document.getElementById('donation-network');
+      const donationMethodsElement = document.getElementById('donation-methods');
       const donationQr = document.getElementById('donation-qr');
       const walletLabel = document.getElementById('wallet-label');
       const walletAddress = document.getElementById('wallet-address');
       const copyDonationAddress = document.getElementById('copy-donation-address');
       const openWalletLink = document.getElementById('open-wallet-link');
       const donationHint = document.getElementById('donation-hint');
+      let activeDonationMethod = donationMethods.crypto.value ? 'crypto' : 'upi';
       const donationMethods = {
         crypto: {
           label: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS ? config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)' : '')},
@@ -746,13 +773,15 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const setDonationMethod = () => {
-        if (!donationNetwork || !walletLabel || !walletAddress || !donationQr) {
+        if (!walletLabel || !walletAddress || !donationQr) {
           return;
         }
 
-        const method = donationNetwork.value === 'UPI' && donationMethods.upi.value
+        const method = activeDonationMethod === 'upi' && donationMethods.upi.value
           ? donationMethods.upi
-          : donationMethods.crypto;
+          : donationMethods.crypto.value
+            ? donationMethods.crypto
+            : donationMethods.upi;
 
         walletLabel.textContent = method.label || 'Payment method';
         walletAddress.textContent = method.displayValue || method.value || 'Not configured';
@@ -780,6 +809,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         if (copyDonationAddress) {
           copyDonationAddress.textContent = method.copyLabel || 'Copy';
           copyDonationAddress.dataset.copyValue = method.value || '';
+        }
+
+        if (donationMethodsElement) {
+          donationMethodsElement.querySelectorAll('.donation-method').forEach((button) => {
+            button.classList.toggle('active', button.dataset.method === activeDonationMethod);
+          });
         }
       };
 
@@ -809,15 +844,24 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         });
       }
 
-      if (donationNetwork) {
-        donationNetwork.addEventListener('change', setDonationMethod);
+      if (donationMethodsElement) {
+        donationMethodsElement.addEventListener('click', (event) => {
+          const button = event.target.closest('.donation-method');
+
+          if (!button) {
+            return;
+          }
+
+          activeDonationMethod = button.dataset.method === 'upi' ? 'upi' : 'crypto';
+          setDonationMethod();
+        });
         setDonationMethod();
       }
 
       if (copyDonationAddress && walletAddress) {
         copyDonationAddress.addEventListener('click', () => {
           const rawValue = copyDonationAddress.dataset.copyValue || walletAddress.textContent.trim();
-          const successMessage = donationNetwork && donationNetwork.value === 'UPI'
+          const successMessage = activeDonationMethod === 'upi'
             ? 'UPI ID copied.'
             : 'Donation address copied.';
           void copyText(rawValue, successMessage);
