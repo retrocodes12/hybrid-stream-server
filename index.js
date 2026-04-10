@@ -6,6 +6,7 @@ import { CacheManager } from './services/cacheManager.js';
 import { HttpProxyService } from './services/httpProxy.js';
 import { ImdbResolverService } from './services/imdbResolver.js';
 import { ProviderService } from './services/providerService.js';
+import { ReverseProxyService } from './services/reverseProxy.js';
 import { SourceRegistry } from './services/sourceRegistry.js';
 import { StreamManager, HttpError } from './services/streamManager.js';
 import { TorrentEngineService } from './services/torrentEngine.js';
@@ -1473,6 +1474,47 @@ const requireAdminAuth = (req, res, next) => {
 
 const bootstrap = async () => {
   const app = express();
+
+  app.disable('x-powered-by');
+  app.set('trust proxy', true);
+
+  if (config.REVERSE_PROXY_TARGET) {
+    const reverseProxy = new ReverseProxyService({
+      targetBaseUrl: config.REVERSE_PROXY_TARGET,
+      timeoutSeconds: config.REVERSE_PROXY_TIMEOUT_SECONDS
+    });
+
+    app.get('/health', (_req, res) => {
+      res.json({
+        status: 'ok',
+        mode: 'reverse-proxy',
+        target: config.REVERSE_PROXY_TARGET
+      });
+    });
+
+    app.use((req, res, next) => {
+      reverseProxy.handle(req, res, next).catch(next);
+    });
+
+    app.use((error, _req, res, _next) => {
+      logger.error('reverse proxy request failed', { error });
+      res.status(502).json({
+        error: 'Reverse proxy request failed',
+        details: error?.message || 'unknown error'
+      });
+    });
+
+    const proxyServer = app.listen(config.PORT, () => {
+      logger.info('reverse proxy started', {
+        port: config.PORT,
+        target: config.REVERSE_PROXY_TARGET
+      });
+    });
+    proxyServer.keepAliveTimeout = 65_000;
+    proxyServer.headersTimeout = 66_000;
+    return;
+  }
+
   const cacheManager = new CacheManager();
 
   await cacheManager.initialize();
@@ -1494,8 +1536,6 @@ const bootstrap = async () => {
     imdbResolver
   });
 
-  app.disable('x-powered-by');
-  app.set('trust proxy', true);
   app.use((req, _res, next) => {
     userTracker.trackRequest(req);
     next();

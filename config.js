@@ -33,6 +33,8 @@ const toBoundedInteger = (value, fallback, min, max) => {
 export const config = Object.freeze({
   PORT: toPositiveInteger(process.env.PORT, 3000),
   CACHE_DIR: path.resolve(process.cwd(), process.env.CACHE_DIR || './cache'),
+  REVERSE_PROXY_TARGET: String(process.env.REVERSE_PROXY_TARGET || '').trim().replace(/\/+$/u, ''),
+  REVERSE_PROXY_TIMEOUT_SECONDS: toPositiveInteger(process.env.REVERSE_PROXY_TIMEOUT_SECONDS, 60),
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'sohil@123',
   STREMIO_ADDON_ID: process.env.STREMIO_ADDON_ID || 'community.nebulastreams',
