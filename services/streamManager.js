@@ -519,7 +519,7 @@ export class StreamManager {
         addonId: config.STREMIO_ADDON_ID,
         addonName: config.STREMIO_ADDON_NAME,
         configurable: true,
-        description: 'Hybrid scraper-backed streaming addon with HTTP and torrent fallback playback'
+        description: 'Fast multi-provider HTTP stream addon for movies and series'
       };
     }
 
@@ -537,7 +537,7 @@ export class StreamManager {
       addonId: `${config.STREMIO_ADDON_ID}.${providerHash}`,
       addonName: `${config.STREMIO_ADDON_NAME} [${providerLabel}]`,
       configurable: true,
-      description: `Hybrid scraper-backed streaming addon filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}`
+      description: `Multi-provider HTTP stream addon filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}`
     };
   }
 
