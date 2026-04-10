@@ -44,9 +44,12 @@ const sanitizeHeaders = (headers, requestContext = {}) => {
     nextHeaders[name] = rawValue;
   }
 
-  if (requestContext.host) {
-    nextHeaders.host = requestContext.host;
-    nextHeaders['x-forwarded-host'] = requestContext.host;
+  if (requestContext.upstreamHost) {
+    nextHeaders.host = requestContext.upstreamHost;
+  }
+
+  if (requestContext.originalHost) {
+    nextHeaders['x-forwarded-host'] = requestContext.originalHost;
   }
 
   if (requestContext.proto) {
@@ -92,7 +95,8 @@ export class ReverseProxyService {
       path: `${targetUrl.pathname}${targetUrl.search}`,
       agent: this.getAgent(targetUrl.protocol),
       headers: sanitizeHeaders(req.headers, {
-        host: req.get('host'),
+        upstreamHost: targetUrl.host,
+        originalHost: req.get('host'),
         proto: req.protocol,
         remoteAddress: req.ip || req.socket.remoteAddress
       })
