@@ -753,9 +753,23 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         <div class="card"><div class="label">Uptime</div><div class="value">${stats.runtime.uptimeSeconds}s</div></div>
         <div class="card"><div class="label">Active Streams</div><div class="value">${stats.runtime.activeStreams}/${stats.runtime.maxActiveStreams}</div></div>
         <div class="card"><div class="label">Active Torrents</div><div class="value">${stats.runtime.activeTorrentEngines}</div></div>
-        <div class="card"><div class="label">Total Users</div><div class="value">${stats.users.totalUsers}</div></div>
+        <div class="card"><div class="label">Human Users</div><div class="value">${stats.users.totalUsers}</div></div>
         <div class="card"><div class="label">Users 24h</div><div class="value">${stats.users.activeUsers24h}</div></div>
-        <div class="card"><div class="label">Tracked Requests</div><div class="value">${stats.users.totalTrackedRequests}</div></div>
+        <div class="card"><div class="label">Stream Users</div><div class="value">${stats.users.streamUsers}</div></div>
+        <div class="card"><div class="label">Human Requests</div><div class="value">${stats.users.totalTrackedRequests}</div></div>
+      </section>
+
+      <section class="section">
+        <h2>Traffic</h2>
+        <div class="meta-grid">
+          <div><div class="label">Raw Unique Clients</div><code>${escapeHtml(String(stats.users.rawUniqueClients))}</code></div>
+          <div><div class="label">Raw Requests</div><code>${escapeHtml(String(stats.users.rawTrackedRequests))}</code></div>
+          <div><div class="label">Bot Clients</div><code>${escapeHtml(String(stats.users.botClients))}</code></div>
+          <div><div class="label">Bot Requests</div><code>${escapeHtml(String(stats.users.botRequests))}</code></div>
+          <div><div class="label">Mixed Clients</div><code>${escapeHtml(String(stats.users.mixedClients))}</code></div>
+          <div><div class="label">Manifest Requests</div><code>${escapeHtml(String(stats.users.manifestRequests))}</code></div>
+          <div><div class="label">Stream Requests</div><code>${escapeHtml(String(stats.users.streamRequests))}</code></div>
+        </div>
       </section>
 
       <section class="section">
