@@ -615,7 +615,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store the media files themselves. It discovers external links and passes them through the configured playback flow.</p>
             </div>
             <div class="disclaimer">
-              <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own the media itself. Always respect the laws and content rights in your region.</p>
+              <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own the media itself. It should not be used to view copyrighted material without permission. The developer assumes no responsibility for how this tool is utilized.</p>
             </div>
           </div>
 
