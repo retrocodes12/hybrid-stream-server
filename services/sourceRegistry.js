@@ -82,7 +82,8 @@ export class SourceRegistry {
   getStats() {
     return {
       entries: this.entries.size,
-      ttlMs: this.ttlMs
+      ttlMs: this.ttlMs,
+      activeFallbackEntries: Array.from(this.entries.values()).filter((entry) => entry.fallback).length
     };
   }
 }

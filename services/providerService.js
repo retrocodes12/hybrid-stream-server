@@ -303,6 +303,15 @@ export class ProviderService {
     });
   }
 
+  getStats() {
+    return {
+      discoveredProviders: this.providers.size,
+      inMemoryCacheEntries: this.resultCache.size,
+      inFlightRequests: this.inFlight.size,
+      providerCacheDir: this.providerCacheDir
+    };
+  }
+
   getStremioProviderOrder(requestedProviders = null) {
     const candidates = this.normalizeProviders(
       requestedProviders && requestedProviders.length > 0 ? requestedProviders : this.getProviderOrder()

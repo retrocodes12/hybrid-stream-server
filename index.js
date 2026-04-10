@@ -8,6 +8,7 @@ import { ProviderService } from './services/providerService.js';
 import { SourceRegistry } from './services/sourceRegistry.js';
 import { StreamManager, HttpError } from './services/streamManager.js';
 import { TorrentEngineService } from './services/torrentEngine.js';
+import { UserTrackerService } from './services/userTracker.js';
 import { logger } from './utils/logger.js';
 
 const escapeHtml = (value) =>
@@ -473,6 +474,175 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 </html>`;
 };
 
+const renderAdminPage = ({ stats }) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NebulaStreams Admin</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0f19;
+        --panel: #141b2a;
+        --panel-2: #1a2335;
+        --text: #eef3ff;
+        --muted: #98a7c7;
+        --accent: #66b6ff;
+        --border: rgba(255,255,255,0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top left, rgba(102,182,255,0.18), transparent 24%),
+          radial-gradient(circle at top right, rgba(123,112,255,0.18), transparent 20%),
+          var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 34px;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+      .card {
+        padding: 18px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+      }
+      .label {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .value {
+        margin-top: 8px;
+        font-size: 28px;
+        font-weight: 700;
+      }
+      .section {
+        margin-top: 28px;
+        padding: 22px;
+        border-radius: 22px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+      }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 14px;
+        margin-top: 16px;
+      }
+      code {
+        display: inline-block;
+        margin-top: 6px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: var(--panel-2);
+        color: #dff1ff;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>NebulaStreams Admin</h1>
+      <p>Private runtime dashboard for service health, usage, cache, provider state, and source registry.</p>
+
+      <section class="grid">
+        <div class="card"><div class="label">Uptime</div><div class="value">${stats.runtime.uptimeSeconds}s</div></div>
+        <div class="card"><div class="label">Active Streams</div><div class="value">${stats.runtime.activeStreams}/${stats.runtime.maxActiveStreams}</div></div>
+        <div class="card"><div class="label">Active Torrents</div><div class="value">${stats.runtime.activeTorrentEngines}</div></div>
+        <div class="card"><div class="label">Total Users</div><div class="value">${stats.users.totalUsers}</div></div>
+        <div class="card"><div class="label">Users 24h</div><div class="value">${stats.users.activeUsers24h}</div></div>
+        <div class="card"><div class="label">Tracked Requests</div><div class="value">${stats.users.totalTrackedRequests}</div></div>
+      </section>
+
+      <section class="section">
+        <h2>Cache</h2>
+        <div class="meta-grid">
+          <div><div class="label">Cache Dir</div><code>${escapeHtml(stats.cache.cacheDir)}</code></div>
+          <div><div class="label">Current Size</div><code>${escapeHtml(String(stats.cache.currentCacheSizeBytes))}</code></div>
+          <div><div class="label">Max Size</div><code>${escapeHtml(String(stats.cache.maxCacheSizeBytes))}</code></div>
+          <div><div class="label">HTTP Entries</div><code>${escapeHtml(String(stats.cache.httpEntries))}</code></div>
+          <div><div class="label">Provider Entries</div><code>${escapeHtml(String(stats.cache.providerEntries))}</code></div>
+          <div><div class="label">Torrent Entries</div><code>${escapeHtml(String(stats.cache.torrentEntries))}</code></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Providers</h2>
+        <div class="meta-grid">
+          <div><div class="label">Discovered</div><code>${escapeHtml(String(stats.providers.discoveredProviders))}</code></div>
+          <div><div class="label">Memory Cache Entries</div><code>${escapeHtml(String(stats.providers.inMemoryCacheEntries))}</code></div>
+          <div><div class="label">In-Flight Requests</div><code>${escapeHtml(String(stats.providers.inFlightRequests))}</code></div>
+          <div><div class="label">Provider Cache Dir</div><code>${escapeHtml(stats.providers.providerCacheDir)}</code></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Registry</h2>
+        <div class="meta-grid">
+          <div><div class="label">Source Entries</div><code>${escapeHtml(String(stats.sourceRegistry.entries))}</code></div>
+          <div><div class="label">Fallback Entries</div><code>${escapeHtml(String(stats.sourceRegistry.activeFallbackEntries))}</code></div>
+          <div><div class="label">TTL (ms)</div><code>${escapeHtml(String(stats.sourceRegistry.ttlMs))}</code></div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>`;
+
+const parseBasicAuth = (headerValue) => {
+  if (!headerValue || !headerValue.startsWith('Basic ')) {
+    return null;
+  }
+
+  try {
+    const decoded = Buffer.from(headerValue.slice(6), 'base64').toString('utf8');
+    const separatorIndex = decoded.indexOf(':');
+
+    if (separatorIndex === -1) {
+      return null;
+    }
+
+    return {
+      username: decoded.slice(0, separatorIndex),
+      password: decoded.slice(separatorIndex + 1)
+    };
+  } catch {
+    return null;
+  }
+};
+
+const requireAdminAuth = (req, res, next) => {
+  const credentials = parseBasicAuth(req.headers.authorization);
+
+  if (!credentials || credentials.username !== config.ADMIN_USERNAME || credentials.password !== config.ADMIN_PASSWORD) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="NebulaStreams Admin"');
+    res.status(401).send('Authentication required');
+    return;
+  }
+
+  next();
+};
+
 const bootstrap = async () => {
   const app = express();
   const cacheManager = new CacheManager();
@@ -483,6 +653,8 @@ const bootstrap = async () => {
   const imdbResolver = new ImdbResolverService();
   const providerService = new ProviderService();
   await providerService.initialize();
+  const userTracker = new UserTrackerService();
+  await userTracker.initialize();
   const torrentEngine = new TorrentEngineService({ cacheManager });
   const httpProxy = new HttpProxyService({ cacheManager, torrentEngine });
   const streamManager = new StreamManager({
@@ -496,6 +668,10 @@ const bootstrap = async () => {
 
   app.disable('x-powered-by');
   app.set('trust proxy', true);
+  app.use((req, _res, next) => {
+    userTracker.trackRequest(req);
+    next();
+  });
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,OPTIONS');
@@ -525,6 +701,7 @@ const bootstrap = async () => {
         activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
         activeStreams: streamManager.activeStreams,
         maxActiveStreams: config.MAX_ACTIVE_STREAMS,
+        users: userTracker.getStats(),
         cache: cacheStats
       });
     } catch (error) {
@@ -540,6 +717,28 @@ const bootstrap = async () => {
         baseUrl: `${req.protocol}://${req.get('host')}`,
         providers: providerService.listProviders()
       }));
+  });
+
+  app.get('/admin', requireAdminAuth, async (req, res, next) => {
+    try {
+      const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
+      const stats = {
+        runtime: {
+          uptimeSeconds: Math.round(process.uptime()),
+          activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
+          activeStreams: streamManager.activeStreams,
+          maxActiveStreams: config.MAX_ACTIVE_STREAMS
+        },
+        users: userTracker.getStats(),
+        cache: cacheStats,
+        providers: providerService.getStats(),
+        sourceRegistry: sourceRegistry.getStats()
+      };
+
+      res.status(200).type('html').send(renderAdminPage({ stats }));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
@@ -636,6 +835,7 @@ const bootstrap = async () => {
 
     await torrentEngine.close();
     sourceRegistry.close();
+    await userTracker.close();
     clearTimeout(forceExitTimer);
     process.exit(0);
   };
