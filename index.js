@@ -421,11 +421,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         border-color: rgba(99, 102, 241, 0.6);
         box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
       }
-      .donation-row {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 120px;
-        gap: 10px;
-      }
       .donation-hint {
         margin: 4px 0 0;
         color: var(--muted);
@@ -548,9 +543,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         .donation-shell {
           grid-template-columns: 1fr;
         }
-        .donation-row {
-          grid-template-columns: 1fr;
-        }
       }
     </style>
   </head>
@@ -626,17 +618,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                           ${config.DONATION_CRYPTO_ADDRESS ? `<option>${donateCryptoLabel}</option>` : ''}
                           ${config.DONATION_UPI_ID ? `<option>UPI</option>` : ''}
                         </select>
-                        <div class="donation-row">
-                          <input class="donation-input" id="donation-amount" type="number" min="1" step="1" placeholder="Enter amount">
-                          <input class="donation-input" value="USD" readonly>
-                        </div>
-                        <p class="donation-hint" id="donation-hint">Suggested support amount in USD. Send the equivalent amount in ${donateCryptoLabel || 'the selected method'}.</p>
+                        <p class="donation-hint" id="donation-hint">Open the wallet flow directly or scan the QR to load the destination in a supported wallet.</p>
                       </div>
                       <div class="wallet-box">
                         <div class="wallet-label" id="wallet-label">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoLabel : 'Payment method'}</div>
                         <p class="wallet-address" id="wallet-address">${config.DONATION_CRYPTO_ADDRESS ? donateCryptoAddress : donateUpiId}</p>
                       </div>
                       <div class="donation-actions">
+                        <a class="mini-button primary" href="#" id="open-wallet-link">Open in Wallet</a>
                         <button type="button" class="mini-button primary" id="copy-donation-address">Copy address</button>
                         <a class="mini-button" href="${escapeHtml(baseUrl)}/donate">Open full donation page</a>
                         ${config.DONATION_PRIMARY_URL ? `<a class="mini-button" href="${donatePrimaryUrl}" target="_blank" rel="noopener">External checkout</a>` : ''}
@@ -682,15 +671,32 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const walletLabel = document.getElementById('wallet-label');
       const walletAddress = document.getElementById('wallet-address');
       const copyDonationAddress = document.getElementById('copy-donation-address');
+      const openWalletLink = document.getElementById('open-wallet-link');
       const donationHint = document.getElementById('donation-hint');
       const donationMethods = {
         crypto: {
           label: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS ? config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)' : '')},
-          value: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')}
+          displayValue: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')},
+          value: ${JSON.stringify(config.DONATION_CRYPTO_ADDRESS || '')},
+          copyLabel: 'Copy address',
+          openLabel: 'Open in Wallet',
+          walletUrl: ${JSON.stringify(
+            config.DONATION_CRYPTO_ADDRESS
+              ? `https://link.trustwallet.com/send?asset=c195_tTR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t&address=${config.DONATION_CRYPTO_ADDRESS}`
+              : ''
+          )}
         },
         upi: {
           label: 'UPI',
-          value: ${JSON.stringify(config.DONATION_UPI_ID || '')}
+          displayValue: 'UPI is ready. Open the app or copy the ID.',
+          value: ${JSON.stringify(config.DONATION_UPI_ID || '')},
+          copyLabel: 'Copy UPI ID',
+          openLabel: 'Open UPI App',
+          walletUrl: ${JSON.stringify(
+            config.DONATION_UPI_ID
+              ? `upi://pay?pa=${encodeURIComponent(config.DONATION_UPI_ID)}`
+              : ''
+          )}
         }
       };
 
@@ -749,15 +755,31 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           : donationMethods.crypto;
 
         walletLabel.textContent = method.label || 'Payment method';
-        walletAddress.textContent = method.value || 'Not configured';
-        donationQr.src = method.value
-          ? 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&data=' + encodeURIComponent(method.value)
+        walletAddress.textContent = method.displayValue || method.value || 'Not configured';
+        donationQr.src = method.walletUrl
+          ? 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&data=' + encodeURIComponent(method.walletUrl)
           : '';
 
         if (donationHint) {
           donationHint.textContent = method.value
-            ? 'Suggested support amount in USD. Send the equivalent amount using ' + method.label + '.'
+            ? 'Use the wallet button or scan the QR to open ' + method.label + ' in a compatible app.'
             : 'No donation method is configured yet.';
+        }
+
+        if (openWalletLink) {
+          if (method.walletUrl) {
+            openWalletLink.href = method.walletUrl;
+            openWalletLink.style.display = 'inline-flex';
+            openWalletLink.textContent = method.openLabel || 'Open';
+          } else {
+            openWalletLink.href = '#';
+            openWalletLink.style.display = 'none';
+          }
+        }
+
+        if (copyDonationAddress) {
+          copyDonationAddress.textContent = method.copyLabel || 'Copy';
+          copyDonationAddress.dataset.copyValue = method.value || '';
         }
       };
 
@@ -794,7 +816,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       if (copyDonationAddress && walletAddress) {
         copyDonationAddress.addEventListener('click', () => {
-          void copyText(walletAddress.textContent.trim(), 'Donation address copied.');
+          const rawValue = copyDonationAddress.dataset.copyValue || walletAddress.textContent.trim();
+          const successMessage = donationNetwork && donationNetwork.value === 'UPI'
+            ? 'UPI ID copied.'
+            : 'Donation address copied.';
+          void copyText(rawValue, successMessage);
         });
       }
 
@@ -1076,12 +1102,16 @@ const renderDonatePage = ({ baseUrl }) => {
   const secondaryButton = config.DONATION_SECONDARY_URL
     ? `<a class="button button-secondary" href="${escapeHtml(config.DONATION_SECONDARY_URL)}" target="_blank" rel="noopener">Alternative Payment</a>`
     : '';
+  const upiId = config.DONATION_UPI_ID || '';
   const upiSection = config.DONATION_UPI_ID
     ? `
       <div class="support-card">
         <div class="support-label">UPI</div>
-        <div class="support-value" id="upi-value">${escapeHtml(config.DONATION_UPI_ID)}</div>
-        <button type="button" class="copy-button" id="copy-upi">Copy UPI ID</button>
+        <div class="support-value">Pay with any supported UPI app.</div>
+        <div class="copy-actions">
+          <a class="copy-button" id="open-upi" href="#">Open UPI App</a>
+          <button type="button" class="copy-button" id="copy-upi">Copy UPI ID</button>
+        </div>
       </div>
     `
     : '';
@@ -1353,6 +1383,11 @@ const renderDonatePage = ({ baseUrl }) => {
       .copy-button {
         margin-top: 14px;
         width: 100%;
+        text-decoration: none;
+      }
+      .copy-actions {
+        display: grid;
+        gap: 10px;
       }
       .footer-note {
         margin-top: 18px;
@@ -1412,6 +1447,7 @@ const renderDonatePage = ({ baseUrl }) => {
     <script>
       const flash = document.getElementById('flash');
       const amountNote = document.getElementById('amount-note');
+      const upiId = ${JSON.stringify(upiId)};
       const copyText = async (value, successMessage) => {
         try {
           if (navigator.clipboard?.writeText) {
@@ -1436,11 +1472,11 @@ const renderDonatePage = ({ baseUrl }) => {
       };
 
       const copyUpiButton = document.getElementById('copy-upi');
-      const upiValue = document.getElementById('upi-value');
+      const openUpi = document.getElementById('open-upi');
 
-      if (copyUpiButton && upiValue) {
+      if (copyUpiButton && upiId) {
         copyUpiButton.addEventListener('click', () => {
-          void copyText(upiValue.textContent.trim(), 'UPI ID copied.');
+          void copyText(upiId, 'UPI ID copied.');
         });
       }
 
@@ -1455,8 +1491,16 @@ const renderDonatePage = ({ baseUrl }) => {
       }
 
       if (qrImage && cryptoValue) {
-        const qrPayload = encodeURIComponent(cryptoValue.textContent.trim());
+        const qrPayload = encodeURIComponent('https://link.trustwallet.com/send?asset=c195_tTR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t&address=' + cryptoValue.textContent.trim());
         qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=' + qrPayload;
+      }
+
+      if (openUpi) {
+        if (upiId) {
+          openUpi.href = 'upi://pay?pa=' + encodeURIComponent(upiId);
+        } else {
+          openUpi.style.display = 'none';
+        }
       }
 
       document.querySelectorAll('.amount-chip').forEach((chip) => {

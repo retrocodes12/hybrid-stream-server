@@ -39,7 +39,7 @@ export const config = Object.freeze({
   STREMIO_ADDON_NAME: process.env.STREMIO_ADDON_NAME || 'NebulaStreams',
   DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || '',
   DONATION_SECONDARY_URL: process.env.DONATION_SECONDARY_URL || '',
-  DONATION_UPI_ID: process.env.DONATION_UPI_ID || '',
+  DONATION_UPI_ID: process.env.DONATION_UPI_ID || 'sohilsuresh2@okhdfcbank',
   DONATION_CRYPTO_LABEL: process.env.DONATION_CRYPTO_LABEL || 'USDT (TRC20)',
   DONATION_CRYPTO_ADDRESS: process.env.DONATION_CRYPTO_ADDRESS || 'TF1WTj7BZVdU64rtMHsKwKrbqVXWtSynoD',
   TMDB_API_KEY: process.env.TMDB_API_KEY || '439c478a771f35c05022f9feabcca01c',
