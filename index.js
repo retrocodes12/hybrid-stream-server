@@ -20,409 +20,347 @@ const escapeHtml = (value) =>
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 
-const DEFAULT_QUALITY_PRIORITY = Object.freeze([
-  '2160p',
-  '1440p',
-  '1080p',
-  '720p',
-  '480p',
-  '360p',
-  'auto',
-  'unknown'
-]);
-
 const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const renderConfigurePage = ({ baseUrl, providers }) => {
-  const providerCards = providers.map((provider) => `
-    <label class="provider-card">
-      <input type="checkbox" value="${escapeHtml(provider.id)}" checked>
-      <span class="provider-label">${escapeHtml(provider.label)}</span>
-      <span class="provider-id">${escapeHtml(provider.id)}</span>
-    </label>
-  `).join('');
-  const qualityRows = DEFAULT_QUALITY_PRIORITY.map((quality) => `
-    <div class="quality-row" data-quality="${escapeHtml(quality)}">
-      <div>
-        <div class="quality-label">${escapeHtml(quality.toUpperCase())}</div>
-        <div class="quality-help">Higher rows are preferred first.</div>
-      </div>
-      <div class="quality-actions">
-        <button type="button" class="move-up">Up</button>
-        <button type="button" class="move-down">Down</button>
-      </div>
-    </div>
-  `).join('');
+  const providerIds = providers.map((provider) => provider.id);
+  const providerHints = providers
+    .slice(0, 12)
+    .map((provider) => escapeHtml(provider.id))
+    .join(', ');
 
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Hybrid Stream Server Configure</title>
+    <title>NebulaStreams Configure</title>
     <style>
       :root {
         color-scheme: dark;
-        --bg: #10131a;
-        --panel: #171b24;
-        --panel-2: #1d2330;
-        --text: #f3f5f8;
-        --muted: #9aa5b4;
-        --accent: #76e0a8;
-        --accent-2: #3aa0ff;
-        --border: rgba(255,255,255,0.08);
+        --bg: #0f0f0f;
+        --card-bg: rgba(255, 255, 255, 0.07);
+        --card-border: rgba(255, 255, 255, 0.12);
+        --text: #f5f7ff;
+        --muted: #a7afc6;
+        --accent-start: #8b5cf6;
+        --accent-end: #3b82f6;
+        --surface: rgba(255, 255, 255, 0.05);
+        --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
       }
 
       * { box-sizing: border-box; }
+
       body {
         margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
         background:
-          radial-gradient(circle at top left, rgba(58,160,255,0.18), transparent 28%),
-          radial-gradient(circle at top right, rgba(118,224,168,0.14), transparent 24%),
+          radial-gradient(circle at top left, rgba(139, 92, 246, 0.22), transparent 26%),
+          radial-gradient(circle at top right, rgba(59, 130, 246, 0.18), transparent 28%),
+          radial-gradient(circle at bottom center, rgba(99, 102, 241, 0.14), transparent 32%),
           var(--bg);
         color: var(--text);
-        font: 15px/1.45 system-ui, sans-serif;
+        font: 15px/1.5 system-ui, sans-serif;
       }
 
       main {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 32px 20px 40px;
+        width: min(100%, 560px);
       }
 
-      .hero {
-        margin-bottom: 24px;
-        padding: 24px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-        border: 1px solid var(--border);
-        border-radius: 20px;
+      .shell {
+        position: relative;
+        overflow: hidden;
+        padding: 34px 28px 24px;
+        border-radius: 28px;
+        border: 1px solid var(--card-border);
+        background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .shell::before {
+        content: '';
+        position: absolute;
+        inset: -2px;
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(59, 130, 246, 0.14), transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .content {
+        position: relative;
+        z-index: 1;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.06);
+        color: #d9dfff;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
       }
 
       h1 {
-        margin: 0 0 8px;
-        font-size: 30px;
+        margin: 18px 0 10px;
+        font-size: clamp(32px, 8vw, 48px);
+        line-height: 1.05;
       }
 
-      p {
+      .subtitle {
         margin: 0;
         color: var(--muted);
+        font-size: 16px;
       }
 
-      .toolbar {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
-        align-items: center;
-        margin: 18px 0 0;
+      .field {
+        margin-top: 28px;
       }
 
-      button, .install-link {
-        appearance: none;
-        border: 0;
-        border-radius: 999px;
-        padding: 12px 16px;
-        font: inherit;
-        text-decoration: none;
-        cursor: pointer;
-      }
-
-      button {
-        background: var(--panel-2);
-        color: var(--text);
-      }
-
-      .install-link {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        color: #0b1118;
-        font-weight: 700;
-      }
-
-      .meta {
-        margin-top: 16px;
-        padding: 14px 16px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid var(--border);
-      }
-
-      .meta strong {
+      .field-label {
         display: block;
-        margin-bottom: 6px;
+        margin-bottom: 10px;
+        color: #dfe6ff;
+        font-size: 13px;
       }
 
-      code {
-        word-break: break-all;
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-        gap: 14px;
-        margin-top: 22px;
-      }
-
-      .stack {
-        display: grid;
-        gap: 14px;
-        margin-top: 22px;
-      }
-
-      .modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(6, 10, 16, 0.7);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-      }
-
-      .modal-backdrop.open {
-        display: flex;
-      }
-
-      .modal {
-        width: min(520px, 100%);
-        padding: 22px;
-        border-radius: 20px;
-        border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(29,35,48,0.98), rgba(23,27,36,0.98));
-        box-shadow: 0 24px 70px rgba(0,0,0,0.45);
-      }
-
-      .modal h3 {
-        margin: 0 0 8px;
-        font-size: 22px;
-      }
-
-      .modal p {
-        margin: 0 0 16px;
-      }
-
-      .modal-actions {
-        display: grid;
-        gap: 12px;
-      }
-
-      .modal-actions button {
+      .field-input {
         width: 100%;
-        text-align: left;
-        padding: 14px 16px;
-        border-radius: 14px;
-      }
-
-      .modal-actions .primary-action {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        color: #0b1118;
-        font-weight: 700;
-      }
-
-      .modal-actions .secondary-action {
-        background: var(--panel-2);
+        padding: 15px 16px;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 18px;
+        background: var(--surface);
         color: var(--text);
+        font: inherit;
+        outline: none;
+        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
       }
 
-      .modal-actions .ghost-action {
-        background: transparent;
-        border: 1px dashed rgba(255,255,255,0.18);
-        color: var(--text);
+      .field-input::placeholder {
+        color: #8d96b0;
       }
 
-      .modal-close {
-        margin-top: 14px;
-        background: transparent;
-        color: var(--muted);
-        padding: 10px 0 0;
+      .field-input:focus {
+        border-color: rgba(99, 102, 241, 0.6);
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
+        transform: translateY(-1px);
       }
 
-      .flash {
+      .field-help {
         margin-top: 10px;
-        color: var(--accent);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .manifest-box {
+        margin-top: 18px;
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(12, 14, 22, 0.45);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+
+      .manifest-label {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .manifest-url {
+        margin: 0;
+        color: #eef2ff;
+        word-break: break-word;
         font-size: 14px;
       }
 
-      .provider-card {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        min-height: 94px;
-        padding: 16px;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        background: var(--panel);
-        cursor: pointer;
-        transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
-      }
-
-      .provider-card:hover {
-        transform: translateY(-1px);
-        border-color: rgba(118,224,168,0.38);
-      }
-
-      .provider-card input {
-        margin: 0 0 8px;
-        width: 18px;
-        height: 18px;
-      }
-
-      .provider-label {
-        font-weight: 700;
-      }
-
-      .provider-id {
-        color: var(--muted);
-        font-size: 12px;
-      }
-
-      .section-title {
-        margin: 28px 0 12px;
-        font-size: 18px;
-      }
-
-      .quality-row {
-        display: flex;
-        justify-content: space-between;
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 12px;
-        align-items: center;
-        padding: 16px;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        background: var(--panel);
+        margin-top: 20px;
       }
 
-      .quality-label {
-        font-weight: 700;
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 14px 18px;
+        font: inherit;
+        cursor: pointer;
+        transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
       }
 
-      .quality-help {
-        margin-top: 4px;
+      button:hover {
+        transform: translateY(-1px);
+      }
+
+      button:active {
+        transform: translateY(0);
+      }
+
+      .primary-button {
+        background: linear-gradient(135deg, var(--accent-start), var(--accent-end));
+        color: #f8fbff;
+        box-shadow: 0 12px 30px rgba(99, 102, 241, 0.28);
+      }
+
+      .primary-button:hover {
+        box-shadow: 0 16px 36px rgba(99, 102, 241, 0.34);
+      }
+
+      .secondary-button {
+        background: rgba(255,255,255,0.06);
+        color: var(--text);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+
+      .secondary-button:hover {
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 28px rgba(0,0,0,0.22);
+      }
+
+      .flash {
+        min-height: 20px;
+        margin-top: 14px;
+        color: #e4ebff;
+        font-size: 13px;
+      }
+
+      .support {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+
+      .support-title {
+        margin: 0 0 6px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #d9def4;
+      }
+
+      .support p {
+        margin: 0;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 14px;
       }
 
-      .quality-actions {
-        display: flex;
-        gap: 8px;
+      .support a {
+        color: #c5d3ff;
       }
 
-      .quality-actions button {
-        padding: 10px 12px;
+      @media (max-width: 560px) {
+        body {
+          padding: 16px;
+        }
+
+        .shell {
+          padding: 26px 20px 22px;
+          border-radius: 24px;
+        }
+
+        .actions {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <main>
-      <section class="hero">
-        <h1>Select Providers</h1>
-        <p>Stremio does not allow custom provider cards inside the native stream picker. This page is the supported workaround: select the providers you want and install a filtered copy of the addon.</p>
-        <div class="toolbar">
-          <button type="button" id="select-all">Select all</button>
-          <button type="button" id="clear-all">Clear all</button>
-          <button type="button" id="open-install" class="install-link">Install</button>
+      <section class="shell">
+        <div class="content">
+          <div class="badge">Configure Add-on</div>
+          <h1>NebulaStreams</h1>
+          <p class="subtitle">Self-hosted streaming backend</p>
+
+          <div class="field">
+            <label class="field-label" for="provider-input">Optional provider filter</label>
+            <input
+              id="provider-input"
+              class="field-input"
+              type="text"
+              list="provider-list"
+              placeholder="cinestream,4khdhub,streamflix"
+              spellcheck="false"
+              autocomplete="off"
+            >
+            <div class="field-help">Leave blank to use all providers. Example: ${providerHints || '4khdhub,cinestream,streamflix'}</div>
+            <datalist id="provider-list">
+              ${providerIds.map((providerId) => `<option value="${escapeHtml(providerId)}"></option>`).join('')}
+            </datalist>
+          </div>
+
+          <div class="manifest-box">
+            <div class="manifest-label">Manifest URL</div>
+            <p class="manifest-url" id="manifest-url">${escapeHtml(baseUrl)}/manifest.json</p>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="primary-button" id="install-addon">Install Add-on</button>
+            <button type="button" class="secondary-button" id="copy-url">Copy URL</button>
+          </div>
+
+          <div class="flash" id="flash" aria-live="polite"></div>
+
+          <div class="support">
+            <div class="support-title">Support</div>
+            <p>Use the manifest directly in Stremio if install does not open automatically. You can also paste a small provider list above to keep results focused.</p>
+          </div>
         </div>
-        <div class="meta">
-          <strong>Manifest URL</strong>
-          <code id="manifest-url">${escapeHtml(baseUrl)}/manifest.json</code>
-        </div>
-        <div class="flash" id="flash" hidden></div>
-      </section>
-      <h2 class="section-title">Provider Filters</h2>
-      <section class="grid" id="provider-grid">
-        ${providerCards}
-      </section>
-      <h2 class="section-title">Quality Priority</h2>
-      <section class="stack" id="quality-list">
-        ${qualityRows}
       </section>
     </main>
-    <div class="modal-backdrop" id="install-modal" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="install-title">
-        <h3 id="install-title">Install Addon</h3>
-        <p>Choose how you want to open the currently configured manifest.</p>
-        <div class="modal-actions">
-          <button type="button" id="install-stremio" class="primary-action">Install in Stremio</button>
-          <button type="button" id="install-stremio-web" class="secondary-action">Install in Stremio Web</button>
-          <button type="button" id="copy-manifest" class="ghost-action">Copy Manifest URL</button>
-        </div>
-        <button type="button" id="close-install" class="modal-close">Close</button>
-      </div>
-    </div>
     <script>
       const origin = ${JSON.stringify(baseUrl)};
-      const inputs = Array.from(document.querySelectorAll('#provider-grid input'));
-      const qualityList = document.getElementById('quality-list');
+      const providerIds = ${JSON.stringify(providerIds)};
+      const providerInput = document.getElementById('provider-input');
       const manifestUrl = document.getElementById('manifest-url');
       const flash = document.getElementById('flash');
-      const installModal = document.getElementById('install-modal');
-      const defaultQualityPriority = ${JSON.stringify(DEFAULT_QUALITY_PRIORITY)};
-
-      const getQualityPriority = () =>
-        Array.from(document.querySelectorAll('#quality-list .quality-row'))
-          .map((row) => row.dataset.quality)
-          .filter(Boolean);
+      const copyButton = document.getElementById('copy-url');
+      const installButton = document.getElementById('install-addon');
 
       const update = () => {
-        const selected = inputs.filter((input) => input.checked).map((input) => input.value);
-        const providerSegment = selected.length === 0 || selected.length === inputs.length
-          ? 'all'
-          : encodeURIComponent(selected.join(','));
-        const qualitySegment = encodeURIComponent(getQualityPriority().join(',') || defaultQualityPriority.join(','));
-        const url = origin + '/configured/' + providerSegment + '/' + qualitySegment + '/manifest.json';
+        const rawValue = providerInput.value
+          .split(',')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean);
+        const uniqueValues = rawValue.filter((value, index) => rawValue.indexOf(value) === index);
+        const filteredProviders = uniqueValues.filter((value) => providerIds.includes(value));
+        const providerSegment = filteredProviders.length > 0
+          ? encodeURIComponent(filteredProviders.join(','))
+          : 'all';
 
-        manifestUrl.textContent = url;
+        manifestUrl.textContent = filteredProviders.length > 0
+          ? origin + '/configured/' + providerSegment + '/manifest.json'
+          : origin + '/manifest.json';
       };
 
       const showFlash = (text, isError = false) => {
         flash.textContent = text;
-        flash.style.color = isError ? '#f87171' : '#76e0a8';
-        flash.hidden = false;
+        flash.style.color = isError ? '#ff98a8' : '#dce7ff';
         clearTimeout(flash._timer);
-        flash._timer = setTimeout(() => { flash.hidden = true; }, 2200);
+        flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
       };
 
       const getManifestUrl = () => manifestUrl.textContent.trim();
 
-      const openInstallModal = () => {
-        installModal.hidden = false;
-        installModal.classList.add('open');
-      };
-
-      const closeInstallModal = () => {
-        installModal.hidden = true;
-        installModal.classList.remove('open');
-      };
-
-      document.getElementById('select-all').addEventListener('click', () => {
-        inputs.forEach((input) => { input.checked = true; });
-        update();
-      });
-
-      document.getElementById('clear-all').addEventListener('click', () => {
-        inputs.forEach((input) => { input.checked = false; });
-        update();
-      });
-
-      document.getElementById('open-install').addEventListener('click', openInstallModal);
-      document.getElementById('close-install').addEventListener('click', closeInstallModal);
-
-      installModal.addEventListener('click', (event) => {
-        if (event.target === installModal) {
-          closeInstallModal();
-        }
-      });
-
-      document.getElementById('install-stremio').addEventListener('click', () => {
+      installButton.addEventListener('click', () => {
         const url = 'stremio://addon-install?addon=' + encodeURIComponent(getManifestUrl());
         window.location.href = url;
       });
 
-      document.getElementById('install-stremio-web').addEventListener('click', () => {
-        const url = 'https://web.stremio.com/#/addons/subscribe?addon=' + encodeURIComponent(getManifestUrl());
-        window.open(url, '_blank', 'noopener');
-      });
-
-      document.getElementById('copy-manifest').addEventListener('click', async () => {
+      copyButton.addEventListener('click', async () => {
         const manifest = getManifestUrl();
 
         try {
@@ -439,7 +377,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             document.body.removeChild(textarea);
           }
 
-          closeInstallModal();
           showFlash('Manifest URL copied.');
         } catch (error) {
           console.error('Copy failed', error);
@@ -447,31 +384,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         }
       });
 
-      qualityList.addEventListener('click', (event) => {
-        const button = event.target.closest('button');
-
-        if (!button) {
-          return;
-        }
-
-        const row = button.closest('.quality-row');
-
-        if (!row) {
-          return;
-        }
-
-        if (button.classList.contains('move-up') && row.previousElementSibling) {
-          qualityList.insertBefore(row, row.previousElementSibling);
-          update();
-        }
-
-        if (button.classList.contains('move-down') && row.nextElementSibling) {
-          qualityList.insertBefore(row.nextElementSibling, row);
-          update();
-        }
-      });
-
-      inputs.forEach((input) => input.addEventListener('change', update));
+      providerInput.addEventListener('input', update);
       update();
     </script>
   </body>
