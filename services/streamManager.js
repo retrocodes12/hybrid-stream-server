@@ -597,7 +597,7 @@ export class StreamManager {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
-      const result = await this.providerService.getAggregateStreams({
+      const result = await this.providerService.getFastStreams({
         providers: requestedProviders.length > 0 ? requestedProviders : null,
         tmdbId,
         mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
@@ -611,11 +611,16 @@ export class StreamManager {
       }
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
-      normalizedStreams.sort((left, right) =>
+      const httpOnlyStreams = normalizedStreams.filter((stream) => stream.transport !== 'torrent' && !stream.magnet);
+      if (httpOnlyStreams.length === 0) {
+        res.json({ streams: [] });
+        return;
+      }
+      httpOnlyStreams.sort((left, right) =>
         (getQualityPriorityScore(right, qualityPriority) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
         (getQualityPriorityScore(left, qualityPriority) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
-      const stremioStreams = normalizedStreams
+      const stremioStreams = httpOnlyStreams
         .map((stream) => toStremioStreamObject(stream, parsed))
         .filter(Boolean);
 

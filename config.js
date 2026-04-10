@@ -49,7 +49,9 @@ export const config = Object.freeze({
   PROVIDER_TIMEOUT_SECONDS: toPositiveInteger(process.env.PROVIDER_TIMEOUT_SECONDS, 10),
   PROVIDER_CACHE_TTL_SECONDS: toPositiveInteger(process.env.PROVIDER_CACHE_TTL_SECONDS, 300),
   PROVIDER_MAX_CONCURRENCY: toBoundedInteger(process.env.PROVIDER_MAX_CONCURRENCY, 4, 1, 8),
-  MAX_ACTIVE_STREAMS: toBoundedInteger(process.env.MAX_ACTIVE_STREAMS, 8, 1, 32)
+  MAX_ACTIVE_STREAMS: toBoundedInteger(process.env.MAX_ACTIVE_STREAMS, 8, 1, 32),
+  STREMIO_FAST_PROVIDER_CONCURRENCY: toBoundedInteger(process.env.STREMIO_FAST_PROVIDER_CONCURRENCY, 4, 1, 8),
+  STREMIO_FAST_STREAM_LIMIT: toBoundedInteger(process.env.STREMIO_FAST_STREAM_LIMIT, 24, 4, 60)
 });
 
 export const cacheConfig = Object.freeze({

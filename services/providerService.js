@@ -28,6 +28,7 @@ const PROVIDER_CACHE_VERSION = '3';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
 const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u', 'torrent-scraper'];
+const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   vidlink: 120,
   videasy: 115,
@@ -302,6 +303,14 @@ export class ProviderService {
     });
   }
 
+  getStremioProviderOrder(requestedProviders = null) {
+    const candidates = this.normalizeProviders(
+      requestedProviders && requestedProviders.length > 0 ? requestedProviders : this.getProviderOrder()
+    );
+
+    return candidates.filter((providerId) => !STREMIO_EXCLUDED_PROVIDERS.has(providerId));
+  }
+
   async getAggregateStreams({ providers = null, ...rest }) {
     const normalizedProviders = this.normalizeProviders(providers);
 
@@ -365,6 +374,78 @@ export class ProviderService {
       providers: normalizedProviders,
       tried,
       streams: mergedStreams
+    };
+  }
+
+  async getFastStreams({ providers = null, ...rest }) {
+    const normalizedProviders = this.getStremioProviderOrder(
+      providers && providers.length > 0 ? providers : null
+    );
+
+    if (normalizedProviders.length === 0) {
+      throw createHttpError(400, 'No valid providers were supplied for fast search');
+    }
+
+    const settledResults = await mapConcurrent(
+      normalizedProviders,
+      config.STREMIO_FAST_PROVIDER_CONCURRENCY,
+      async (provider) => {
+        const streams = await this.getStreams({
+          provider,
+          ...rest
+        });
+
+        return {
+          provider,
+          streams
+        };
+      }
+    );
+
+    const tried = settledResults.map((result) => ({
+      provider: result.provider,
+      count: result.streams.length
+    }));
+    const mergedStreams = [];
+    const seenSources = new Set();
+
+    for (const result of settledResults) {
+      for (const stream of result.streams) {
+        const normalizedUrl = String(stream.url || '').trim();
+        const normalizedMagnet = String(stream.magnet || stream.torrent || '').trim();
+        const dedupeKey = JSON.stringify({
+          url: normalizedUrl || null,
+          magnet: normalizedMagnet || null
+        });
+
+        if ((!normalizedUrl && !normalizedMagnet) || seenSources.has(dedupeKey)) {
+          continue;
+        }
+
+        seenSources.add(dedupeKey);
+        mergedStreams.push({
+          ...stream,
+          provider: stream.provider || result.provider
+        });
+      }
+    }
+
+    mergedStreams.sort((left, right) => {
+      const scoreDelta = rankStream(right, normalizedProviders) - rankStream(left, normalizedProviders);
+
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+
+      return String(left.name || left.title || left.url).localeCompare(
+        String(right.name || right.title || right.url)
+      );
+    });
+
+    return {
+      providers: normalizedProviders,
+      tried,
+      streams: mergedStreams.slice(0, config.STREMIO_FAST_STREAM_LIMIT)
     };
   }
 
