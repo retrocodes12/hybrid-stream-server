@@ -41,6 +41,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
   const donatePrimaryUrl = escapeHtml(config.DONATION_PRIMARY_URL || '');
   const donateSecondaryUrl = escapeHtml(config.DONATION_SECONDARY_URL || '');
   const donateUpiId = escapeHtml(config.DONATION_UPI_ID || '');
+  const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
 
   return `<!doctype html>
 <html lang="en">
@@ -390,6 +391,61 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         transform: translateY(-1px);
         box-shadow: 0 16px 30px rgba(16,185,129,0.26);
       }
+      .widget-panel {
+        display: none;
+        margin-top: 16px;
+        padding: 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.045);
+        box-shadow: 0 14px 34px rgba(0,0,0,0.18);
+      }
+      .widget-panel.open {
+        display: block;
+      }
+      .widget-title {
+        margin: 0 0 6px;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #d9def4;
+      }
+      .widget-copy {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .widget-frame {
+        width: 100%;
+        min-height: 640px;
+        border: 0;
+        border-radius: 18px;
+        background: #ffffff;
+      }
+      .widget-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      .widget-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 16px;
+        border-radius: 999px;
+        text-decoration: none;
+        color: #f8fbff;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.1);
+        transition: transform 140ms ease, box-shadow 160ms ease, background 140ms ease;
+      }
+      .widget-link:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.11);
+        box-shadow: 0 10px 24px rgba(0,0,0,0.2);
+      }
 
       .support-title {
         margin: 0 0 6px;
@@ -426,6 +482,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           flex-direction: column;
           align-items: stretch;
         }
+        .widget-frame {
+          min-height: 680px;
+        }
       }
     </style>
   </head>
@@ -447,11 +506,29 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <div class="free-title">This addon is <strong>completely free</strong>.</div>
                     <p>You can donate to support the developer and keep this project alive.</p>
                   </div>
-                  <a class="donate-toggle" href="${escapeHtml(baseUrl)}/donate">
+                  <button type="button" class="donate-toggle" id="donate-toggle">
                     <span>♥</span>
                     <span>Donate</span>
-                  </a>
+                  </button>
                 </div>
+                ${nowPaymentsWidgetUrl ? `
+                  <div class="widget-panel" id="donation-widget-panel">
+                    <h3 class="widget-title">Instant donation widget</h3>
+                    <p class="widget-copy">Use the embedded NOWPayments widget below, or open the UPI-only page if you prefer direct UPI support.</p>
+                    <iframe
+                      class="widget-frame"
+                      src="${nowPaymentsWidgetUrl}"
+                      loading="lazy"
+                      scrolling="no"
+                      title="NOWPayments donation widget"
+                    >
+                      Can't load widget
+                    </iframe>
+                    <div class="widget-actions">
+                      <a class="widget-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
+                    </div>
+                  </div>
+                ` : ''}
               </div>
             ` : `
               <div class="support-promo">
@@ -518,6 +595,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const flash = document.getElementById('flash');
       const copyButton = document.getElementById('copy-url');
       const installButton = document.getElementById('install-addon');
+      const donateToggle = document.getElementById('donate-toggle');
+      const donationWidgetPanel = document.getElementById('donation-widget-panel');
 
       const update = () => {
         const rawValue = providerInput.value
@@ -624,6 +703,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           await copyText(manifest, 'Manifest URL copied.');
         } catch {}
       });
+
+      if (donateToggle && donationWidgetPanel) {
+        donateToggle.addEventListener('click', () => {
+          donationWidgetPanel.classList.toggle('open');
+        });
+      }
 
       providerInput.addEventListener('input', update);
       update();
@@ -909,14 +994,6 @@ const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
 </html>`;
 
 const renderDonatePage = ({ baseUrl }) => {
-  const cryptoLabel = config.DONATION_CRYPTO_LABEL || 'Crypto';
-  const cryptoAddress = config.DONATION_CRYPTO_ADDRESS || '';
-  const primaryButton = config.DONATION_PRIMARY_URL
-    ? `<a class="button button-primary" href="${escapeHtml(config.DONATION_PRIMARY_URL)}" target="_blank" rel="noopener">Support NebulaStreams</a>`
-    : '';
-  const secondaryButton = config.DONATION_SECONDARY_URL
-    ? `<a class="button button-secondary" href="${escapeHtml(config.DONATION_SECONDARY_URL)}" target="_blank" rel="noopener">Alternative Payment</a>`
-    : '';
   const upiId = config.DONATION_UPI_ID || '';
   const upiSection = config.DONATION_UPI_ID
     ? `
@@ -928,29 +1005,6 @@ const renderDonatePage = ({ baseUrl }) => {
           <button type="button" class="copy-button" id="copy-upi">Copy UPI ID</button>
         </div>
       </div>
-    `
-    : '';
-  const cryptoSection = config.DONATION_CRYPTO_ADDRESS
-    ? `
-      <section class="payment-panel">
-        <div class="qr-card">
-          <div class="qr-shell">
-            <img id="crypto-qr" alt="${escapeHtml(cryptoLabel)} QR">
-          </div>
-          <div class="qr-help">Scan with any wallet that supports ${escapeHtml(cryptoLabel)}.</div>
-        </div>
-        <div class="payment-details">
-          <div class="support-card">
-            <div class="support-label">Network</div>
-            <div class="support-value">${escapeHtml(cryptoLabel)}</div>
-          </div>
-          <div class="support-card">
-            <div class="support-label">Wallet address</div>
-            <div class="support-value mono" id="crypto-value">${escapeHtml(cryptoAddress)}</div>
-            <button type="button" class="copy-button" id="copy-crypto">Copy Wallet Address</button>
-          </div>
-        </div>
-      </section>
     `
     : '';
 
@@ -1053,12 +1107,6 @@ const renderDonatePage = ({ baseUrl }) => {
         margin: 0;
         color: #dbe4ff;
       }
-      .actions {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 22px;
-      }
       .button, .copy-button {
         appearance: none;
         display: inline-flex;
@@ -1095,49 +1143,11 @@ const renderDonatePage = ({ baseUrl }) => {
         gap: 14px;
         margin-top: 22px;
       }
-      .payment-panel {
-        display: grid;
-        grid-template-columns: 220px minmax(0, 1fr);
-        gap: 16px;
-        margin-top: 22px;
-      }
-      .payment-details {
-        display: grid;
-        gap: 14px;
-      }
-      .qr-card,
       .support-card {
         padding: 18px;
         border-radius: 22px;
         background: rgba(255,255,255,0.045);
         border: 1px solid rgba(255,255,255,0.08);
-      }
-      .qr-card {
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        align-items: center;
-      }
-      .qr-shell {
-        display: grid;
-        place-items: center;
-        width: 100%;
-        aspect-ratio: 1;
-        border-radius: 20px;
-        background: rgba(255,255,255,0.96);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 14px 34px rgba(0,0,0,0.18);
-        overflow: hidden;
-      }
-      .qr-shell img {
-        width: 86%;
-        height: 86%;
-        object-fit: contain;
-      }
-      .qr-help {
-        margin-top: 14px;
-        color: var(--muted);
-        font-size: 13px;
-        text-align: center;
       }
       .support-label {
         color: var(--muted);
@@ -1150,10 +1160,6 @@ const renderDonatePage = ({ baseUrl }) => {
         font-size: 18px;
         color: #eef2ff;
         word-break: break-word;
-      }
-      .mono {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 15px;
       }
       .copy-button {
         margin-top: 14px;
@@ -1186,12 +1192,6 @@ const renderDonatePage = ({ baseUrl }) => {
           padding: 28px 20px 22px;
           border-radius: 24px;
         }
-        .actions {
-          grid-template-columns: 1fr;
-        }
-        .payment-panel {
-          grid-template-columns: 1fr;
-        }
       }
     </style>
   </head>
@@ -1208,10 +1208,6 @@ const renderDonatePage = ({ baseUrl }) => {
           <div class="blurb">
             <p>If NebulaStreams is useful to you, your support helps cover hosting, testing, and new provider work. Every contribution keeps the project more reliable.</p>
           </div>
-
-          ${primaryButton || secondaryButton ? `<div class="actions">${primaryButton}${secondaryButton}</div>` : ''}
-
-          ${cryptoSection}
           ${upiSection ? `<div class="support-grid">${upiSection}</div>` : ''}
 
           <div class="flash" id="flash" aria-live="polite"></div>

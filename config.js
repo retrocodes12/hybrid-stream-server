@@ -41,6 +41,7 @@ export const config = Object.freeze({
   STREMIO_ADDON_NAME: process.env.STREMIO_ADDON_NAME || 'NebulaStreams',
   DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || '',
   DONATION_SECONDARY_URL: process.env.DONATION_SECONDARY_URL || '',
+  DONATION_NOWPAYMENTS_WIDGET_URL: process.env.DONATION_NOWPAYMENTS_WIDGET_URL || 'https://nowpayments.io/embeds/donation-widget?api_key=3acd79dd-66e2-48c4-9a7a-8938cb9a7a12',
   DONATION_UPI_ID: process.env.DONATION_UPI_ID || 'sohilsuresh2@okhdfcbank',
   DONATION_CRYPTO_LABEL: process.env.DONATION_CRYPTO_LABEL || 'USDT (TRC20)',
   DONATION_CRYPTO_ADDRESS: process.env.DONATION_CRYPTO_ADDRESS || 'TF1WTj7BZVdU64rtMHsKwKrbqVXWtSynoD',
