@@ -347,7 +347,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       }
       .free-strip {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 14px;
         padding: 16px 18px;
@@ -377,8 +377,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         align-items: center;
         justify-content: center;
         gap: 8px;
-        min-width: 118px;
-        padding: 12px 16px;
+        min-width: 116px;
+        padding: 12px 18px;
         border-radius: 14px;
         border: 0;
         text-decoration: none;
@@ -386,6 +386,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         color: #f7fffb;
         box-shadow: 0 12px 24px rgba(16,185,129,0.22);
         transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       .donate-toggle:hover {
         transform: translateY(-1px);
@@ -504,11 +506,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                 <div class="free-strip">
                   <div class="free-copy">
                     <div class="free-title">This addon is <strong>completely free</strong>.</div>
-                    <p>You can donate to support the developer and keep this project alive.</p>
+                    <p>If NebulaStreams has made your setup easier, your support helps keep the servers stable for everyone using it right now.</p>
                   </div>
                   <button type="button" class="donate-toggle" id="donate-toggle">
                     <span>♥</span>
-                    <span>Donate</span>
+                    <span>Support</span>
                   </button>
                 </div>
                 ${nowPaymentsWidgetUrl ? `
@@ -536,8 +538,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <div class="support-promo-title">Feeling generous?</div>
                   <div class="support-hearts">♥ ♥ ♥</div>
                 </div>
-                <p class="support-promo-copy">If NebulaStreams saves you time, helps your setup, or just feels solid, you can support the project and keep it improving.</p>
-                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Open Donation Page</a>
+                <p class="support-promo-copy">If NebulaStreams has made your setup easier, your support helps keep the servers stable for everyone using it right now.</p>
+                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
               </div>
             `}
           </div>
