@@ -147,6 +147,11 @@ const DEFAULT_QUALITY_PRIORITY = Object.freeze([
   'unknown'
 ]);
 
+const DEFAULT_STREAM_OPTIONS = Object.freeze({
+  webReadyOnly: false,
+  hideHeavyFormats: false
+});
+
 const normalizeQualityKey = (quality) => {
   const normalized = String(quality || '').trim().toLowerCase();
 
@@ -198,6 +203,47 @@ const getQualityPriorityScore = (stream, qualityPriority) => {
 
 const hasForwardHeaders = (headers) =>
   Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
+
+const isWebReadyHttpStream = (stream) =>
+  stream.transport === 'http' &&
+  Boolean(stream.url) &&
+  isPlainMp4Url(stream.url) &&
+  !hasForwardHeaders(stream.headers);
+
+const hasHeavyFormatTraits = (stream) => {
+  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  return /\b(hevc|x265|10bit|hdr|hdr10|hdr10\+|dolby vision|dovi|remux|untouch)\b/u.test(text);
+};
+
+const filterConfiguredStreams = (streams, streamOptions) => streams.filter((stream) => {
+  if (stream.transport !== 'http') {
+    return false;
+  }
+
+  if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream)) {
+    return false;
+  }
+
+  if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
+    return false;
+  }
+
+  return true;
+});
+
+const summarizeStreamOptions = (streamOptions) => {
+  const parts = [];
+
+  if (streamOptions.webReadyOnly) {
+    parts.push('Web-ready only');
+  }
+
+  if (streamOptions.hideHeavyFormats) {
+    parts.push('Hide HEVC / HDR / 10-bit');
+  }
+
+  return parts.length > 0 ? parts.join(', ') : 'Default HTTP playback';
+};
 
 const getDeliveryPriorityScore = (stream) => {
   if (stream.transport === 'http') {
@@ -469,7 +515,7 @@ export class StreamManager {
     await this.stremioResultCacheDirReady;
   }
 
-  buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority }) {
+  buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
     return JSON.stringify({
       version: 1,
       tmdbId,
@@ -477,7 +523,8 @@ export class StreamManager {
       season: season ?? null,
       episode: episode ?? null,
       providers: providers ?? [],
-      qualityPriority
+      qualityPriority,
+      streamOptions: streamOptions ?? DEFAULT_STREAM_OPTIONS
     });
   }
 
@@ -570,7 +617,7 @@ export class StreamManager {
         : '';
     const decoded = rawConfig ? decodeURIComponent(rawConfig) : '';
 
-    if (!decoded) {
+    if (!decoded || decoded === 'default') {
       return [...DEFAULT_QUALITY_PRIORITY];
     }
 
@@ -595,15 +642,41 @@ export class StreamManager {
     return uniqueQualities;
   }
 
+  getRequestedStreamOptions(req) {
+    const rawConfig = typeof req.params?.optionConfig === 'string'
+      ? req.params.optionConfig
+      : typeof req.query?.options === 'string'
+        ? req.query.options
+        : '';
+    const decoded = rawConfig ? decodeURIComponent(rawConfig) : '';
+
+    if (!decoded || decoded === 'default') {
+      return { ...DEFAULT_STREAM_OPTIONS };
+    }
+
+    const tokens = decoded
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    return {
+      webReadyOnly: tokens.includes('web-ready-only'),
+      hideHeavyFormats: tokens.includes('hide-heavy-formats')
+    };
+  }
+
   getAddonPresentation(req) {
     const providers = this.getRequestedProviders(req);
     const qualityPriority = this.getRequestedQualityPriority(req);
+    const streamOptions = this.getRequestedStreamOptions(req);
     const hasDefaultQualityPriority = qualityPriority.join(',') === DEFAULT_QUALITY_PRIORITY.join(',');
+    const hasDefaultStreamOptions = JSON.stringify(streamOptions) === JSON.stringify(DEFAULT_STREAM_OPTIONS);
 
-    if (providers.length === 0 && hasDefaultQualityPriority) {
+    if (providers.length === 0 && hasDefaultQualityPriority && hasDefaultStreamOptions) {
       return {
         providers,
         qualityPriority,
+        streamOptions,
         addonId: config.STREMIO_ADDON_ID,
         addonName: config.STREMIO_ADDON_NAME,
         configurable: true,
@@ -612,7 +685,7 @@ export class StreamManager {
     }
 
     const providerHash = createHash('sha1')
-      .update(`${providers.join(',')}|${qualityPriority.join(',')}`)
+      .update(`${providers.join(',')}|${qualityPriority.join(',')}|${JSON.stringify(streamOptions)}`)
       .digest('hex')
       .slice(0, 10);
     const providerLabel = providers.length > 0
@@ -622,10 +695,11 @@ export class StreamManager {
     return {
       providers,
       qualityPriority,
+      streamOptions,
       addonId: `${config.STREMIO_ADDON_ID}.${providerHash}`,
       addonName: `${config.STREMIO_ADDON_NAME} [${providerLabel}]`,
       configurable: true,
-      description: `Multi-provider HTTP stream addon filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}`
+      description: `Filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
     };
   }
 
@@ -685,13 +759,15 @@ export class StreamManager {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
+      const streamOptions = this.getRequestedStreamOptions(req);
       const resultCacheKey = this.buildStremioResultCacheKey({
         tmdbId,
         mediaType: parsed.mediaType,
         season: parsed.season,
         episode: parsed.episode,
         providers: requestedProviders,
-        qualityPriority
+        qualityPriority,
+        streamOptions
       });
       const cachedStreams = await this.getCachedStremioStreams(resultCacheKey);
 
@@ -717,17 +793,19 @@ export class StreamManager {
       }
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
-      const httpOnlyStreams = normalizedStreams.filter((stream) => stream.transport !== 'torrent' && !stream.magnet);
-      if (httpOnlyStreams.length === 0) {
+      const configuredStreams = filterConfiguredStreams(normalizedStreams, streamOptions);
+
+      if (configuredStreams.length === 0) {
         await this.setCachedStremioStreams(resultCacheKey, []);
         res.json({ streams: [] });
         return;
       }
-      httpOnlyStreams.sort((left, right) =>
+
+      configuredStreams.sort((left, right) =>
         (getQualityPriorityScore(right, qualityPriority) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
         (getQualityPriorityScore(left, qualityPriority) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
-      const stremioStreams = httpOnlyStreams
+      const stremioStreams = configuredStreams
         .map((stream) => toStremioStreamObject(stream, parsed))
         .filter(Boolean);
 

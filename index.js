@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import os from 'node:os';
 import express from 'express';
 
 import { config } from './config.js';
@@ -23,6 +24,62 @@ const escapeHtml = (value) =>
 
 const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CPU_SAMPLE_WINDOW_MS = 200;
+
+const sleep = (delayMs) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, delayMs);
+  timer.unref?.();
+});
+
+const sampleCpuTimes = () => os.cpus().reduce((totals, cpu) => {
+  const cpuTotal = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
+
+  return {
+    idle: totals.idle + cpu.times.idle,
+    total: totals.total + cpuTotal
+  };
+}, { idle: 0, total: 0 });
+
+const getSystemStats = async () => {
+  const start = sampleCpuTimes();
+  await sleep(CPU_SAMPLE_WINDOW_MS);
+  const end = sampleCpuTimes();
+  const totalDelta = Math.max(1, end.total - start.total);
+  const idleDelta = Math.max(0, end.idle - start.idle);
+  const cpuUsagePercent = Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100));
+  const totalMemoryBytes = os.totalmem();
+  const freeMemoryBytes = os.freemem();
+  const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes);
+  const processMemory = process.memoryUsage();
+
+  return {
+    cpuUsagePercent,
+    cpuCount: os.cpus().length,
+    loadAverage: os.loadavg(),
+    totalMemoryBytes,
+    freeMemoryBytes,
+    usedMemoryBytes,
+    memoryUsagePercent: totalMemoryBytes > 0 ? (usedMemoryBytes / totalMemoryBytes) * 100 : 0,
+    processRssBytes: processMemory.rss,
+    processHeapUsedBytes: processMemory.heapUsed
+  };
+};
+
+const formatBytes = (bytes) => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = Number(bytes || 0);
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+};
+
+const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
 
 const renderConfigurePage = ({ baseUrl, providers }) => {
   const providerIds = providers.map((provider) => provider.id);
@@ -30,18 +87,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     .slice(0, 12)
     .map((provider) => escapeHtml(provider.id))
     .join(', ');
+  const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
   const hasDonationSupport = Boolean(
     config.DONATION_CRYPTO_ADDRESS ||
     config.DONATION_PRIMARY_URL ||
     config.DONATION_SECONDARY_URL ||
-    config.DONATION_UPI_ID
+    config.DONATION_UPI_ID ||
+    nowPaymentsWidgetUrl
   );
-  const donateCryptoLabel = escapeHtml(config.DONATION_CRYPTO_LABEL || 'USDT (TRC20)');
-  const donateCryptoAddress = escapeHtml(config.DONATION_CRYPTO_ADDRESS || '');
-  const donatePrimaryUrl = escapeHtml(config.DONATION_PRIMARY_URL || '');
-  const donateSecondaryUrl = escapeHtml(config.DONATION_SECONDARY_URL || '');
-  const donateUpiId = escapeHtml(config.DONATION_UPI_ID || '');
-  const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
 
   return `<!doctype html>
 <html lang="en">
@@ -53,13 +106,15 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       :root {
         color-scheme: dark;
         --bg: #0f0f0f;
-        --card-bg: rgba(255, 255, 255, 0.07);
-        --card-border: rgba(255, 255, 255, 0.12);
+        --panel: rgba(255,255,255,0.055);
+        --panel-strong: rgba(255,255,255,0.085);
+        --border: rgba(255,255,255,0.11);
         --text: #f5f7ff;
         --muted: #a7afc6;
         --accent-start: #8b5cf6;
         --accent-end: #3b82f6;
-        --surface: rgba(255, 255, 255, 0.05);
+        --green: #34d399;
+        --danger: #ff98a8;
         --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
       }
 
@@ -68,9 +123,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       body {
         margin: 0;
         min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         padding: 24px;
         background:
           radial-gradient(circle at top left, rgba(139, 92, 246, 0.22), transparent 26%),
@@ -82,7 +134,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       }
 
       main {
-        width: min(100%, 560px);
+        width: min(100%, 1080px);
+        margin: 0 auto;
       }
 
       .shell {
@@ -90,7 +143,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         overflow: hidden;
         padding: 34px 28px 24px;
         border-radius: 28px;
-        border: 1px solid var(--card-border);
+        border: 1px solid var(--border);
         background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
         box-shadow: var(--shadow);
         backdrop-filter: blur(18px);
@@ -102,7 +155,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         inset: -2px;
         background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(59, 130, 246, 0.14), transparent 70%);
         pointer-events: none;
-        z-index: 0;
       }
 
       .content {
@@ -124,8 +176,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       }
 
       h1 {
-        margin: 18px 0 10px;
-        font-size: clamp(32px, 8vw, 48px);
+        margin: 18px 0 8px;
+        font-size: clamp(32px, 7vw, 48px);
         line-height: 1.05;
       }
 
@@ -135,8 +187,170 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         font-size: 16px;
       }
 
+      .support {
+        margin-top: 24px;
+        padding: 18px;
+        border-radius: 22px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.045);
+      }
+
+      .support-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+        justify-content: center;
+      }
+
+      .support-promo {
+        margin-top: 18px;
+        padding: 16px 18px 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.04);
+        box-shadow: 0 14px 34px rgba(0,0,0,0.18);
+      }
+
+      .free-strip {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.035);
+      }
+
+      .free-copy {
+        min-width: 0;
+      }
+
+      .free-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: #eef2ff;
+      }
+
+      .free-title strong {
+        color: #8cf0c0;
+      }
+
+      .free-copy p {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .donate-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 116px;
+        padding: 12px 18px;
+        border-radius: 14px;
+        border: 0;
+        text-decoration: none;
+        background: linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.95));
+        color: #f7fffb;
+        box-shadow: 0 12px 24px rgba(16,185,129,0.22);
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .support-promo-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .support-promo-title {
+        margin: 0;
+        font-size: 15px;
+        color: #eef2ff;
+        font-weight: 700;
+      }
+
+      .support-hearts {
+        color: #ff90c2;
+        letter-spacing: 0.08em;
+        white-space: nowrap;
+      }
+
+      .support-promo-copy {
+        margin: 10px 0 0;
+        color: #ced8f6;
+        font-size: 14px;
+      }
+
+      .support-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 16px;
+        border-radius: 999px;
+        text-decoration: none;
+        color: #f8fbff;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.1);
+      }
+
+      .widget-panel {
+        display: none;
+        margin: 14px auto 0;
+        padding: 16px;
+        max-width: 560px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.04);
+      }
+
+      .widget-panel.open {
+        display: block;
+      }
+
+      .widget-frame {
+        display: block;
+        width: min(100%, 420px);
+        min-height: 600px;
+        margin: 0 auto;
+        border: 0;
+        border-radius: 16px;
+        background: #ffffff;
+      }
+
+      .config-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+        gap: 18px;
+        margin-top: 24px;
+      }
+
+      .config-panel {
+        padding: 20px;
+        border-radius: 22px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 16px;
+      }
+
+      .panel-subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
       .field {
-        margin-top: 28px;
+        margin-top: 18px;
       }
 
       .field-label {
@@ -148,28 +362,173 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       .field-input {
         width: 100%;
-        padding: 15px 16px;
+        padding: 14px 16px;
         border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 18px;
-        background: var(--surface);
+        border-radius: 16px;
+        background: rgba(255,255,255,0.04);
         color: var(--text);
         font: inherit;
         outline: none;
-        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
-      }
-
-      .field-input::placeholder {
-        color: #8d96b0;
       }
 
       .field-input:focus {
         border-color: rgba(99, 102, 241, 0.6);
         box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.14);
-        transform: translateY(-1px);
       }
 
       .field-help {
         margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .mini-button {
+        appearance: none;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 999px;
+        padding: 9px 14px;
+        background: rgba(255,255,255,0.05);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 10px;
+        margin-top: 16px;
+        max-height: 340px;
+        overflow: auto;
+      }
+
+      .provider-option {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+        cursor: pointer;
+      }
+
+      .provider-option input {
+        accent-color: #8b5cf6;
+      }
+
+      .provider-name {
+        font-size: 14px;
+        word-break: break-word;
+      }
+
+      .empty-state {
+        margin-top: 16px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.035);
+        color: var(--muted);
+      }
+
+      .summary-strip {
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(12, 14, 22, 0.35);
+        color: #e9eeff;
+        font-size: 14px;
+      }
+
+      .quality-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .quality-row {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+      }
+
+      .quality-rank {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        color: #dce7ff;
+        font-size: 13px;
+      }
+
+      .quality-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .arrow-button {
+        width: 34px;
+        height: 34px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.05);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .arrow-button:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
+      .option-group {
+        margin-top: 18px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .choice-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .choice-card {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.04);
+      }
+
+      .choice-card input {
+        margin-top: 2px;
+        accent-color: #8b5cf6;
+      }
+
+      .choice-title {
+        margin: 0;
+        font-size: 14px;
+        color: #eef2ff;
+      }
+
+      .choice-copy {
+        margin: 4px 0 0;
         color: var(--muted);
         font-size: 13px;
       }
@@ -180,7 +539,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         border-radius: 18px;
         background: rgba(12, 14, 22, 0.45);
         border: 1px solid rgba(255,255,255,0.08);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
       }
 
       .manifest-label {
@@ -212,15 +570,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         padding: 14px 18px;
         font: inherit;
         cursor: pointer;
-        transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
-      }
-
-      button:hover {
-        transform: translateY(-1px);
-      }
-
-      button:active {
-        transform: translateY(0);
       }
 
       .primary-button {
@@ -229,18 +578,10 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         box-shadow: 0 12px 30px rgba(99, 102, 241, 0.28);
       }
 
-      .primary-button:hover {
-        box-shadow: 0 16px 36px rgba(99, 102, 241, 0.34);
-      }
-
       .secondary-button {
         background: rgba(255,255,255,0.06);
         color: var(--text);
         border: 1px solid rgba(255,255,255,0.08);
-      }
-
-      .secondary-button:hover {
-        box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 10px 28px rgba(0,0,0,0.22);
       }
 
       .flash {
@@ -249,222 +590,57 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         color: #e4ebff;
         font-size: 13px;
       }
+
       .notes {
         margin-top: 22px;
         padding-top: 18px;
         border-top: 1px solid rgba(255,255,255,0.08);
       }
+
       .notes-title {
         margin: 0 0 12px;
         color: #f2d469;
         font-size: 13px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        text-align: center;
       }
+
       .notes-list {
         display: grid;
         gap: 10px;
       }
+
       .note-item {
         margin: 0;
         color: var(--muted);
         font-size: 14px;
-        text-align: center;
       }
+
       .note-item strong {
         color: #e7ecff;
       }
+
       .disclaimer {
         margin-top: 16px;
         padding-top: 16px;
         border-top: 1px solid rgba(255,255,255,0.08);
       }
+
       .disclaimer-text {
         margin: 0;
         color: var(--muted);
         font-size: 14px;
-        text-align: center;
         line-height: 1.6;
       }
+
       .disclaimer-text strong {
-        color: #ff929f;
+        color: var(--danger);
       }
 
-      .support {
-        margin-top: 22px;
-        padding-top: 18px;
-        border-top: 1px solid rgba(255,255,255,0.08);
-      }
-      .support-promo {
-        margin-top: 18px;
-        padding: 16px 18px 18px;
-        border-radius: 22px;
-        border: 1px solid rgba(255,255,255,0.1);
-        background: rgba(255,255,255,0.04);
-        box-shadow: 0 14px 34px rgba(0,0,0,0.18);
-      }
-      .support-promo-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .support-promo-title {
-        margin: 0;
-        font-size: 15px;
-        color: #eef2ff;
-        font-weight: 700;
-      }
-      .support-hearts {
-        color: #ff90c2;
-        letter-spacing: 0.08em;
-        white-space: nowrap;
-      }
-      .support-promo-copy {
-        margin: 10px 0 0;
-        color: #ced8f6;
-        font-size: 14px;
-      }
-      .support-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-top: 14px;
-        min-height: 42px;
-        padding: 0 16px;
-        border-radius: 999px;
-        text-decoration: none;
-        color: #f8fbff;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.1);
-        transition: transform 140ms ease, box-shadow 160ms ease, background 140ms ease;
-      }
-      .support-link:hover {
-        transform: translateY(-1px);
-        background: rgba(255,255,255,0.11);
-        box-shadow: 0 10px 24px rgba(0,0,0,0.2);
-      }
-      .free-strip {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 14px;
-        padding: 16px 18px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.08);
-        background: rgba(255,255,255,0.035);
-      }
-      .free-copy {
-        min-width: 0;
-      }
-      .free-title {
-        margin: 0;
-        font-size: 15px;
-        font-weight: 700;
-        color: #eef2ff;
-      }
-      .free-title strong {
-        color: #8cf0c0;
-      }
-      .free-copy p {
-        margin: 6px 0 0;
-        font-size: 13px;
-        color: var(--muted);
-      }
-      .donate-toggle {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        min-width: 116px;
-        padding: 12px 18px;
-        border-radius: 14px;
-        border: 0;
-        text-decoration: none;
-        background: linear-gradient(135deg, rgba(34,197,94,0.95), rgba(16,185,129,0.95));
-        color: #f7fffb;
-        box-shadow: 0 12px 24px rgba(16,185,129,0.22);
-        transition: transform 140ms ease, box-shadow 160ms ease, opacity 140ms ease;
-        white-space: nowrap;
-        flex-shrink: 0;
-      }
-      .donate-toggle:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 16px 30px rgba(16,185,129,0.26);
-      }
-      .widget-panel {
-        display: none;
-        margin-top: 16px;
-        padding: 18px;
-        border-radius: 22px;
-        border: 1px solid rgba(255,255,255,0.1);
-        background: rgba(255,255,255,0.045);
-        box-shadow: 0 14px 34px rgba(0,0,0,0.18);
-      }
-      .widget-panel.open {
-        display: block;
-      }
-      .widget-title {
-        margin: 0 0 6px;
-        font-size: 14px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #d9def4;
-      }
-      .widget-copy {
-        margin: 0 0 14px;
-        color: var(--muted);
-        font-size: 14px;
-      }
-      .widget-frame {
-        width: 100%;
-        min-height: 640px;
-        border: 0;
-        border-radius: 18px;
-        background: #ffffff;
-      }
-      .widget-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 14px;
-      }
-      .widget-link {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 42px;
-        padding: 0 16px;
-        border-radius: 999px;
-        text-decoration: none;
-        color: #f8fbff;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.1);
-        transition: transform 140ms ease, box-shadow 160ms ease, background 140ms ease;
-      }
-      .widget-link:hover {
-        transform: translateY(-1px);
-        background: rgba(255,255,255,0.11);
-        box-shadow: 0 10px 24px rgba(0,0,0,0.2);
-      }
-
-      .support-title {
-        margin: 0 0 6px;
-        font-size: 13px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #d9def4;
-      }
-
-      .support p {
-        margin: 0;
-        color: var(--muted);
-        font-size: 14px;
-      }
-
-      .support a {
-        color: #c5d3ff;
+      @media (max-width: 900px) {
+        .config-grid {
+          grid-template-columns: 1fr;
+        }
       }
 
       @media (max-width: 560px) {
@@ -480,12 +656,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         .actions {
           grid-template-columns: 1fr;
         }
+
+        .widget-frame {
+          min-height: 680px;
+        }
+
         .free-strip {
           flex-direction: column;
           align-items: stretch;
-        }
-        .widget-frame {
-          min-height: 680px;
         }
       }
     </style>
@@ -496,11 +674,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         <div class="content">
           <div class="badge">Configure Add-on</div>
           <h1>NebulaStreams</h1>
-          <p class="subtitle">Self-hosted streaming backend</p>
+          <p class="subtitle">Build a filtered install URL with provider, quality, and playback preferences.</p>
 
-          <div class="support">
-            <div class="support-title">Support</div>
-            <p>Use the manifest directly in Stremio if install does not open automatically. You can also paste a small provider list above to keep results focused.</p>
+          <section class="support">
             ${hasDonationSupport ? `
               <div class="support-promo">
                 <div class="free-strip">
@@ -513,24 +689,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <span>Support</span>
                   </button>
                 </div>
-                ${nowPaymentsWidgetUrl ? `
-                  <div class="widget-panel" id="donation-widget-panel">
-                    <h3 class="widget-title">Instant donation widget</h3>
-                    <p class="widget-copy">Use the embedded NOWPayments widget below, or open the UPI-only page if you prefer direct UPI support.</p>
-                    <iframe
-                      class="widget-frame"
-                      src="${nowPaymentsWidgetUrl}"
-                      loading="lazy"
-                      scrolling="no"
-                      title="NOWPayments donation widget"
-                    >
-                      Can't load widget
-                    </iframe>
-                    <div class="widget-actions">
-                      <a class="widget-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
-                    </div>
-                  </div>
-                ` : ''}
               </div>
             ` : `
               <div class="support-promo">
@@ -539,26 +697,85 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <div class="support-hearts">♥ ♥ ♥</div>
                 </div>
                 <p class="support-promo-copy">If NebulaStreams has made your setup easier, your support helps keep the servers stable for everyone using it right now.</p>
-                <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
+                <div class="support-actions">
+                  <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
+                </div>
               </div>
             `}
-          </div>
+            ${nowPaymentsWidgetUrl ? `
+              <div class="widget-panel" id="donation-widget-panel">
+                <iframe
+                  class="widget-frame"
+                  src="${nowPaymentsWidgetUrl}"
+                  loading="lazy"
+                  scrolling="no"
+                  title="NOWPayments donation widget"
+                >
+                  Can't load widget
+                </iframe>
+                <div class="support-actions">
+                  <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
+                </div>
+              </div>
+            ` : ''}
+          </section>
 
-          <div class="field">
-            <label class="field-label" for="provider-input">Optional provider filter</label>
-            <input
-              id="provider-input"
-              class="field-input"
-              type="text"
-              list="provider-list"
-              placeholder="cinestream,4khdhub,streamflix"
-              spellcheck="false"
-              autocomplete="off"
-            >
-            <div class="field-help">Leave blank to use all providers. Example: ${providerHints || '4khdhub,cinestream,streamflix'}</div>
-            <datalist id="provider-list">
-              ${providerIds.map((providerId) => `<option value="${escapeHtml(providerId)}"></option>`).join('')}
-            </datalist>
+          <div class="config-grid">
+            <section class="config-panel">
+              <h2 class="panel-title">Providers</h2>
+              <p class="panel-subtitle">Pick any number of providers. Leaving everything unchecked keeps the default all-provider install.</p>
+
+              <div class="field">
+                <label class="field-label" for="provider-search">Filter providers</label>
+                <input
+                  id="provider-search"
+                  class="field-input"
+                  type="text"
+                  placeholder="Search providers"
+                  spellcheck="false"
+                  autocomplete="off"
+                >
+                <div class="field-help">Examples: ${providerHints || '4khdhub, cinestream, streamflix'}</div>
+              </div>
+
+              <div class="toolbar">
+                <button type="button" class="mini-button" id="select-all-providers">Select all</button>
+                <button type="button" class="mini-button" id="clear-providers">Clear</button>
+              </div>
+
+              <div class="summary-strip" id="provider-summary">All providers selected</div>
+              <div class="provider-grid" id="provider-grid"></div>
+            </section>
+
+            <section class="config-panel">
+              <h2 class="panel-title">Quality Order</h2>
+              <p class="panel-subtitle">Move your preferred qualities to the top. NebulaStreams uses this order when ranking results.</p>
+
+              <div class="toolbar">
+                <button type="button" class="mini-button" id="reset-quality-order">Reset order</button>
+              </div>
+
+              <div class="quality-list" id="quality-list"></div>
+
+              <div class="option-group">
+                <h2 class="panel-title">Playback Options</h2>
+                <label class="choice-card">
+                  <input type="checkbox" id="web-ready-only">
+                  <div>
+                    <p class="choice-title">Web-ready only (Not recommended)</p>
+                    <p class="choice-copy">Keep only simple MP4-style links that need no proxy headers. This is stricter and can reduce the result count a lot.</p>
+                  </div>
+                </label>
+
+                <label class="choice-card">
+                  <input type="checkbox" id="hide-heavy-formats">
+                  <div>
+                    <p class="choice-title">Hide HEVC / HDR / 10-bit</p>
+                    <p class="choice-copy">Useful for lighter playback devices and players that struggle with heavier formats.</p>
+                  </div>
+                </label>
+              </div>
+            </section>
           </div>
 
           <div class="manifest-box">
@@ -576,8 +793,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           <div class="notes">
             <div class="notes-title">Important Notes</div>
             <div class="notes-list">
-              <p class="note-item"><strong>Playback compatibility:</strong> lighter MP4 or HLS sources usually work best with Stremio native players. Heavy MKV, HEVC, HDR, or 10-bit files may work better in VLC or another external player.</p>
-              <p class="note-item"><strong>Provider matches:</strong> NebulaStreams aggregates results from public sources. A stream can occasionally be missing, slow, or imperfect, so if one card fails, try another source.</p>
+              <p class="note-item"><strong>Quality order:</strong> this only affects ranking. It does not invent missing qualities from providers that have no match for a title.</p>
+              <p class="note-item"><strong>Web-ready mode:</strong> this deliberately filters hard. Use it only if you want the safest direct-play subset.</p>
               <p class="note-item"><strong>Cold starts:</strong> the first request can take longer while the hosted backend wakes up and providers are queried in parallel.</p>
               <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store the media files themselves. It discovers external links and passes them through the configured playback flow.</p>
             </div>
@@ -585,36 +802,40 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
               <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own the media itself. It should not be used to view copyrighted material without permission. The developer assumes no responsibility for how this tool is utilized.</p>
             </div>
           </div>
-
         </div>
       </section>
     </main>
     <script>
       const origin = ${JSON.stringify(baseUrl)};
-      const providerIds = ${JSON.stringify(providerIds)};
-      const providerInput = document.getElementById('provider-input');
+      const providerData = ${JSON.stringify(providerIds)};
+      const defaultQualityPriority = ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'];
+      const selectedProviders = new Set();
+      let qualityPriority = [...defaultQualityPriority];
+
+      providerData.forEach((providerId) => selectedProviders.add(providerId));
+
+      const providerSearch = document.getElementById('provider-search');
+      const providerGrid = document.getElementById('provider-grid');
+      const providerSummary = document.getElementById('provider-summary');
       const manifestUrl = document.getElementById('manifest-url');
       const flash = document.getElementById('flash');
       const copyButton = document.getElementById('copy-url');
       const installButton = document.getElementById('install-addon');
+      const qualityList = document.getElementById('quality-list');
+      const selectAllProvidersButton = document.getElementById('select-all-providers');
+      const clearProvidersButton = document.getElementById('clear-providers');
+      const resetQualityOrderButton = document.getElementById('reset-quality-order');
+      const webReadyOnly = document.getElementById('web-ready-only');
+      const hideHeavyFormats = document.getElementById('hide-heavy-formats');
       const donateToggle = document.getElementById('donate-toggle');
       const donationWidgetPanel = document.getElementById('donation-widget-panel');
 
-      const update = () => {
-        const rawValue = providerInput.value
-          .split(',')
-          .map((value) => value.trim().toLowerCase())
-          .filter(Boolean);
-        const uniqueValues = rawValue.filter((value, index) => rawValue.indexOf(value) === index);
-        const filteredProviders = uniqueValues.filter((value) => providerIds.includes(value));
-        const providerSegment = filteredProviders.length > 0
-          ? encodeURIComponent(filteredProviders.join(','))
-          : 'all';
-
-        manifestUrl.textContent = filteredProviders.length > 0
-          ? origin + '/configured/' + providerSegment + '/manifest.json'
-          : origin + '/manifest.json';
-      };
+      const escapeHtmlClient = (value) => String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
 
       const showFlash = (text, isError = false) => {
         flash.textContent = text;
@@ -645,65 +866,172 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         }
       };
 
-      const setDonationMethod = () => {
-        if (!walletLabel || !walletAddress || !donationQr) {
+      const isDefaultQualityOrder = () =>
+        qualityPriority.length === defaultQualityPriority.length &&
+        qualityPriority.every((quality, index) => quality === defaultQualityPriority[index]);
+
+      const getOrderedProviders = () =>
+        providerData.filter((providerId) => selectedProviders.has(providerId));
+
+      const getOptionTokens = () => {
+        const tokens = [];
+
+        if (webReadyOnly.checked) {
+          tokens.push('web-ready-only');
+        }
+
+        if (hideHeavyFormats.checked) {
+          tokens.push('hide-heavy-formats');
+        }
+
+        return tokens;
+      };
+
+      const buildManifestPath = () => {
+        const orderedProviders = getOrderedProviders();
+        const providerSegment = orderedProviders.length > 0 && orderedProviders.length < providerData.length
+          ? encodeURIComponent(orderedProviders.join(','))
+          : 'all';
+        const qualitySegment = isDefaultQualityOrder()
+          ? 'default'
+          : encodeURIComponent(qualityPriority.join(','));
+        const optionTokens = getOptionTokens();
+
+        if (providerSegment === 'all' && qualitySegment === 'default' && optionTokens.length === 0) {
+          return '/manifest.json';
+        }
+
+        if (optionTokens.length === 0 && qualitySegment === 'default') {
+          return '/configured/' + providerSegment + '/manifest.json';
+        }
+
+        if (optionTokens.length === 0) {
+          return '/configured/' + providerSegment + '/' + qualitySegment + '/manifest.json';
+        }
+
+        return '/configured/' + providerSegment + '/' + qualitySegment + '/' + encodeURIComponent(optionTokens.join(',')) + '/manifest.json';
+      };
+
+      const updateProviderSummary = () => {
+        const orderedProviders = getOrderedProviders();
+
+        if (orderedProviders.length === providerData.length) {
+          providerSummary.textContent = 'All providers selected';
           return;
         }
 
-        const method = activeDonationMethod === 'upi' && donationMethods.upi.value
-          ? donationMethods.upi
-          : donationMethods.crypto.value
-            ? donationMethods.crypto
-            : donationMethods.upi;
-
-        walletLabel.textContent = method.label || 'Payment method';
-        walletAddress.textContent = method.displayValue || method.value || 'Not configured';
-        donationQr.src = method.walletUrl
-          ? 'https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=8&data=' + encodeURIComponent(method.walletUrl)
-          : '';
-
-        if (donationHint) {
-          donationHint.textContent = method.value
-            ? 'Use the wallet button or scan the QR to open ' + method.label + ' in a compatible app.'
-            : 'No donation method is configured yet.';
+        if (orderedProviders.length === 0) {
+          providerSummary.textContent = 'No providers checked. Falling back to all providers.';
+          return;
         }
 
-        if (openWalletLink) {
-          if (method.walletUrl) {
-            openWalletLink.href = method.walletUrl;
-            openWalletLink.style.display = 'inline-flex';
-            openWalletLink.textContent = method.openLabel || 'Open';
-          } else {
-            openWalletLink.href = '#';
-            openWalletLink.style.display = 'none';
-          }
-        }
-
-        if (copyDonationAddress) {
-          copyDonationAddress.textContent = method.copyLabel || 'Copy';
-          copyDonationAddress.dataset.copyValue = method.value || '';
-        }
-
-        if (donationMethodsElement) {
-          donationMethodsElement.querySelectorAll('.donation-method').forEach((button) => {
-            button.classList.toggle('active', button.dataset.method === activeDonationMethod);
-          });
-        }
+        providerSummary.textContent = orderedProviders.length + ' provider' + (orderedProviders.length === 1 ? '' : 's') + ' selected: ' + orderedProviders.join(', ');
       };
 
-      const getManifestUrl = () => manifestUrl.textContent.trim();
+      const renderProviderOptions = () => {
+        const filter = providerSearch.value.trim().toLowerCase();
+        const visibleProviders = providerData.filter((providerId) => providerId.includes(filter));
 
-      installButton.addEventListener('click', () => {
-        const url = 'stremio://addon-install?addon=' + encodeURIComponent(getManifestUrl());
-        window.location.href = url;
+        if (visibleProviders.length === 0) {
+          providerGrid.innerHTML = '<div class="empty-state">No providers match that filter.</div>';
+          return;
+        }
+
+        providerGrid.innerHTML = visibleProviders.map((providerId) =>
+          '<label class="provider-option">' +
+            '<input type="checkbox" data-provider-id="' + escapeHtmlClient(providerId) + '" ' + (selectedProviders.has(providerId) ? 'checked' : '') + '>' +
+            '<span class="provider-name">' + escapeHtmlClient(providerId) + '</span>' +
+          '</label>'
+        ).join('');
+      };
+
+      const renderQualityList = () => {
+        qualityList.innerHTML = qualityPriority.map((quality, index) =>
+          '<div class="quality-row">' +
+            '<div class="quality-rank">' + (index + 1) + '</div>' +
+            '<div>' + escapeHtmlClient(quality.toUpperCase()) + '</div>' +
+            '<div class="quality-actions">' +
+              '<button type="button" class="arrow-button" data-quality-index="' + index + '" data-quality-move="-1" ' + (index === 0 ? 'disabled' : '') + '>↑</button>' +
+              '<button type="button" class="arrow-button" data-quality-index="' + index + '" data-quality-move="1" ' + (index === qualityPriority.length - 1 ? 'disabled' : '') + '>↓</button>' +
+            '</div>' +
+          '</div>'
+        ).join('');
+      };
+
+      const updateManifest = () => {
+        manifestUrl.textContent = origin + buildManifestPath();
+        updateProviderSummary();
+      };
+
+      providerSearch.addEventListener('input', () => {
+        renderProviderOptions();
       });
 
-      copyButton.addEventListener('click', async () => {
-        const manifest = getManifestUrl();
+      providerGrid.addEventListener('change', (event) => {
+        const providerId = event.target?.dataset?.providerId;
 
-        try {
-          await copyText(manifest, 'Manifest URL copied.');
-        } catch {}
+        if (!providerId) {
+          return;
+        }
+
+        if (event.target.checked) {
+          selectedProviders.add(providerId);
+        } else {
+          selectedProviders.delete(providerId);
+        }
+
+        updateManifest();
+      });
+
+      selectAllProvidersButton.addEventListener('click', () => {
+        providerData.forEach((providerId) => selectedProviders.add(providerId));
+        renderProviderOptions();
+        updateManifest();
+      });
+
+      clearProvidersButton.addEventListener('click', () => {
+        selectedProviders.clear();
+        renderProviderOptions();
+        updateManifest();
+      });
+
+      resetQualityOrderButton.addEventListener('click', () => {
+        qualityPriority = [...defaultQualityPriority];
+        renderQualityList();
+        updateManifest();
+      });
+
+      qualityList.addEventListener('click', (event) => {
+        const index = Number.parseInt(event.target?.dataset?.qualityIndex || '', 10);
+        const move = Number.parseInt(event.target?.dataset?.qualityMove || '', 10);
+
+        if (!Number.isInteger(index) || !Number.isInteger(move)) {
+          return;
+        }
+
+        const nextIndex = index + move;
+
+        if (nextIndex < 0 || nextIndex >= qualityPriority.length) {
+          return;
+        }
+
+        const reordered = [...qualityPriority];
+        const [movedQuality] = reordered.splice(index, 1);
+        reordered.splice(nextIndex, 0, movedQuality);
+        qualityPriority = reordered;
+        renderQualityList();
+        updateManifest();
+      });
+
+      webReadyOnly.addEventListener('change', updateManifest);
+      hideHeavyFormats.addEventListener('change', updateManifest);
+
+      installButton.addEventListener('click', () => {
+        window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(manifestUrl.textContent.trim());
+      });
+
+      copyButton.addEventListener('click', () => {
+        copyText(manifestUrl.textContent.trim(), 'Manifest URL copied.');
       });
 
       if (donateToggle && donationWidgetPanel) {
@@ -712,8 +1040,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         });
       }
 
-      providerInput.addEventListener('input', update);
-      update();
+      renderProviderOptions();
+      renderQualityList();
+      updateManifest();
     </script>
   </body>
 </html>`;
@@ -839,12 +1168,29 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
 
       <section class="grid">
         <div class="card"><div class="label">Uptime</div><div class="value">${stats.runtime.uptimeSeconds}s</div></div>
+        <div class="card"><div class="label">System CPU</div><div class="value">${formatPercent(stats.system.cpuUsagePercent)}</div></div>
+        <div class="card"><div class="label">System Memory</div><div class="value">${formatPercent(stats.system.memoryUsagePercent)}</div></div>
+        <div class="card"><div class="label">Process RSS</div><div class="value">${formatBytes(stats.system.processRssBytes)}</div></div>
         <div class="card"><div class="label">Active Streams</div><div class="value">${stats.runtime.activeStreams}/${stats.runtime.maxActiveStreams}</div></div>
         <div class="card"><div class="label">Active Torrents</div><div class="value">${stats.runtime.activeTorrentEngines}</div></div>
         <div class="card"><div class="label">Human Users</div><div class="value">${stats.users.totalUsers}</div></div>
         <div class="card"><div class="label">Users 24h</div><div class="value">${stats.users.activeUsers24h}</div></div>
         <div class="card"><div class="label">Stream Users</div><div class="value">${stats.users.streamUsers}</div></div>
         <div class="card"><div class="label">Human Requests</div><div class="value">${stats.users.totalTrackedRequests}</div></div>
+      </section>
+
+      <section class="section">
+        <h2>System</h2>
+        <div class="meta-grid">
+          <div><div class="label">CPU Usage</div><code>${escapeHtml(formatPercent(stats.system.cpuUsagePercent))}</code></div>
+          <div><div class="label">CPU Cores</div><code>${escapeHtml(String(stats.system.cpuCount))}</code></div>
+          <div><div class="label">Load Average</div><code>${escapeHtml(stats.system.loadAverage.map((value) => value.toFixed(2)).join(' / '))}</code></div>
+          <div><div class="label">Memory Used</div><code>${escapeHtml(formatBytes(stats.system.usedMemoryBytes))}</code></div>
+          <div><div class="label">Memory Free</div><code>${escapeHtml(formatBytes(stats.system.freeMemoryBytes))}</code></div>
+          <div><div class="label">Memory Total</div><code>${escapeHtml(formatBytes(stats.system.totalMemoryBytes))}</code></div>
+          <div><div class="label">Process RSS</div><code>${escapeHtml(formatBytes(stats.system.processRssBytes))}</code></div>
+          <div><div class="label">Process Heap Used</div><code>${escapeHtml(formatBytes(stats.system.processHeapUsedBytes))}</code></div>
+        </div>
       </section>
 
       <section class="section">
@@ -1658,6 +2004,7 @@ const bootstrap = async () => {
 
   app.get('/admin', requireAdminAuth, async (req, res, next) => {
     try {
+      const systemStats = await getSystemStats();
       const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
       const stats = {
         runtime: {
@@ -1666,6 +2013,7 @@ const bootstrap = async () => {
           activeStreams: streamManager.activeStreams,
           maxActiveStreams: config.MAX_ACTIVE_STREAMS
         },
+        system: systemStats,
         users: userTracker.getStats(),
         cache: cacheStats,
         providers: providerService.getStats(),
@@ -1684,12 +2032,16 @@ const bootstrap = async () => {
   app.get('/configured/:providerConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/providers', (_req, res) => {
     res.json({
       providers: providerService.listProviders()
