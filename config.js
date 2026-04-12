@@ -33,6 +33,7 @@ const toBoundedInteger = (value, fallback, min, max) => {
 export const config = Object.freeze({
   PORT: toPositiveInteger(process.env.PORT, 3000),
   CACHE_DIR: path.resolve(process.cwd(), process.env.CACHE_DIR || './cache'),
+  PUBLIC_BASE_URL: String(process.env.PUBLIC_BASE_URL || 'https://nebulastreams.onrender.com').trim().replace(/\/+$/u, ''),
   REVERSE_PROXY_TARGET: String(process.env.REVERSE_PROXY_TARGET || '').trim().replace(/\/+$/u, ''),
   REVERSE_PROXY_TIMEOUT_SECONDS: toPositiveInteger(process.env.REVERSE_PROXY_TIMEOUT_SECONDS, 60),
   ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',

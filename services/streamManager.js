@@ -151,6 +151,8 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   webReadyOnly: false,
   hideHeavyFormats: false
 });
+const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
 const normalizeQualityKey = (quality) => {
   const normalized = String(quality || '').trim().toLowerCase();
@@ -255,6 +257,145 @@ const getDeliveryPriorityScore = (stream) => {
   }
 
   return 0;
+};
+
+const getProviderPriorityScore = (stream, providerOrder) => {
+  if (!Array.isArray(providerOrder) || providerOrder.length === 0) {
+    return 0;
+  }
+
+  const providerId = String(stream.provider || '').trim().toLowerCase();
+  const index = providerOrder.indexOf(providerId);
+
+  if (index === -1) {
+    return 0;
+  }
+
+  return (providerOrder.length - index) * 1500;
+};
+
+const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return response.text();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+};
+
+const stripHtml = (html) =>
+  String(html || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#8211;|&#8212;/gi, '-')
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number.parseInt(code, 10)))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const extractHubCloudAnchorCandidates = (html) => {
+  const candidates = [];
+  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+
+  while ((match = anchorPattern.exec(html)) !== null) {
+    const href = String(match[1] || '').replace(/&amp;/g, '&').trim();
+    const text = stripHtml(match[2]);
+
+    if (!href || !/^https?:\/\//i.test(href)) {
+      continue;
+    }
+
+    candidates.push({ href, text });
+  }
+
+  return candidates;
+};
+
+const getHubCloudCandidateScore = ({ href, text }) => {
+  const normalizedHref = href.toLowerCase();
+  const normalizedText = text.toLowerCase();
+  let score = 0;
+
+  if (normalizedText.includes('pdl') || normalizedHref.includes('workers.dev')) {
+    score += 500;
+  }
+
+  if (normalizedText.includes('pixel') || normalizedText.includes('10gbps') || normalizedHref.includes('pixel.')) {
+    score += 400;
+  }
+
+  if (normalizedText.includes('fslv2')) {
+    score += 250;
+  } else if (normalizedText.includes('fsl')) {
+    score += 220;
+  }
+
+  if (normalizedHref.includes('hubcloud') || normalizedHref.includes('gamerxyt.com')) {
+    score -= 300;
+  }
+
+  return score;
+};
+
+const classifyHubCloudCandidate = ({ href, text }) => {
+  const normalizedHref = String(href || '').toLowerCase();
+  const normalizedText = String(text || '').toLowerCase();
+
+  if (normalizedText.includes('fslv2')) {
+    return 'FSLv2';
+  }
+
+  if (normalizedText.includes('fsl')) {
+    return 'FSL';
+  }
+
+  if (normalizedText.includes('pixelserver') || normalizedText.includes('pixel') || normalizedHref.includes('pixeldrain')) {
+    return 'PixelServer';
+  }
+
+  if (normalizedText.includes('pdl') || normalizedHref.includes('workers.dev')) {
+    return 'PDL';
+  }
+
+  return 'Download';
+};
+
+const parseHubCloudTitle = (html) => {
+  const explicitTitleMatch = html.match(/<div class="card-header[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+
+  if (explicitTitleMatch?.[1]) {
+    return stripHtml(explicitTitleMatch[1]);
+  }
+
+  const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
+  return titleMatch?.[1] ? stripHtml(titleMatch[1]) : null;
+};
+
+const parseHubCloudSize = (html) => {
+  const sizeMatch = html.match(/id=["']size["'][^>]*>([\s\S]*?)</i);
+  return sizeMatch?.[1] ? stripHtml(sizeMatch[1]) : null;
+};
+
+const isHubCloudUrl = (streamUrl) => {
+  try {
+    return new URL(String(streamUrl || '').trim()).hostname.toLowerCase().includes('hubcloud');
+  } catch {
+    return false;
+  }
 };
 
 const getCompactTags = (stream) => {
@@ -505,6 +646,8 @@ export class StreamManager {
     this.stremioResultCache = new Map();
     this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
     this.stremioResultCacheDirReady = null;
+    this.hubCloudCache = new Map();
+    this.hubCloudInFlight = new Map();
   }
 
   async ensureStremioResultCacheDir() {
@@ -704,7 +847,7 @@ export class StreamManager {
   }
 
   async handleStremioManifest(req, res) {
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const baseUrl = config.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
     const addonPresentation = this.getAddonPresentation(req);
 
     res.json({
@@ -802,8 +945,8 @@ export class StreamManager {
       }
 
       configuredStreams.sort((left, right) =>
-        (getQualityPriorityScore(right, qualityPriority) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
-        (getQualityPriorityScore(left, qualityPriority) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+        (getQualityPriorityScore(right, qualityPriority) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
       const stremioStreams = configuredStreams
         .map((stream) => toStremioStreamObject(stream, parsed))
@@ -1133,6 +1276,142 @@ export class StreamManager {
     return streamUrl;
   }
 
+  async resolveHubCloudUrls(streamUrl, inheritedHeaders = null) {
+    const normalizedUrl = String(streamUrl || '').trim();
+
+    if (!isHubCloudUrl(normalizedUrl)) {
+      return [];
+    }
+
+    const cached = this.hubCloudCache.get(normalizedUrl);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      return Array.isArray(cached.value) ? cached.value.map((entry) => ({ ...entry })) : [];
+    }
+
+    if (this.hubCloudInFlight.has(normalizedUrl)) {
+      return this.hubCloudInFlight.get(normalizedUrl);
+    }
+
+    const request = (async () => {
+      try {
+        const initialHeaders = {
+          'User-Agent': HUBCLOUD_USER_AGENT,
+          ...(inheritedHeaders && typeof inheritedHeaders === 'object' ? inheritedHeaders : {}),
+          Referer: normalizedUrl
+        };
+        const initialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
+        const redirectMatch = initialHtml.match(/var url ?= ?'([^']+)'/i)
+          || initialHtml.match(/id=["']download["'][^>]*href=["']([^"']+)["']/i);
+
+        if (!redirectMatch?.[1]) {
+          this.hubCloudCache.set(normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          return [];
+        }
+
+        const redirectUrl = new URL(redirectMatch[1], normalizedUrl).toString();
+        const linksHtml = await fetchTextWithTimeout(redirectUrl, {
+          headers: {
+            'User-Agent': HUBCLOUD_USER_AGENT,
+            Referer: normalizedUrl
+          }
+        }, 8000);
+        const title = parseHubCloudTitle(linksHtml);
+        const size = parseHubCloudSize(linksHtml);
+        const candidates = extractHubCloudAnchorCandidates(linksHtml)
+          .map((candidate) => ({
+            ...candidate,
+            score: getHubCloudCandidateScore(candidate),
+            server: classifyHubCloudCandidate(candidate)
+          }))
+          .filter((candidate) => candidate.score > 0)
+          .sort((left, right) => right.score - left.score);
+
+        if (candidates.length === 0) {
+          this.hubCloudCache.set(normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          return [];
+        }
+
+        const deduped = [];
+        const seenKeys = new Set();
+
+        for (const candidate of candidates) {
+          let resolvedHref = candidate.href;
+          let resolvedHeaders = null;
+
+          if (candidate.server === 'PixelServer') {
+            try {
+              const pixelUrl = new URL(candidate.href);
+              const pixelPath = pixelUrl.pathname.replace(/\/api\/file\//i, '/u/');
+              const refererUrl = new URL(pixelPath, pixelUrl.origin).toString();
+              const downloadUrl = new URL(candidate.href);
+              if (!/\/api\/file\//i.test(downloadUrl.pathname)) {
+                downloadUrl.pathname = downloadUrl.pathname.replace(/\/u\//i, '/api/file/');
+              }
+              if (!downloadUrl.searchParams.has('download')) {
+                downloadUrl.searchParams.set('download', '');
+              }
+              resolvedHref = downloadUrl.toString();
+              resolvedHeaders = {
+                Referer: refererUrl,
+                'User-Agent': HUBCLOUD_USER_AGENT
+              };
+            } catch {
+              resolvedHeaders = {
+                Referer: redirectUrl,
+                'User-Agent': HUBCLOUD_USER_AGENT
+              };
+            }
+          } else if (candidate.href.toLowerCase().includes('hubcdn')) {
+            resolvedHeaders = {
+              Referer: redirectUrl,
+              'User-Agent': HUBCLOUD_USER_AGENT
+            };
+          }
+
+          const dedupeKey = `${candidate.server}:${resolvedHref}`;
+          if (seenKeys.has(dedupeKey)) {
+            continue;
+          }
+          seenKeys.add(dedupeKey);
+
+          deduped.push({
+            url: resolvedHref,
+            headers: resolvedHeaders,
+            sourceSite: `HubCloud (${candidate.server})`,
+            title,
+            size
+          });
+        }
+
+        this.hubCloudCache.set(normalizedUrl, {
+          expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
+          value: deduped
+        });
+
+        return deduped.map((entry) => ({ ...entry }));
+      } catch (error) {
+        logger.warn('hubcloud resolution failed', {
+          streamUrl: normalizedUrl,
+          error
+        });
+        this.hubCloudCache.set(normalizedUrl, {
+          expiresAt: Date.now() + (10 * 60 * 1000),
+          value: []
+        });
+        return [];
+      }
+    })();
+
+    this.hubCloudInFlight.set(normalizedUrl, request);
+
+    try {
+      return await request;
+    } finally {
+      this.hubCloudInFlight.delete(normalizedUrl);
+    }
+  }
+
   async normalizeProviderStreams(_baseUrl, streams, fallbackProvider = null) {
     const settled = await Promise.all(streams.flatMap((stream) => {
       const provider = stream.provider || fallbackProvider;
@@ -1168,8 +1447,31 @@ export class StreamManager {
             torrent: _torrent,
             ...rest
           } = stream;
+          const normalizedEntries = [];
 
-          return {
+          if (variant.transport === 'http' && isHubCloudUrl(normalizedUrl)) {
+            const resolvedHubCloudEntries = await this.resolveHubCloudUrls(normalizedUrl, variant.headers);
+
+            if (resolvedHubCloudEntries.length > 0) {
+              for (const resolvedEntry of resolvedHubCloudEntries) {
+                normalizedEntries.push({
+                  ...rest,
+                  provider,
+                  ...(resolvedEntry.sourceSite ? { sourceSite: resolvedEntry.sourceSite } : {}),
+                  ...(resolvedEntry.title || rest.title ? { title: resolvedEntry.title || rest.title } : {}),
+                  ...(resolvedEntry.size || rest.size ? { size: resolvedEntry.size || rest.size } : {}),
+                  headers: resolvedEntry.headers,
+                  transport: 'http',
+                  url: resolvedEntry.url,
+                  filename: extractFilenameFromUrl(resolvedEntry.url)
+                });
+              }
+
+              return normalizedEntries;
+            }
+          }
+
+          return [{
             ...rest,
             provider,
             headers: variant.headers,
@@ -1184,7 +1486,7 @@ export class StreamManager {
                   infoHash: extractInfoHash(normalizedMagnet) || null,
                   sources: getTorrentSources(normalizedMagnet)
                 })
-          };
+          }];
         } catch (error) {
           logger.warn('provider stream skipped', {
             provider,
@@ -1197,7 +1499,7 @@ export class StreamManager {
       });
     }));
 
-    return settled.filter(Boolean);
+    return settled.flat().filter(Boolean);
   }
 
   parseStremioStreamRequest(type, id) {

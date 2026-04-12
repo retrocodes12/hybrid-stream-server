@@ -16,6 +16,11 @@ const execFileAsync = promisify(execFile);
 
 const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/All-in-One-Nuvio/providers');
 const LOCAL_PROVIDERS = Object.freeze({
+  tamilian: {
+    id: 'tamilian',
+    label: 'Tamilian',
+    modulePath: path.resolve(process.cwd(), 'providers/tamilian.cjs')
+  },
   'torrent-scraper': {
     id: 'torrent-scraper',
     label: 'Torrent Scraper',
@@ -27,12 +32,52 @@ const LOCAL_PROVIDERS = Object.freeze({
 const PROVIDER_CACHE_VERSION = '3';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
-const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u', 'torrent-scraper'];
+const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u', 'tamilian', 'torrent-scraper'];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
+const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CONTENT_PROVIDER_BOOSTS = Object.freeze({
+  anime: Object.freeze({
+    'anime-sama': 180,
+    animekai: 175,
+    animesalt: 170,
+    animeworld: 165,
+    kisskh: 55
+  }),
+  kdrama: Object.freeze({
+    onlykdrama: 180,
+    kisskh: 120,
+    showbox: 40
+  }),
+  indian: Object.freeze({
+    tamilian: 165,
+    isaidub: 155,
+    hindmoviez: 145,
+    flixindia: 145,
+    hdhub4u: 135,
+    '4khdhub': 125,
+    '4khdhub_tv': 125,
+    streamflix: 110,
+    streamflix_eng: 105,
+    moviesmod: 100,
+    allwish: 80,
+    allmovieland: 70
+  }),
+  turkish: Object.freeze({
+    diziyou: 180
+  }),
+  portuguese: Object.freeze({
+    brazucaplay: 180
+  }),
+  spanish: Object.freeze({
+    lamovie: 170,
+    purstream: 130
+  })
+});
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   vidlink: 120,
   videasy: 115,
   hdhub4u: 110,
+  tamilian: 104,
   'torrent-scraper': 80,
   streamflix: 105,
   netmirror: 100,
@@ -44,6 +89,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   lamovie: 88,
   purstream: 86
 });
+const INDIAN_LANGUAGES = new Set(['ta', 'te', 'hi', 'ml', 'kn']);
 
 const toLabel = (providerId) =>
   providerId
@@ -254,26 +300,42 @@ const toHeaderScore = (headers) => {
   return score;
 };
 
-const toProviderScore = (providerId, providerOrder) => {
-  if (Object.hasOwn(PROVIDER_RELIABILITY_SCORES, providerId)) {
-    return PROVIDER_RELIABILITY_SCORES[providerId];
-  }
-
-  const index = providerOrder.indexOf(providerId);
-
-  if (index === -1) {
+const getProviderContentBoost = (providerId, contentProfile) => {
+  if (!contentProfile || !Array.isArray(contentProfile.tags)) {
     return 0;
   }
 
-  return Math.max(60 - index, 1);
+  return contentProfile.tags.reduce((total, tag) => {
+    const tagBoosts = CONTENT_PROVIDER_BOOSTS[tag];
+
+    if (!tagBoosts || !Object.hasOwn(tagBoosts, providerId)) {
+      return total;
+    }
+
+    return total + tagBoosts[providerId];
+  }, 0);
 };
 
-const rankStream = (stream, providerOrder) => {
+const toProviderScore = (providerId, providerOrder, contentProfile = null) => {
+  const baseReliability = Object.hasOwn(PROVIDER_RELIABILITY_SCORES, providerId)
+    ? PROVIDER_RELIABILITY_SCORES[providerId]
+    : 0;
+  const contentBoost = getProviderContentBoost(providerId, contentProfile);
+  const index = providerOrder.indexOf(providerId);
+
+  if (index === -1) {
+    return baseReliability + contentBoost;
+  }
+
+  return baseReliability + contentBoost + Math.max(providerOrder.length - index, 1);
+};
+
+const rankStream = (stream, providerOrder, contentProfile = null) => {
   const providerId = String(stream.provider || '').toLowerCase();
   const qualityScore = toQualityScore(stream.quality);
   const transportScore = stream.url ? toTransportScore(stream.url) : stream.magnet ? 6 : 10;
   const headerScore = toHeaderScore(stream.headers);
-  const providerScore = toProviderScore(providerId, providerOrder);
+  const providerScore = toProviderScore(providerId, providerOrder, contentProfile);
 
   return (providerScore * 10000) + (qualityScore * 100) + (transportScore * 10) + headerScore;
 };
@@ -288,6 +350,8 @@ export class ProviderService {
     this.providerHealth = new Map();
     this.providerHostHealth = new Map();
     this.providerHostInflight = new Map();
+    this.tmdbMetadataCache = new Map();
+    this.tmdbMetadataInFlight = new Map();
   }
 
   async initialize() {
@@ -333,16 +397,29 @@ export class ProviderService {
     };
   }
 
-  getStremioProviderOrder(requestedProviders = null) {
-    const candidates = this.normalizeProviders(
-      requestedProviders && requestedProviders.length > 0 ? requestedProviders : this.getProviderOrder()
-    );
+  getStremioProviderOrder(requestedProviders = null, contentProfile = null) {
+    const candidates = this.getProviderOrder(contentProfile, requestedProviders && requestedProviders.length > 0 ? requestedProviders : null);
 
     return candidates.filter((providerId) => !STREMIO_EXCLUDED_PROVIDERS.has(providerId));
   }
 
+  async getContentProfile({ tmdbId, mediaType }) {
+    try {
+      const metadata = await this.getTmdbMetadata({ tmdbId, mediaType });
+      return this.buildContentProfile(metadata, mediaType);
+    } catch (error) {
+      logger.warn('content profile detection failed', {
+        tmdbId,
+        mediaType,
+        error
+      });
+      return null;
+    }
+  }
+
   async getAggregateStreams({ providers = null, ...rest }) {
-    const normalizedProviders = this.normalizeProviders(providers);
+    const contentProfile = rest.contentProfile || await this.getContentProfile(rest);
+    const normalizedProviders = this.getProviderOrder(contentProfile, providers);
 
     if (normalizedProviders.length === 0) {
       throw createHttpError(400, 'No valid providers were supplied for aggregate search');
@@ -389,7 +466,7 @@ export class ProviderService {
     }
 
     mergedStreams.sort((left, right) => {
-      const scoreDelta = rankStream(right, normalizedProviders) - rankStream(left, normalizedProviders);
+      const scoreDelta = rankStream(right, normalizedProviders, contentProfile) - rankStream(left, normalizedProviders, contentProfile);
 
       if (scoreDelta !== 0) {
         return scoreDelta;
@@ -408,8 +485,10 @@ export class ProviderService {
   }
 
   async getFastStreams({ providers = null, ...rest }) {
+    const contentProfile = rest.contentProfile || await this.getContentProfile(rest);
     const normalizedProviders = this.getStremioProviderOrder(
-      providers && providers.length > 0 ? providers : null
+      providers && providers.length > 0 ? providers : null,
+      contentProfile
     );
 
     if (normalizedProviders.length === 0) {
@@ -461,7 +540,7 @@ export class ProviderService {
     }
 
     mergedStreams.sort((left, right) => {
-      const scoreDelta = rankStream(right, normalizedProviders) - rankStream(left, normalizedProviders);
+      const scoreDelta = rankStream(right, normalizedProviders, contentProfile) - rankStream(left, normalizedProviders, contentProfile);
 
       if (scoreDelta !== 0) {
         return scoreDelta;
@@ -829,7 +908,7 @@ export class ProviderService {
       .filter((provider) => this.providers.has(provider));
   }
 
-  getProviderOrder() {
+  getProviderOrderBase() {
     const discoveredIds = Array.from(this.providers.keys()).sort();
     const ordered = [];
 
@@ -846,6 +925,135 @@ export class ProviderService {
     }
 
     return ordered;
+  }
+
+  getProviderOrder(contentProfile = null, requestedProviders = null) {
+    const baseOrder = this.getProviderOrderBase();
+    const baseIndex = new Map(baseOrder.map((providerId, index) => [providerId, index]));
+    const candidates = Array.isArray(requestedProviders)
+      ? requestedProviders
+        .map((provider) => String(provider || '').trim().toLowerCase())
+        .filter(Boolean)
+        .filter((provider, index, list) => list.indexOf(provider) === index)
+        .filter((provider) => this.providers.has(provider))
+      : baseOrder;
+
+    if (!contentProfile || !Array.isArray(contentProfile.tags) || contentProfile.tags.length === 0) {
+      return candidates;
+    }
+
+    return [...candidates].sort((left, right) => {
+      const boostDelta = getProviderContentBoost(right, contentProfile) - getProviderContentBoost(left, contentProfile);
+
+      if (boostDelta !== 0) {
+        return boostDelta;
+      }
+
+      return (baseIndex.get(left) ?? Number.MAX_SAFE_INTEGER) - (baseIndex.get(right) ?? Number.MAX_SAFE_INTEGER);
+    });
+  }
+
+  async getTmdbMetadata({ tmdbId, mediaType }) {
+    const normalizedTmdbId = toOptionalInteger(tmdbId);
+    const normalizedMediaType = String(mediaType || 'movie').trim().toLowerCase() === 'tv' ? 'tv' : 'movie';
+
+    if (!normalizedTmdbId) {
+      return null;
+    }
+
+    const cacheKey = `${normalizedMediaType}:${normalizedTmdbId}`;
+    const cached = this.tmdbMetadataCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    if (this.tmdbMetadataInFlight.has(cacheKey)) {
+      return this.tmdbMetadataInFlight.get(cacheKey);
+    }
+
+    const request = (async () => {
+      const response = await fetch(`https://api.themoviedb.org/3/${normalizedMediaType}/${normalizedTmdbId}?api_key=${config.TMDB_API_KEY}`);
+
+      if (!response.ok) {
+        throw new Error(`TMDB metadata HTTP ${response.status}`);
+      }
+
+      const metadata = await response.json();
+
+      this.tmdbMetadataCache.set(cacheKey, {
+        value: metadata,
+        expiresAt: Date.now() + TMDB_METADATA_CACHE_TTL_MS
+      });
+
+      return metadata;
+    })();
+
+    this.tmdbMetadataInFlight.set(cacheKey, request);
+
+    try {
+      return await request;
+    } finally {
+      this.tmdbMetadataInFlight.delete(cacheKey);
+    }
+  }
+
+  buildContentProfile(metadata, mediaType) {
+    if (!metadata || typeof metadata !== 'object') {
+      return null;
+    }
+
+    const originalLanguage = String(metadata.original_language || '').toLowerCase();
+    const genreNames = new Set(
+      Array.isArray(metadata.genres)
+        ? metadata.genres.map((genre) => String(genre?.name || '').toLowerCase()).filter(Boolean)
+        : []
+    );
+    const originCountries = new Set(
+      [
+        ...(Array.isArray(metadata.origin_country) ? metadata.origin_country : []),
+        ...(Array.isArray(metadata.production_countries)
+          ? metadata.production_countries.map((country) => country?.iso_3166_1)
+          : [])
+      ]
+        .map((country) => String(country || '').toUpperCase())
+        .filter(Boolean)
+    );
+    const tags = [];
+    const isAnimation = genreNames.has('animation');
+    const isAnime = isAnimation && (originalLanguage === 'ja' || originCountries.has('JP'));
+
+    if (isAnime) {
+      tags.push('anime');
+    }
+
+    if (!isAnime && (originalLanguage === 'ko' || originCountries.has('KR'))) {
+      tags.push('kdrama');
+    }
+
+    if (INDIAN_LANGUAGES.has(originalLanguage) || originCountries.has('IN')) {
+      tags.push('indian');
+    }
+
+    if (originalLanguage === 'tr' || originCountries.has('TR')) {
+      tags.push('turkish');
+    }
+
+    if (originalLanguage === 'pt' || originCountries.has('BR') || originCountries.has('PT')) {
+      tags.push('portuguese');
+    }
+
+    if (originalLanguage === 'es') {
+      tags.push('spanish');
+    }
+
+    return {
+      mediaType,
+      originalLanguage,
+      originCountries: [...originCountries],
+      genreNames: [...genreNames],
+      tags
+    };
   }
 
   loadProviderModule(providerConfig, providerId = providerConfig.id) {

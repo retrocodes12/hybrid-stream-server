@@ -81,6 +81,8 @@ const formatBytes = (bytes) => {
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
 
+const getPublicBaseUrl = (req) => config.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+
 const renderConfigurePage = ({ baseUrl, providers }) => {
   const providerIds = providers.map((provider) => provider.id);
   const providerHints = providers
@@ -1956,7 +1958,7 @@ const bootstrap = async () => {
       .status(200)
       .type('html')
       .send(renderConfigurePage({
-        baseUrl: `${req.protocol}://${req.get('host')}`,
+        baseUrl: getPublicBaseUrl(req),
         providers: providerService.listProviders()
       }));
   };
@@ -1969,7 +1971,7 @@ const bootstrap = async () => {
       .status(200)
       .type('html')
       .send(renderDonatePage({
-        baseUrl: `${req.protocol}://${req.get('host')}`
+        baseUrl: getPublicBaseUrl(req)
       }));
   });
 
