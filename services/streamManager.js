@@ -149,7 +149,15 @@ const DEFAULT_QUALITY_PRIORITY = Object.freeze([
 
 const DEFAULT_STREAM_OPTIONS = Object.freeze({
   webReadyOnly: false,
-  hideHeavyFormats: false
+  hideHeavyFormats: false,
+  maxSizeGb: 0,
+  blockHosts: Object.freeze([]),
+  preferredAudioLanguage: null,
+  dedupeMode: 'off',
+  preferHdr: false,
+  preferH264: false,
+  preferSmallerFiles: false,
+  preferDirectHosts: false
 });
 const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
@@ -217,21 +225,264 @@ const hasHeavyFormatTraits = (stream) => {
   return /\b(hevc|x265|10bit|hdr|hdr10|hdr10\+|dolby vision|dovi|remux|untouch)\b/u.test(text);
 };
 
-const filterConfiguredStreams = (streams, streamOptions) => streams.filter((stream) => {
-  if (stream.transport !== 'http') {
-    return false;
+const parseSizeBytes = (value) => {
+  const match = String(value || '').match(/(\d+(?:\.\d+)?)\s*(tb|gb|mb|kb|b)\b/i);
+
+  if (!match) {
+    return null;
   }
 
-  if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream)) {
-    return false;
+  const amount = Number.parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier = {
+    b: 1,
+    kb: 1024,
+    mb: 1024 * 1024,
+    gb: 1024 * 1024 * 1024,
+    tb: 1024 * 1024 * 1024 * 1024
+  }[unit];
+
+  if (!Number.isFinite(amount) || !multiplier) {
+    return null;
   }
 
-  if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
-    return false;
+  return Math.round(amount * multiplier);
+};
+
+const getStreamSizeBytes = (stream) => {
+  const explicitSize = parseSizeBytes(stream.size);
+
+  if (explicitSize) {
+    return explicitSize;
   }
 
-  return true;
+  return parseSizeBytes(`${String(stream.name || '')}\n${String(stream.title || '')}`);
+};
+
+const getStreamHostname = (stream) => {
+  try {
+    return new URL(String(stream.url || '').trim()).hostname.toLowerCase().replace(/^www\./u, '');
+  } catch {
+    return '';
+  }
+};
+
+const toDiagnosticStreamExample = (stream) => ({
+  name: stream.name || 'Untitled stream',
+  quality: stream.quality || 'Unknown',
+  host: getStreamHostname(stream) || 'Unknown host',
+  size: stream.size || 'Unknown size'
 });
+
+const normalizeDedupeMode = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+
+  if (normalized === 'smart' || normalized === 'filename' || normalized === 'host-quality') {
+    return normalized;
+  }
+
+  return 'off';
+};
+
+const normalizeFilenameKey = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{2,5}$/u, '')
+    .replace(/\[[^\]]+\]|\([^)]+\)/gu, ' ')
+    .replace(/[_+.]+/g, ' ')
+    .replace(/\b(2160p|1440p|1080p|720p|480p|360p|hevc|x265|x264|h264|hdr|hdr10\+?|dovi|dv|10bit|aac|atmos|web[- ]dl|webrip|bluray|multi)\b/gu, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getExactUrlKey = (stream) => {
+  if (!stream.url) {
+    return '';
+  }
+
+  try {
+    const parsedUrl = new URL(String(stream.url).trim());
+    parsedUrl.hash = '';
+    return `${parsedUrl.hostname.toLowerCase()}${parsedUrl.pathname}`;
+  } catch {
+    return String(stream.url || '').trim().toLowerCase();
+  }
+};
+
+const getStreamDedupeKey = (stream, dedupeMode) => {
+  if (stream.infoHash) {
+    return `infohash:${String(stream.infoHash).toLowerCase()}`;
+  }
+
+  const qualityKey = normalizeQualityKey(stream.quality);
+  const hostKey = getStreamHostname(stream);
+  const filenameKey = normalizeFilenameKey(stream.filename || extractFilenameFromUrl(stream.url) || '');
+  const sizeBytes = getStreamSizeBytes(stream);
+
+  if (dedupeMode === 'filename') {
+    return filenameKey ? `filename:${filenameKey}|${qualityKey}` : '';
+  }
+
+  if (dedupeMode === 'host-quality') {
+    return hostKey ? `host-quality:${hostKey}|${qualityKey}` : '';
+  }
+
+  if (dedupeMode === 'smart') {
+    if (filenameKey) {
+      return `smart-filename:${filenameKey}|${qualityKey}`;
+    }
+
+    if (hostKey && sizeBytes) {
+      return `smart-host-size:${hostKey}|${qualityKey}|${sizeBytes}`;
+    }
+
+    const exactUrlKey = getExactUrlKey(stream);
+
+    if (exactUrlKey) {
+      return `smart-url:${exactUrlKey}|${qualityKey}`;
+    }
+  }
+
+  return '';
+};
+
+const applyConfiguredDedupe = (streams, streamOptions) => {
+  const dedupeMode = normalizeDedupeMode(streamOptions.dedupeMode);
+
+  if (dedupeMode === 'off' || streams.length <= 1) {
+    return {
+      streams,
+      dedupeMode,
+      removedCount: 0,
+      examples: []
+    };
+  }
+
+  const dedupedStreams = [];
+  const seenKeys = new Set();
+  let removedCount = 0;
+  const examples = [];
+
+  for (const stream of streams) {
+    const dedupeKey = getStreamDedupeKey(stream, dedupeMode);
+
+    if (!dedupeKey) {
+      dedupedStreams.push(stream);
+      continue;
+    }
+
+    if (seenKeys.has(dedupeKey)) {
+      removedCount += 1;
+
+       if (examples.length < 3) {
+        examples.push(toDiagnosticStreamExample(stream));
+      }
+      continue;
+    }
+
+    seenKeys.add(dedupeKey);
+    dedupedStreams.push(stream);
+  }
+
+  return {
+    streams: dedupedStreams,
+    dedupeMode,
+    removedCount,
+    examples
+  };
+};
+
+const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
+  const filteredStreams = [];
+  const diagnostics = {
+    inputTotal: streams.length,
+    keptTotal: 0,
+    filteredTotal: 0,
+    dedupedTotal: 0,
+    dedupeMode: normalizeDedupeMode(streamOptions.dedupeMode),
+    reasons: {
+      nonHttp: 0,
+      notWebReady: 0,
+      heavyFormat: 0,
+      tooLarge: 0,
+      blockedHost: 0,
+      languageMismatch: 0,
+      duplicate: 0
+    },
+    examples: {
+      nonHttp: [],
+      notWebReady: [],
+      heavyFormat: [],
+      tooLarge: [],
+      blockedHost: [],
+      languageMismatch: [],
+      duplicate: []
+    }
+  };
+  const maxBytes = Number(streamOptions.maxSizeGb) > 0
+    ? Number(streamOptions.maxSizeGb) * 1024 * 1024 * 1024
+    : 0;
+  const blockedHosts = Array.isArray(streamOptions.blockHosts)
+    ? streamOptions.blockHosts.filter(Boolean)
+    : [];
+  const preferredAudioLanguage = normalizeAudioLanguageKey(streamOptions.preferredAudioLanguage);
+
+  for (const stream of streams) {
+    let reason = null;
+
+    if (stream.transport !== 'http') {
+      reason = 'nonHttp';
+    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream)) {
+      reason = 'notWebReady';
+    } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
+      reason = 'heavyFormat';
+    } else if (maxBytes > 0) {
+      const sizeBytes = getStreamSizeBytes(stream);
+
+      if (sizeBytes && sizeBytes > maxBytes) {
+        reason = 'tooLarge';
+      }
+    }
+
+    if (!reason && blockedHosts.length > 0) {
+      const hostname = getStreamHostname(stream);
+
+      if (hostname && blockedHosts.some((blockedHost) => hostname.includes(blockedHost))) {
+        reason = 'blockedHost';
+      }
+    }
+
+    if (!reason && preferredAudioLanguage) {
+      const languages = getStreamLanguages(stream);
+
+      if (languages.length > 0 && !languages.includes(preferredAudioLanguage)) {
+        reason = 'languageMismatch';
+      }
+    }
+
+    if (reason) {
+      diagnostics.filteredTotal += 1;
+      diagnostics.reasons[reason] += 1;
+      if (diagnostics.examples[reason].length < 3) {
+        diagnostics.examples[reason].push(toDiagnosticStreamExample(stream));
+      }
+      continue;
+    }
+
+    filteredStreams.push(stream);
+  }
+
+  diagnostics.keptTotal = filteredStreams.length;
+
+  return {
+    streams: filteredStreams,
+    diagnostics
+  };
+};
+
+const filterConfiguredStreams = (streams, streamOptions) =>
+  filterConfiguredStreamsDetailed(streams, streamOptions).streams;
 
 const summarizeStreamOptions = (streamOptions) => {
   const parts = [];
@@ -242,6 +493,43 @@ const summarizeStreamOptions = (streamOptions) => {
 
   if (streamOptions.hideHeavyFormats) {
     parts.push('Hide HEVC / HDR / 10-bit');
+  }
+
+  if (Number(streamOptions.maxSizeGb) > 0) {
+    parts.push(`Max ${Number(streamOptions.maxSizeGb)} GB`);
+  }
+
+  if (Array.isArray(streamOptions.blockHosts) && streamOptions.blockHosts.length > 0) {
+    parts.push(`Block hosts: ${streamOptions.blockHosts.join(', ')}`);
+  }
+
+  if (streamOptions.preferredAudioLanguage) {
+    parts.push(`Audio: ${streamOptions.preferredAudioLanguage} + Unknown`);
+  }
+
+  if (normalizeDedupeMode(streamOptions.dedupeMode) !== 'off') {
+    const dedupeLabels = {
+      smart: 'Smart dedupe',
+      filename: 'Dedupe by filename',
+      'host-quality': 'Dedupe by host + quality'
+    };
+    parts.push(dedupeLabels[normalizeDedupeMode(streamOptions.dedupeMode)] || 'Dedupe on');
+  }
+
+  if (streamOptions.preferHdr) {
+    parts.push('Prefer HDR');
+  }
+
+  if (streamOptions.preferH264) {
+    parts.push('Prefer H.264');
+  }
+
+  if (streamOptions.preferSmallerFiles) {
+    parts.push('Prefer smaller files');
+  }
+
+  if (streamOptions.preferDirectHosts) {
+    parts.push('Prefer direct hosts');
   }
 
   return parts.length > 0 ? parts.join(', ') : 'Default HTTP playback';
@@ -433,18 +721,47 @@ const getCompactTags = (stream) => {
   return tags;
 };
 
-const getLanguageLabel = (stream) => {
+const AUDIO_LANGUAGE_PATTERNS = Object.freeze([
+  ['Hindi', /\bhindi\b/u],
+  ['English', /\benglish\b/u],
+  ['Tamil', /\btamil\b/u],
+  ['Telugu', /\btelugu\b/u],
+  ['Malayalam', /\bmalayalam\b/u],
+  ['Kannada', /\bkannada\b/u],
+  ['French', /\bfrench\b/u],
+  ['German', /\bgerman\b/u],
+  ['Spanish', /\bspanish\b/u],
+  ['Portuguese', /\bportuguese\b/u],
+  ['Japanese', /\bjapanese\b/u],
+  ['Korean', /\bkorean\b/u]
+]);
+
+const normalizeAudioLanguageKey = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+
+  if (!normalized || normalized === 'any' || normalized === 'unknown') {
+    return null;
+  }
+
+  const matched = AUDIO_LANGUAGE_PATTERNS.find(([label]) => label.toLowerCase() === normalized);
+  return matched ? matched[0] : null;
+};
+
+const getStreamLanguages = (stream) => {
   const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
   const languages = [];
 
-  if (text.includes('hindi')) languages.push('Hindi');
-  if (text.includes('english')) languages.push('English');
-  if (text.includes('tamil')) languages.push('Tamil');
-  if (text.includes('telugu')) languages.push('Telugu');
-  if (text.includes('malayalam')) languages.push('Malayalam');
-  if (text.includes('kannada')) languages.push('Kannada');
-  if (text.includes('french')) languages.push('French');
-  if (text.includes('german')) languages.push('German');
+  for (const [label, pattern] of AUDIO_LANGUAGE_PATTERNS) {
+    if (pattern.test(text)) {
+      languages.push(label);
+    }
+  }
+
+  return [...new Set(languages)];
+};
+
+const getLanguageLabel = (stream) => {
+  const languages = getStreamLanguages(stream);
 
   if (languages.length === 0) {
     return 'Unknown';
@@ -459,6 +776,62 @@ const getSourceLabel = (stream) => {
   }
 
   return toTitleCaseLabel(stream.provider || 'default');
+};
+
+const getPreferredAudioLanguageScore = (stream, streamOptions) => {
+  const preferredAudioLanguage = normalizeAudioLanguageKey(streamOptions.preferredAudioLanguage);
+
+  if (!preferredAudioLanguage) {
+    return 0;
+  }
+
+  const languages = getStreamLanguages(stream);
+
+  if (languages.includes(preferredAudioLanguage)) {
+    return 7000;
+  }
+
+  if (languages.length === 0) {
+    return 1500;
+  }
+
+  return 0;
+};
+
+const getStreamPreferenceScore = (stream, streamOptions) => {
+  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  let score = 0;
+
+  if (streamOptions.preferHdr) {
+    if (/\b(hdr|hdr10|hdr10\+|dolby vision|dovi)\b/u.test(text)) {
+      score += 4500;
+    }
+  }
+
+  if (streamOptions.preferH264) {
+    if (/\b(h264|x264)\b/u.test(text)) {
+      score += 4200;
+    } else if (/\b(hevc|x265)\b/u.test(text)) {
+      score -= 500;
+    }
+  }
+
+  if (streamOptions.preferSmallerFiles) {
+    const sizeBytes = getStreamSizeBytes(stream);
+
+    if (sizeBytes) {
+      const sizeGb = sizeBytes / (1024 * 1024 * 1024);
+      score += Math.max(0, 4000 - Math.round(sizeGb * 350));
+    }
+  }
+
+  if (streamOptions.preferDirectHosts) {
+    if (stream.transport === 'http' && !hasForwardHeaders(stream.headers)) {
+      score += 3800;
+    }
+  }
+
+  return score;
 };
 
 const formatStremioCardTitle = (stream) => {
@@ -802,9 +1175,49 @@ export class StreamManager {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
 
+    let maxSizeGb = 0;
+    let blockHosts = [];
+    let preferredAudioLanguage = null;
+    let dedupeMode = 'off';
+
+    for (const token of tokens) {
+      if (token.startsWith('max-size-gb=')) {
+        const parsed = Number.parseFloat(token.slice('max-size-gb='.length));
+
+        if (Number.isFinite(parsed) && parsed > 0) {
+          maxSizeGb = parsed;
+        }
+      }
+
+      if (token.startsWith('block-hosts=')) {
+        blockHosts = token
+          .slice('block-hosts='.length)
+          .split('|')
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index);
+      }
+
+      if (token.startsWith('preferred-audio=')) {
+        preferredAudioLanguage = normalizeAudioLanguageKey(token.slice('preferred-audio='.length));
+      }
+
+      if (token.startsWith('dedupe=')) {
+        dedupeMode = normalizeDedupeMode(token.slice('dedupe='.length));
+      }
+    }
+
     return {
       webReadyOnly: tokens.includes('web-ready-only'),
-      hideHeavyFormats: tokens.includes('hide-heavy-formats')
+      hideHeavyFormats: tokens.includes('hide-heavy-formats'),
+      maxSizeGb,
+      blockHosts,
+      preferredAudioLanguage,
+      dedupeMode,
+      preferHdr: tokens.includes('prefer-hdr'),
+      preferH264: tokens.includes('prefer-h264'),
+      preferSmallerFiles: tokens.includes('prefer-smaller-files'),
+      preferDirectHosts: tokens.includes('prefer-direct-hosts')
     };
   }
 
@@ -936,7 +1349,7 @@ export class StreamManager {
       }
 
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
-      const configuredStreams = filterConfiguredStreams(normalizedStreams, streamOptions);
+      const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
       if (configuredStreams.length === 0) {
         await this.setCachedStremioStreams(resultCacheKey, []);
@@ -945,10 +1358,11 @@ export class StreamManager {
       }
 
       configuredStreams.sort((left, right) =>
-        (getQualityPriorityScore(right, qualityPriority) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
-        (getQualityPriorityScore(left, qualityPriority) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+        (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
-      const stremioStreams = configuredStreams
+      const dedupedStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
+      const stremioStreams = dedupedStreams
         .map((stream) => toStremioStreamObject(stream, parsed))
         .filter(Boolean);
 
@@ -1107,6 +1521,79 @@ export class StreamManager {
         return;
       }
 
+      next(error);
+    }
+  }
+
+  async handleStremioPreview(req, res, next) {
+    try {
+      const parsed = this.parseStremioStreamRequest(req.params.type, req.params.id);
+      let tmdbId;
+
+      try {
+        tmdbId = await this.imdbResolver.resolve({
+          imdbId: parsed.imdbId,
+          mediaType: parsed.mediaType
+        });
+      } catch (error) {
+        logger.warn('stremio preview imdb resolution failed', {
+          imdbId: parsed.imdbId,
+          mediaType: parsed.mediaType,
+          error
+        });
+        res.json({
+          resolved: false,
+          reason: 'imdb-resolution-failed'
+        });
+        return;
+      }
+
+      if (!tmdbId) {
+        res.json({
+          resolved: false,
+          reason: 'tmdb-not-found'
+        });
+        return;
+      }
+
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const requestedProviders = this.getRequestedProviders(req);
+      const qualityPriority = this.getRequestedQualityPriority(req);
+      const streamOptions = this.getRequestedStreamOptions(req);
+      const result = await this.providerService.getFastStreams({
+        providers: requestedProviders.length > 0 ? requestedProviders : null,
+        tmdbId,
+        mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
+        season: parsed.season,
+        episode: parsed.episode
+      });
+      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+      const { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+
+      configuredStreams.sort((left, right) =>
+        (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+      );
+      const dedupeResult = applyConfiguredDedupe(configuredStreams, streamOptions);
+      diagnostics.dedupedTotal = dedupeResult.removedCount;
+      diagnostics.reasons.duplicate = dedupeResult.removedCount;
+      diagnostics.examples.duplicate = dedupeResult.examples;
+
+      res.json({
+        resolved: true,
+        tmdbId,
+        providersTried: result.tried,
+        providerOrder: result.providers,
+        diagnostics,
+        sample: dedupeResult.streams.slice(0, 6).map((stream) => ({
+          name: stream.name,
+          quality: stream.quality,
+          host: getStreamHostname(stream),
+          size: stream.size || null,
+          url: stream.url || null
+        }))
+      });
+    } catch (error) {
       next(error);
     }
   }
