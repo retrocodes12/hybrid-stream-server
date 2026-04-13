@@ -161,7 +161,24 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferDirectHosts: false
 });
 
+const CONFIGURED_PROFILE_LABELS = Object.freeze({
+  wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
+  md: Object.freeze({ code: 'MD', label: 'Mobile Data' }),
+  '4k': Object.freeze({ code: '4K', label: '4K HDR' }),
+  an: Object.freeze({ code: 'AN', label: 'Anime' }),
+  in: Object.freeze({ code: 'IN', label: 'Indian Content' }),
+  tr: Object.freeze({ code: 'TR', label: 'Turkish Content' }),
+  it: Object.freeze({ code: 'IT', label: 'Italian Content' }),
+  la: Object.freeze({ code: 'LA', label: 'Latino Content' }),
+  ar: Object.freeze({ code: 'AR', label: 'Arabic Content' })
+});
+
 const copyObjects = (items) => items.map((item) => ({ ...item }));
+
+const delay = (ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref?.();
+});
 
 const normalizeStremioResultCacheEntry = (payload) => {
   if (!payload || !Array.isArray(payload.streams)) {
@@ -1389,6 +1406,54 @@ export class StreamManager {
     return true;
   }
 
+  async waitForStremioResultSlot({ resultCacheKey, tmdbId, mediaType }) {
+    if (this.stremioResultInFlight.size < config.STREMIO_MAX_INFLIGHT_SEARCHES) {
+      return true;
+    }
+
+    if (config.STREMIO_INFLIGHT_SLOT_WAIT_MS <= 0) {
+      return false;
+    }
+
+    const deadline = Date.now() + config.STREMIO_INFLIGHT_SLOT_WAIT_MS;
+    logger.warn('stremio stream search waiting for in-flight slot', {
+      inFlightSearches: this.stremioResultInFlight.size,
+      maxInFlightSearches: config.STREMIO_MAX_INFLIGHT_SEARCHES,
+      waitMs: config.STREMIO_INFLIGHT_SLOT_WAIT_MS,
+      tmdbId,
+      mediaType
+    });
+
+    while (this.stremioResultInFlight.size >= config.STREMIO_MAX_INFLIGHT_SEARCHES) {
+      if (this.stremioResultInFlight.has(resultCacheKey)) {
+        return true;
+      }
+
+      if (this.isLoadShedding()) {
+        return false;
+      }
+
+      const remainingMs = deadline - Date.now();
+
+      if (remainingMs <= 0) {
+        return false;
+      }
+
+      const activeRequests = Array.from(this.stremioResultInFlight.values());
+
+      if (activeRequests.length === 0) {
+        return true;
+      }
+
+      await Promise.race([
+        Promise.race(activeRequests.map((request) => request.catch(() => undefined))),
+        delay(Math.min(remainingMs, 500))
+      ]);
+    }
+
+    return true;
+  }
+
   handleMemoryPressure({ critical = false } = {}) {
     if (critical) {
       this.stremioResultCache.clear();
@@ -1745,10 +1810,32 @@ export class StreamManager {
     };
   }
 
+  getRequestedConfiguredProfile(req) {
+    const rawConfig = typeof req.params?.optionConfig === 'string'
+      ? req.params.optionConfig
+      : typeof req.query?.options === 'string'
+        ? req.query.options
+        : '';
+    const decoded = rawConfig ? decodeURIComponent(rawConfig) : '';
+    const profileToken = decoded
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .find((token) => token.startsWith('profile='));
+    const queryProfile = typeof req.query?.profile === 'string'
+      ? req.query.profile.trim().toLowerCase()
+      : '';
+    const profileKey = profileToken
+      ? profileToken.slice('profile='.length)
+      : queryProfile;
+
+    return CONFIGURED_PROFILE_LABELS[profileKey] || null;
+  }
+
   getAddonPresentation(req) {
     const providers = this.getRequestedProviders(req);
     const qualityPriority = this.getRequestedQualityPriority(req);
     const streamOptions = this.getRequestedStreamOptions(req);
+    const configuredProfile = this.getRequestedConfiguredProfile(req);
     const hasDefaultQualityPriority = qualityPriority.join(',') === DEFAULT_QUALITY_PRIORITY.join(',');
     const hasDefaultStreamOptions = JSON.stringify(streamOptions) === JSON.stringify(DEFAULT_STREAM_OPTIONS);
 
@@ -1768,18 +1855,19 @@ export class StreamManager {
       .update(`${providers.join(',')}|${qualityPriority.join(',')}|${JSON.stringify(streamOptions)}`)
       .digest('hex')
       .slice(0, 10);
-    const providerLabel = providers.length > 0
-      ? providers.map((provider) => toTitleCaseLabel(provider)).join(', ')
-      : 'All Providers';
+    const providerSummary = providers.length > 0
+      ? `${providers.length} selected provider${providers.length === 1 ? '' : 's'}`
+      : 'all providers';
+    const configuredLabel = configuredProfile || { code: 'CFG', label: 'Custom' };
 
     return {
       providers,
       qualityPriority,
       streamOptions,
       addonId: `${config.STREMIO_ADDON_ID}.${providerHash}`,
-      addonName: `${config.STREMIO_ADDON_NAME} [${providerLabel}]`,
+      addonName: `${config.STREMIO_ADDON_NAME}(${configuredLabel.code})`,
       configurable: true,
-      description: `Filtered to: ${providerLabel}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
+      description: `Configured install: ${configuredLabel.label}. Providers: ${providerSummary}. Quality priority: ${qualityPriority.join(' > ')}. Playback: ${summarizeStreamOptions(streamOptions)}`
     };
   }
 
@@ -1971,6 +2059,30 @@ export class StreamManager {
         mediaType: parsed.mediaType
       });
       throw createHttpError(503, 'Server is recovering from high load');
+    }
+
+    if (this.stremioResultInFlight.size >= config.STREMIO_MAX_INFLIGHT_SEARCHES) {
+      const slotAvailable = await this.waitForStremioResultSlot({
+        resultCacheKey,
+        tmdbId,
+        mediaType: parsed.mediaType
+      });
+      const inFlightRequest = this.stremioResultInFlight.get(resultCacheKey);
+
+      if (inFlightRequest) {
+        return inFlightRequest.then((streams) => copyObjects(streams));
+      }
+
+      if (!slotAvailable) {
+        logger.warn('stremio stream search rejected due to in-flight limit', {
+          inFlightSearches: this.stremioResultInFlight.size,
+          maxInFlightSearches: config.STREMIO_MAX_INFLIGHT_SEARCHES,
+          waitMs: config.STREMIO_INFLIGHT_SLOT_WAIT_MS,
+          tmdbId,
+          mediaType: parsed.mediaType
+        });
+        throw createHttpError(503, 'Server is busy preparing streams');
+      }
     }
 
     if (this.stremioResultInFlight.size >= config.STREMIO_MAX_INFLIGHT_SEARCHES) {

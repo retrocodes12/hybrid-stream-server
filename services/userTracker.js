@@ -26,6 +26,10 @@ const getClientIp = (headers, fallbackIp) => {
 };
 
 const getTrackedPathType = (pathname) => {
+  if (pathname === '/' || pathname === '/configure') {
+    return 'configure';
+  }
+
   if (
     pathname === '/manifest.json'
     || pathname === '/stremio/manifest.json'
@@ -66,7 +70,8 @@ const createEmptyEntry = () => ({
   humanHits: 0,
   botHits: 0,
   streamHits: 0,
-  manifestHits: 0
+  manifestHits: 0,
+  configureHits: 0
 });
 
 const getEntryLastSeenMs = (entry) => Date.parse(entry?.lastSeenAt || '') || 0;
@@ -83,7 +88,9 @@ const createEmptyBaseline = () => ({
   mixedClients: 0,
   streamUsers: 0,
   streamRequests: 0,
-  manifestRequests: 0
+  manifestRequests: 0,
+  configureUsers: 0,
+  configureRequests: 0
 });
 
 const toSafeInteger = (value) => Number.isInteger(value) && value > 0 ? value : 0;
@@ -192,6 +199,7 @@ export class UserTrackerService {
     this.totalBotRequests = 0;
     this.totalStreamRequests = 0;
     this.totalManifestRequests = 0;
+    this.totalConfigureRequests = 0;
     this.baseline = createEmptyBaseline();
     this.streamSearches = new Map();
     this.flushTimer = null;
@@ -213,6 +221,7 @@ export class UserTrackerService {
       this.totalBotRequests = Number.isInteger(payload.totalBotRequests) ? payload.totalBotRequests : 0;
       this.totalStreamRequests = Number.isInteger(payload.totalStreamRequests) ? payload.totalStreamRequests : 0;
       this.totalManifestRequests = Number.isInteger(payload.totalManifestRequests) ? payload.totalManifestRequests : 0;
+      this.totalConfigureRequests = Number.isInteger(payload.totalConfigureRequests) ? payload.totalConfigureRequests : 0;
       this.baseline = normalizeBaseline(payload.baseline);
 
       if (payload.users && typeof payload.users === 'object') {
@@ -224,7 +233,8 @@ export class UserTrackerService {
             humanHits: Number.isInteger(user.humanHits) ? user.humanHits : 0,
             botHits: Number.isInteger(user.botHits) ? user.botHits : 0,
             streamHits: Number.isInteger(user.streamHits) ? user.streamHits : 0,
-            manifestHits: Number.isInteger(user.manifestHits) ? user.manifestHits : 0
+            manifestHits: Number.isInteger(user.manifestHits) ? user.manifestHits : 0,
+            configureHits: Number.isInteger(user.configureHits) ? user.configureHits : 0
           });
         }
       }
@@ -295,6 +305,9 @@ export class UserTrackerService {
     } else if (trackedPathType === 'manifest') {
       entry.manifestHits += 1;
       this.totalManifestRequests += 1;
+    } else if (trackedPathType === 'configure') {
+      entry.configureHits += 1;
+      this.totalConfigureRequests += 1;
     }
 
     this.entries.set(fingerprint, entry);
@@ -413,6 +426,7 @@ export class UserTrackerService {
     let active7d = 0;
     let totalHumanUsers = 0;
     let streamUsers = 0;
+    let configureUsers = 0;
     let botClients = 0;
     let mixedClients = 0;
 
@@ -427,6 +441,10 @@ export class UserTrackerService {
 
         if (entry.streamHits > 0) {
           streamUsers += 1;
+        }
+
+        if (entry.configureHits > 0) {
+          configureUsers += 1;
         }
       } else if (botOnly) {
         botClients += 1;
@@ -460,6 +478,8 @@ export class UserTrackerService {
       streamUsers: this.baseline.streamUsers + streamUsers,
       streamRequests: this.baseline.streamRequests + this.totalStreamRequests,
       manifestRequests: this.baseline.manifestRequests + this.totalManifestRequests,
+      configureUsers: this.baseline.configureUsers + configureUsers,
+      configureRequests: this.baseline.configureRequests + this.totalConfigureRequests,
       popularStreamSearches: this.streamSearches.size
     };
   }
@@ -509,6 +529,7 @@ export class UserTrackerService {
       totalBotRequests: this.totalBotRequests,
       totalStreamRequests: this.totalStreamRequests,
       totalManifestRequests: this.totalManifestRequests,
+      totalConfigureRequests: this.totalConfigureRequests,
       baseline: this.baseline,
       users: Object.fromEntries(this.entries.entries()),
       streamSearches: Object.fromEntries(this.streamSearches.entries())

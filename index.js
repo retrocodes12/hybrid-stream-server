@@ -116,6 +116,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     .slice(0, 12)
     .map((provider) => escapeHtml(provider.id))
     .join(', ');
+  const donationPrimaryUrl = escapeHtml(String(config.DONATION_PRIMARY_URL || '').trim());
   const nowPaymentsWidgetUrl = escapeHtml(String(config.DONATION_NOWPAYMENTS_WIDGET_URL || '').trim());
   const hasDonationSupport = Boolean(
     config.DONATION_CRYPTO_ADDRESS ||
@@ -1080,6 +1081,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <p>If NebulaStreams has made your setup easier, support helps keep the servers online for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
                       <div class="support-actions">
                         <button type="button" class="donate-toggle" id="donate-toggle">Support</button>
+                        ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">Support on Ko-fi</a>` : ''}
                         <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
                       </div>
                     </div>
@@ -1088,6 +1090,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <h3>Feeling generous?</h3>
                       <p>If NebulaStreams has made your setup easier, support helps keep the backend stable for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
                       <div class="support-actions">
+                        ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">Support on Ko-fi</a>` : ''}
                         <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
                       </div>
                     </div>
@@ -1537,6 +1540,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const presetDefinitions = {
         'web-fast': {
           label: 'Web Fast',
+          code: 'WF',
           providers: 'all',
           qualityPriority: ['1080p', '720p', '480p', '360p', '2160p', '1440p', 'auto', 'unknown'],
           webReadyOnly: true,
@@ -1552,6 +1556,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'mobile-data': {
           label: 'Mobile Data',
+          code: 'MD',
           providers: 'all',
           qualityPriority: ['720p', '480p', '360p', '1080p', '2160p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1567,6 +1572,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         '4k-hdr': {
           label: '4K HDR',
+          code: '4K',
           providers: 'all',
           qualityPriority: ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1582,6 +1588,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         anime: {
           label: 'Anime',
+          code: 'AN',
           providers: ['anime-sama', 'animekai', 'animesalt', 'animeworld', '4khdhub_tv', '4khdhub', 'hdhub4u', 'kisskh', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '1440p', '2160p', '480p', '360p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1597,6 +1604,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'indian-content': {
           label: 'Indian Content',
+          code: 'IN',
           providers: ['4khdhub', '4khdhub_tv', 'hdhub4u', 'flixindia', 'hindmoviez', 'isaidub', 'tamilian', 'streamflix', 'streamflix_eng', 'allwish', 'moviesmod'],
           qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1612,6 +1620,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'turkish-content': {
           label: 'Turkish Content',
+          code: 'TR',
           providers: ['vidmody-tr', 'turkish-m3u', 'rectv-tr', 'diziyou', 'sinemacx', 'cinemacity', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1627,6 +1636,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'italian-content': {
           label: 'Italian Content',
+          code: 'IT',
           providers: ['it-streamingcommunity', 'it-guardahd', 'it-guardaserie', 'it-guardoserie', 'it-cc', 'it-animeunity', 'it-animeworld', 'it-animesaturn', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1642,6 +1652,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'latino-content': {
           label: 'Latino Content',
+          code: 'LA',
           providers: ['latino-lamovie', 'latino-embed69', 'latino-cinecalidad', 'latino-xupalace', 'latino-seriesmetro', 'lamovie', 'purstream', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1657,6 +1668,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         'arabic-content': {
           label: 'Arabic Content',
+          code: 'AR',
           providers: ['arabic-faselhd', 'arabic-cineby', 'arabic-witanime', 'arabic-animecloud', 'arabic-kirmzi', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
           webReadyOnly: false,
@@ -1741,6 +1753,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const getOptionTokens = () => {
         const tokens = [];
+        const activePreset = activePresetId ? presetDefinitions[activePresetId] : null;
+
+        if (activePreset?.code) {
+          tokens.push('profile=' + activePreset.code.toLowerCase());
+        }
 
         if (webReadyOnly.checked) {
           tokens.push('web-ready-only');
@@ -2267,6 +2284,7 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         <div class="card"><div class="label">Active Torrents</div><div class="value">${stats.runtime.activeTorrentEngines}</div></div>
         <div class="card"><div class="label">Human Users</div><div class="value">${stats.users.totalUsers}</div></div>
         <div class="card"><div class="label">Users 24h</div><div class="value">${stats.users.activeUsers24h}</div></div>
+        <div class="card"><div class="label">Configure Users</div><div class="value">${stats.users.configureUsers}</div></div>
         <div class="card"><div class="label">Stream Users</div><div class="value">${stats.users.streamUsers}</div></div>
         <div class="card"><div class="label">Human Requests</div><div class="value">${stats.users.totalTrackedRequests}</div></div>
       </section>
@@ -2294,6 +2312,8 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
           <div><div class="label">Bot Clients</div><code>${escapeHtml(String(stats.users.botClients))}</code></div>
           <div><div class="label">Bot Requests</div><code>${escapeHtml(String(stats.users.botRequests))}</code></div>
           <div><div class="label">Mixed Clients</div><code>${escapeHtml(String(stats.users.mixedClients))}</code></div>
+          <div><div class="label">Configure Users</div><code>${escapeHtml(String(stats.users.configureUsers))}</code></div>
+          <div><div class="label">Configure Requests</div><code>${escapeHtml(String(stats.users.configureRequests))}</code></div>
           <div><div class="label">Manifest Requests</div><code>${escapeHtml(String(stats.users.manifestRequests))}</code></div>
           <div><div class="label">Stream Requests</div><code>${escapeHtml(String(stats.users.streamRequests))}</code></div>
         </div>
@@ -2452,6 +2472,16 @@ const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
 
 const renderDonatePage = ({ baseUrl }) => {
   const upiId = config.DONATION_UPI_ID || '';
+  const donationPrimaryUrl = String(config.DONATION_PRIMARY_URL || '').trim();
+  const primarySection = donationPrimaryUrl
+    ? `
+      <div class="support-card">
+        <div class="support-label">Ko-fi</div>
+        <div class="support-value">Support the project with Ko-fi.</div>
+        <a class="copy-button" href="${escapeHtml(donationPrimaryUrl)}" target="_blank" rel="noopener">Open Ko-fi</a>
+      </div>
+    `
+    : '';
   const upiSection = config.DONATION_UPI_ID
     ? `
       <div class="support-card">
@@ -2665,7 +2695,7 @@ const renderDonatePage = ({ baseUrl }) => {
           <div class="blurb">
             <p>If NebulaStreams is useful to you, your support helps cover hosting, testing, and new provider work. Every contribution keeps the project more reliable.</p>
           </div>
-          ${upiSection ? `<div class="support-grid">${upiSection}</div>` : ''}
+          ${primarySection || upiSection ? `<div class="support-grid">${primarySection}${upiSection}</div>` : ''}
 
           <div class="flash" id="flash" aria-live="polite"></div>
           <p class="footer-note">Main site: <a href="${escapeHtml(baseUrl)}" target="_blank" rel="noopener">${escapeHtml(baseUrl)}</a></p>
@@ -3363,6 +3393,11 @@ const bootstrap = async () => {
       const memoryUsagePercent = memory.totalMemoryBytes > 0
         ? ((memory.totalMemoryBytes - memory.availableMemoryBytes) / memory.totalMemoryBytes) * 100
         : 0;
+      const {
+        configureUsers: _configureUsers,
+        configureRequests: _configureRequests,
+        ...publicUserStats
+      } = userTracker.getStats();
 
       res.json({
         status: 'ok',
@@ -3380,7 +3415,7 @@ const bootstrap = async () => {
           guardPressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
           guardCriticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT
         },
-        users: userTracker.getStats(),
+        users: publicUserStats,
         cache: cacheStats
       });
     } catch (error) {
