@@ -20,6 +20,8 @@
     "crypto-js": "^4.2.0",
     "easystreams": "github:realbestia1/easystreams#e0bcd6872a539b677f0819c1c0d1d5b940c77b66",
     "express": "^5.2.1",
+    "nuvio-providers-arabic": "github:nvmindl/nuvio-providers#8e4994a54d9b29e07be650903b6440d660ff7592",
+    "nuvio-providers-latino": "github:KennethJYS/Nuvio-Providers-Latino#874690c9653e5edc759538384fb36c04cd84f028",
     "redis": "^5.11.0",
     "torrent-stream": "^1.2.1",
     "ws": "^8.18.3"

@@ -29,9 +29,21 @@ const LOCAL_PROVIDERS = Object.freeze({
     invocation: 'subprocess'
   }
 });
-const PROVIDER_CACHE_VERSION = '5';
+const PROVIDER_CACHE_VERSION = '9';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
+const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
+  'latino-lamovie': 25,
+  'latino-cinecalidad': 25,
+  'latino-embed69': 20,
+  'latino-xupalace': 20,
+  'latino-seriesmetro': 20,
+  'arabic-faselhd': 30,
+  'arabic-kirmzi': 25,
+  'arabic-witanime': 30,
+  'arabic-animecloud': 30,
+  'arabic-cineby': 25
+});
 const PROVIDER_PRIORITY = [
   'vidlink',
   'videasy',
@@ -62,6 +74,16 @@ const PROVIDER_PRIORITY = [
   'it-animeunity',
   'it-animeworld',
   'it-animesaturn',
+  'latino-lamovie',
+  'latino-embed69',
+  'latino-cinecalidad',
+  'latino-xupalace',
+  'latino-seriesmetro',
+  'arabic-faselhd',
+  'arabic-cineby',
+  'arabic-witanime',
+  'arabic-animecloud',
+  'arabic-kirmzi',
   'torrent-scraper'
 ];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
@@ -75,6 +97,9 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     'it-animeunity': 120,
     'it-animeworld': 115,
     'it-animesaturn': 110,
+    'arabic-witanime': 105,
+    'arabic-animecloud': 100,
+    'arabic-cineby': 95,
     '4khdhub_tv': 95,
     '4khdhub': 90,
     hdhub4u: 75,
@@ -121,8 +146,20 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     brazucaplay: 180
   }),
   spanish: Object.freeze({
+    'latino-lamovie': 195,
+    'latino-embed69': 190,
+    'latino-cinecalidad': 185,
+    'latino-xupalace': 180,
+    'latino-seriesmetro': 175,
     lamovie: 170,
     purstream: 130
+  }),
+  arabic: Object.freeze({
+    'arabic-faselhd': 195,
+    'arabic-cineby': 185,
+    'arabic-witanime': 175,
+    'arabic-animecloud': 170,
+    'arabic-kirmzi': 150
   })
 });
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
@@ -151,9 +188,20 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   'it-cc': 94,
   'it-animeunity': 96,
   'it-animeworld': 94,
-  'it-animesaturn': 92
+  'it-animesaturn': 92,
+  'latino-lamovie': 106,
+  'latino-embed69': 104,
+  'latino-cinecalidad': 102,
+  'latino-xupalace': 100,
+  'latino-seriesmetro': 98,
+  'arabic-faselhd': 106,
+  'arabic-cineby': 104,
+  'arabic-witanime': 100,
+  'arabic-animecloud': 98,
+  'arabic-kirmzi': 94
 });
 const INDIAN_LANGUAGES = new Set(['ta', 'te', 'hi', 'ml', 'kn']);
+const ARABIC_COUNTRIES = new Set(['AE', 'BH', 'DZ', 'EG', 'IQ', 'JO', 'KW', 'LB', 'MA', 'OM', 'PS', 'QA', 'SA', 'SY', 'TN', 'YE']);
 const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'it-streamingcommunity': 'StreamingCommunity IT',
   'it-guardahd': 'GuardaHD',
@@ -162,7 +210,17 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'it-cc': 'CC IT',
   'it-animeunity': 'AnimeUnity IT',
   'it-animeworld': 'AnimeWorld IT',
-  'it-animesaturn': 'AnimeSaturn'
+  'it-animesaturn': 'AnimeSaturn',
+  'latino-lamovie': 'LaMovie Latino',
+  'latino-cinecalidad': 'CineCalidad',
+  'latino-embed69': 'Embed69 Latino',
+  'latino-xupalace': 'XuPalace',
+  'latino-seriesmetro': 'SeriesMetro',
+  'arabic-faselhd': 'FaselHD',
+  'arabic-kirmzi': 'Kirmzi',
+  'arabic-witanime': 'WitAnime',
+  'arabic-animecloud': 'AnimeCloud Arabic',
+  'arabic-cineby': 'Cineby Arabic'
 });
 
 const toLabel = (providerId) =>
@@ -779,10 +837,11 @@ export class ProviderService {
 
       const streams = await this.withProviderGlobalSlot(() => {
         let timeoutId;
+        const timeoutSeconds = PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
         const timeoutPromise = new Promise((_, reject) => {
           timeoutId = setTimeout(() => {
             reject(createHttpError(504, `Provider ${providerId} timed out`));
-          }, config.PROVIDER_TIMEOUT_SECONDS * 1000);
+          }, timeoutSeconds * 1000);
           timeoutId.unref();
         });
 
@@ -1180,6 +1239,10 @@ export class ProviderService {
 
     if (originalLanguage === 'es') {
       tags.push('spanish');
+    }
+
+    if (originalLanguage === 'ar' || [...originCountries].some((country) => ARABIC_COUNTRIES.has(country))) {
+      tags.push('arabic');
     }
 
     return {

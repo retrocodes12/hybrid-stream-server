@@ -1192,6 +1192,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                     <p class="preset-name">Italian Content</p>
                     <p class="preset-copy">Use Italian-focused providers first for Italian movies, series, and anime.</p>
                   </button>
+                  <button type="button" class="preset-card" data-preset-id="latino-content">
+                    <p class="preset-name">Latino Content</p>
+                    <p class="preset-copy">Use Latino-focused providers first for Spanish and Latino movies and series.</p>
+                  </button>
+                  <button type="button" class="preset-card" data-preset-id="arabic-content">
+                    <p class="preset-name">Arabic Content</p>
+                    <p class="preset-copy">Use Arabic-focused providers first for Arabic movies, series, and anime.</p>
+                  </button>
                 </div>
 
                 <div class="preset-status" id="preset-status">Preset: Custom</div>
@@ -1292,6 +1300,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <option value="Korean">Korean</option>
                       <option value="Turkish">Turkish</option>
                       <option value="Italian">Italian</option>
+                      <option value="Latino">Latino</option>
+                      <option value="Spanish">Spanish</option>
+                      <option value="Arabic">Arabic</option>
                     </select>
                     <div class="field-help">Keeps matching streams and unknown-language streams. Only clearly different labeled audio gets filtered out.</div>
                   </div>
@@ -1625,6 +1636,36 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferSmallerFiles: false,
           preferDirectHosts: true,
           preferredAudioLanguage: 'Italian',
+          maxSizeGb: '0',
+          blockedHosts: '',
+          dedupeMode: 'host-quality'
+        },
+        'latino-content': {
+          label: 'Latino Content',
+          providers: ['latino-lamovie', 'latino-embed69', 'latino-cinecalidad', 'latino-xupalace', 'latino-seriesmetro', 'lamovie', 'purstream', 'vidlink', 'videasy'],
+          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
+          webReadyOnly: false,
+          hideHeavyFormats: false,
+          preferHdr: false,
+          preferH264: false,
+          preferSmallerFiles: false,
+          preferDirectHosts: true,
+          preferredAudioLanguage: 'Latino',
+          maxSizeGb: '0',
+          blockedHosts: '',
+          dedupeMode: 'host-quality'
+        },
+        'arabic-content': {
+          label: 'Arabic Content',
+          providers: ['arabic-faselhd', 'arabic-cineby', 'arabic-witanime', 'arabic-animecloud', 'arabic-kirmzi', 'vidlink', 'videasy'],
+          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
+          webReadyOnly: false,
+          hideHeavyFormats: false,
+          preferHdr: false,
+          preferH264: false,
+          preferSmallerFiles: false,
+          preferDirectHosts: true,
+          preferredAudioLanguage: 'Arabic',
           maxSizeGb: '0',
           blockedHosts: '',
           dedupeMode: 'host-quality'

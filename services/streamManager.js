@@ -835,7 +835,7 @@ const isHubCloudUrl = (streamUrl) => {
 };
 
 const getStreamSearchText = (stream) =>
-  `${String(stream.name || '')} ${String(stream.title || '')} ${String(stream.filename || '')}`.toLowerCase();
+  `${String(stream.name || '')} ${String(stream.title || '')} ${String(stream.filename || '')} ${String(stream.language || '')}`.toLowerCase();
 
 const getVisualTags = (stream) => {
   const text = getStreamSearchText(stream);
@@ -1011,7 +1011,9 @@ const AUDIO_LANGUAGE_PATTERNS = Object.freeze([
   ['Kannada', /\bkannada\b/u],
   ['French', /\bfrench\b/u],
   ['German', /\bgerman\b/u],
-  ['Spanish', /\bspanish\b/u],
+  ['Latino', /\b(?:latino|lat)\b/u],
+  ['Spanish', /\b(?:spanish|espanol|español|castellano|esp)\b/u],
+  ['Arabic', /(?:\barabic\b|\barab\b|عربي|مدبلج|مترجم)/u],
   ['Portuguese', /\bportuguese\b/u],
   ['Japanese', /\bjapanese\b/u],
   ['Korean', /\bkorean\b/u]
@@ -1029,7 +1031,7 @@ const normalizeAudioLanguageKey = (value) => {
 };
 
 const getStreamLanguages = (stream) => {
-  const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
+  const text = getStreamSearchText(stream);
   const languages = [];
 
   for (const [label, pattern] of AUDIO_LANGUAGE_PATTERNS) {
@@ -1498,7 +1500,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
     return JSON.stringify({
-      version: 6,
+      version: 9,
       tmdbId,
       mediaType,
       season: season ?? null,
