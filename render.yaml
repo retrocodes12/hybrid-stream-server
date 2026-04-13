@@ -18,6 +18,78 @@ services:
       - key: MAX_CACHE_SIZE_GB
         value: "1"
       - key: PROVIDER_MAX_CONCURRENCY
+        value: "2"
+      - key: PROVIDER_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: PROVIDER_EMPTY_CACHE_TTL_SECONDS
+        value: "900"
+      - key: STREMIO_FAST_PROVIDER_CONCURRENCY
+        value: "2"
+      - key: PROVIDER_GLOBAL_MAX_INFLIGHT
         value: "3"
+      - key: STREMIO_FAST_PROVIDER_LIMIT
+        value: "6"
+      - key: STREMIO_MAX_INFLIGHT_SEARCHES
+        value: "10"
+      - key: STREMIO_RESULT_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
+        value: "900"
+      - key: STREMIO_RESULT_STALE_TTL_SECONDS
+        value: "43200"
+      - key: STREMIO_BACKGROUND_REFRESH_CONCURRENCY
+        value: "1"
+      - key: STREMIO_BACKGROUND_REFRESH_QUEUE_MAX
+        value: "50"
+      - key: POPULAR_STREAM_PREWARM_ENABLED
+        value: "true"
+      - key: POPULAR_STREAM_PREWARM_INTERVAL_SECONDS
+        value: "900"
+      - key: POPULAR_STREAM_PREWARM_LIMIT
+        value: "20"
+      - key: POPULAR_STREAM_PREWARM_MAX_AGE_HOURS
+        value: "72"
+      - key: POPULAR_STREAM_SEARCH_MAX_ENTRIES
+        value: "500"
+      - key: POPULAR_STREAM_SEARCH_MAX_USERS_PER_ENTRY
+        value: "200"
+      - key: STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES
+        value: "150"
+      - key: PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES
+        value: "150"
+      - key: HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES
+        value: "100"
+      - key: IMDB_RESOLVER_MEMORY_CACHE_MAX_ENTRIES
+        value: "500"
+      - key: MEMORY_GUARD_ENABLED
+        value: "true"
+      - key: MEMORY_GUARD_PRESSURE_PERCENT
+        value: "80"
+      - key: MEMORY_GUARD_CRITICAL_PERCENT
+        value: "90"
+      - key: MEMORY_GUARD_RESTART_PERCENT
+        value: "94"
+      - key: MEMORY_GUARD_RESTART_AFTER_CRITICAL
+        value: "3"
+      - key: MEMORY_GUARD_MIN_AVAILABLE_MB
+        value: "192"
+      - key: MEMORY_GUARD_SHED_SECONDS
+        value: "90"
+      - key: MEMORY_GUARD_INTERVAL_SECONDS
+        value: "5"
+      - key: BOT_PROTECTION_ENABLED
+        value: "true"
+      - key: BOT_PROTECTION_WINDOW_SECONDS
+        value: "60"
+      - key: BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT
+        value: "12"
+      - key: BOT_PROTECTION_SUSPICIOUS_REQUEST_LIMIT
+        value: "2"
+      - key: BOT_PROTECTION_BLOCK_SECONDS
+        value: "1800"
+      - key: BOT_PROTECTION_MAX_TRACKED_CLIENTS
+        value: "50000"
       - key: HTTP_MAX_SOCKETS
         value: "4"
+      - key: REDIS_URL
+        sync: false

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -34,6 +35,7 @@ export class SourceRegistry {
       createdAt: Date.now(),
       lastAccessedAt: Date.now()
     });
+    this.pruneEntries();
 
     return id;
   }
@@ -77,6 +79,32 @@ export class SourceRegistry {
         this.entries.delete(id);
       }
     }
+  }
+
+  pruneEntries(maxEntries = config.SOURCE_REGISTRY_MAX_ENTRIES) {
+    this.removeExpired();
+
+    if (this.entries.size <= maxEntries) {
+      return;
+    }
+
+    const overflowCount = this.entries.size - maxEntries;
+    const oldestIds = Array.from(this.entries.entries())
+      .sort((left, right) => (left[1].lastAccessedAt || left[1].createdAt || 0) - (right[1].lastAccessedAt || right[1].createdAt || 0))
+      .slice(0, overflowCount)
+      .map(([id]) => id);
+
+    for (const id of oldestIds) {
+      this.entries.delete(id);
+    }
+  }
+
+  handleMemoryPressure({ critical = false } = {}) {
+    const targetEntries = critical
+      ? Math.max(100, Math.floor(config.SOURCE_REGISTRY_MAX_ENTRIES / 4))
+      : Math.max(100, Math.floor(config.SOURCE_REGISTRY_MAX_ENTRIES / 2));
+
+    this.pruneEntries(targetEntries);
   }
 
   getStats() {

@@ -17,9 +17,31 @@ const sleep = (delayMs) => new Promise((resolve) => {
   timer.unref?.();
 });
 
+const touchMapEntry = (map, key, value) => {
+  map.delete(key);
+  map.set(key, value);
+};
+
+const pruneMapByMaxEntries = (map, maxEntries) => {
+  if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+    return;
+  }
+
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    map.delete(oldestKey);
+  }
+};
+
 export class ImdbResolverService {
   constructor() {
     this.cache = new Map();
+    this.inFlight = new Map();
     this.cacheDir = path.join(config.CACHE_DIR, 'imdb-resolver');
     this.client = axios.create({
       baseURL: 'https://api.themoviedb.org/3',
@@ -29,6 +51,15 @@ export class ImdbResolverService {
       },
       validateStatus: (status) => status >= 200 && status < 300
     });
+  }
+
+  handleMemoryPressure({ critical = false } = {}) {
+    if (critical) {
+      this.cache.clear();
+      return;
+    }
+
+    pruneMapByMaxEntries(this.cache, Math.max(50, Math.floor(config.IMDB_RESOLVER_MEMORY_CACHE_MAX_ENTRIES / 4)));
   }
 
   async resolve({ imdbId, mediaType }) {
@@ -45,6 +76,32 @@ export class ImdbResolverService {
       throw createHttpError(400, 'Stremio id must use an IMDb tt prefix');
     }
 
+    if (this.inFlight.has(cacheKey)) {
+      return this.inFlight.get(cacheKey);
+    }
+
+    const resolution = this.resolveUncached({
+      cacheKey,
+      normalizedImdbId,
+      normalizedMediaType,
+      cached
+    });
+
+    this.inFlight.set(cacheKey, resolution);
+
+    try {
+      return await resolution;
+    } finally {
+      this.inFlight.delete(cacheKey);
+    }
+  }
+
+  async resolveUncached({
+    cacheKey,
+    normalizedImdbId,
+    normalizedMediaType,
+    cached
+  }) {
     let response = null;
     let lastError = null;
 
@@ -102,6 +159,7 @@ export class ImdbResolverService {
     const memoryEntry = this.cache.get(cacheKey);
 
     if (memoryEntry && memoryEntry.staleExpiresAt > Date.now()) {
+      touchMapEntry(this.cache, cacheKey, memoryEntry);
       return memoryEntry;
     }
 
@@ -109,6 +167,7 @@ export class ImdbResolverService {
 
     if (diskEntry) {
       this.cache.set(cacheKey, diskEntry);
+      pruneMapByMaxEntries(this.cache, config.IMDB_RESOLVER_MEMORY_CACHE_MAX_ENTRIES);
       return diskEntry;
     }
 
@@ -151,7 +210,8 @@ export class ImdbResolverService {
       staleExpiresAt: Date.now() + STALE_CACHE_TTL_MS
     };
 
-    this.cache.set(cacheKey, entry);
+    touchMapEntry(this.cache, cacheKey, entry);
+    pruneMapByMaxEntries(this.cache, config.IMDB_RESOLVER_MEMORY_CACHE_MAX_ENTRIES);
 
     try {
       await mkdir(this.cacheDir, { recursive: true });

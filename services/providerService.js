@@ -29,10 +29,41 @@ const LOCAL_PROVIDERS = Object.freeze({
     invocation: 'subprocess'
   }
 });
-const PROVIDER_CACHE_VERSION = '3';
+const PROVIDER_CACHE_VERSION = '5';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
-const PROVIDER_PRIORITY = ['vidlink', 'videasy', 'hdhub4u', 'tamilian', 'torrent-scraper'];
+const PROVIDER_PRIORITY = [
+  'vidlink',
+  'videasy',
+  'hdhub4u',
+  '4khdhub',
+  '4khdhub_tv',
+  'tamilian',
+  'streamflix',
+  'streamflix_eng',
+  'netmirror',
+  'moviebox',
+  'moviesmod',
+  'hdmovie2',
+  'movix',
+  'flixindia',
+  'isaidub',
+  'allwish',
+  'allmovieland',
+  'vidmody-tr',
+  'turkish-m3u',
+  'rectv-tr',
+  'diziyou',
+  'it-streamingcommunity',
+  'it-guardahd',
+  'it-guardaserie',
+  'it-guardoserie',
+  'it-cc',
+  'it-animeunity',
+  'it-animeworld',
+  'it-animesaturn',
+  'torrent-scraper'
+];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
@@ -41,6 +72,12 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     animekai: 175,
     animesalt: 170,
     animeworld: 165,
+    'it-animeunity': 120,
+    'it-animeworld': 115,
+    'it-animesaturn': 110,
+    '4khdhub_tv': 95,
+    '4khdhub': 90,
+    hdhub4u: 75,
     kisskh: 55
   }),
   kdrama: Object.freeze({
@@ -63,7 +100,22 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     allmovieland: 70
   }),
   turkish: Object.freeze({
-    diziyou: 180
+    'vidmody-tr': 195,
+    'turkish-m3u': 190,
+    'rectv-tr': 185,
+    diziyou: 180,
+    sinemacx: 170,
+    cinemacity: 120
+  }),
+  italian: Object.freeze({
+    'it-streamingcommunity': 195,
+    'it-guardahd': 185,
+    'it-guardaserie': 180,
+    'it-guardoserie': 175,
+    'it-cc': 155,
+    'it-animeunity': 140,
+    'it-animeworld': 135,
+    'it-animesaturn': 130
   }),
   portuguese: Object.freeze({
     brazucaplay: 180
@@ -87,12 +139,35 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   vixsrc: 92,
   hdmovie2: 90,
   lamovie: 88,
-  purstream: 86
+  purstream: 86,
+  'vidmody-tr': 104,
+  'turkish-m3u': 102,
+  'rectv-tr': 100,
+  diziyou: 98,
+  'it-streamingcommunity': 106,
+  'it-guardahd': 102,
+  'it-guardaserie': 100,
+  'it-guardoserie': 98,
+  'it-cc': 94,
+  'it-animeunity': 96,
+  'it-animeworld': 94,
+  'it-animesaturn': 92
 });
 const INDIAN_LANGUAGES = new Set(['ta', 'te', 'hi', 'ml', 'kn']);
+const PROVIDER_LABEL_OVERRIDES = Object.freeze({
+  'it-streamingcommunity': 'StreamingCommunity IT',
+  'it-guardahd': 'GuardaHD',
+  'it-guardaserie': 'GuardaSerie',
+  'it-guardoserie': 'GuardoSerie',
+  'it-cc': 'CC IT',
+  'it-animeunity': 'AnimeUnity IT',
+  'it-animeworld': 'AnimeWorld IT',
+  'it-animesaturn': 'AnimeSaturn'
+});
 
 const toLabel = (providerId) =>
-  providerId
+  PROVIDER_LABEL_OVERRIDES[providerId]
+  || providerId
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase());
 
@@ -163,6 +238,27 @@ const mapConcurrent = async (items, concurrency, iteratee) => {
 };
 
 const copyStreams = (streams) => streams.map((stream) => ({ ...stream }));
+
+const touchMapEntry = (map, key, value) => {
+  map.delete(key);
+  map.set(key, value);
+};
+
+const pruneMapByMaxEntries = (map, maxEntries) => {
+  if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+    return;
+  }
+
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    map.delete(oldestKey);
+  }
+};
 
 const sanitizeHeaders = (headers) => {
   if (!headers || typeof headers !== 'object') {
@@ -350,6 +446,7 @@ export class ProviderService {
     this.providerHealth = new Map();
     this.providerHostHealth = new Map();
     this.providerHostInflight = new Map();
+    this.providerGlobalInflight = 0;
     this.tmdbMetadataCache = new Map();
     this.tmdbMetadataInFlight = new Map();
   }
@@ -391,10 +488,22 @@ export class ProviderService {
       discoveredProviders: this.providers.size,
       inMemoryCacheEntries: this.resultCache.size,
       inFlightRequests: this.inFlight.size,
+      activeProviderExecutions: this.providerGlobalInflight,
       providerCacheDir: this.providerCacheDir,
       coolingDownProviders,
       coolingDownHosts
     };
+  }
+
+  handleMemoryPressure({ critical = false } = {}) {
+    if (critical) {
+      this.resultCache.clear();
+      this.tmdbMetadataCache.clear();
+      return;
+    }
+
+    pruneMapByMaxEntries(this.resultCache, Math.max(50, Math.floor(config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES / 4)));
+    pruneMapByMaxEntries(this.tmdbMetadataCache, Math.max(50, Math.floor(config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES / 4)));
   }
 
   getStremioProviderOrder(requestedProviders = null, contentProfile = null) {
@@ -489,7 +598,7 @@ export class ProviderService {
     const normalizedProviders = this.getStremioProviderOrder(
       providers && providers.length > 0 ? providers : null,
       contentProfile
-    );
+    ).slice(0, config.STREMIO_FAST_PROVIDER_LIMIT);
 
     if (normalizedProviders.length === 0) {
       throw createHttpError(400, 'No valid providers were supplied for fast search');
@@ -661,15 +770,6 @@ export class ProviderService {
     normalizedSeason,
     normalizedEpisode
   }) {
-    let timeoutId;
-
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(createHttpError(504, `Provider ${providerId} timed out`));
-      }, config.PROVIDER_TIMEOUT_SECONDS * 1000);
-      timeoutId.unref();
-    });
-
     try {
       logger.info('provider scrape started', {
         provider: providerId,
@@ -677,15 +777,27 @@ export class ProviderService {
         mediaType: normalizedMediaType
       });
 
-      const streams = await Promise.race([
-        this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
-          tmdbId: normalizedTmdbId,
-          mediaType: normalizedMediaType,
-          season: normalizedSeason,
-          episode: normalizedEpisode
-        })),
-        timeoutPromise
-      ]);
+      const streams = await this.withProviderGlobalSlot(() => {
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(createHttpError(504, `Provider ${providerId} timed out`));
+          }, config.PROVIDER_TIMEOUT_SECONDS * 1000);
+          timeoutId.unref();
+        });
+
+        return Promise.race([
+          this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
+            tmdbId: normalizedTmdbId,
+            mediaType: normalizedMediaType,
+            season: normalizedSeason,
+            episode: normalizedEpisode
+          })),
+          timeoutPromise
+        ]).finally(() => {
+          clearTimeout(timeoutId);
+        });
+      });
 
       if (!Array.isArray(streams)) {
         throw createHttpError(502, `Provider ${providerId} returned an invalid stream payload`);
@@ -741,8 +853,20 @@ export class ProviderService {
       });
       await this.setCachedResult(cacheKey, [], providerId);
       return [];
+    }
+  }
+
+  async withProviderGlobalSlot(fn) {
+    while (this.providerGlobalInflight >= config.PROVIDER_GLOBAL_MAX_INFLIGHT) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    this.providerGlobalInflight += 1;
+
+    try {
+      return await fn();
     } finally {
-      clearTimeout(timeoutId);
+      this.providerGlobalInflight = Math.max(this.providerGlobalInflight - 1, 0);
     }
   }
 
@@ -835,6 +959,7 @@ export class ProviderService {
       return this.getDiskCachedResult(cacheKey);
     }
 
+    touchMapEntry(this.resultCache, cacheKey, entry);
     return copyStreams(entry.streams);
   }
 
@@ -854,7 +979,8 @@ export class ProviderService {
         expiresAt: payload.expiresAt
       };
 
-      this.resultCache.set(cacheKey, entry);
+      touchMapEntry(this.resultCache, cacheKey, entry);
+      pruneMapByMaxEntries(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES);
       logger.info('provider disk cache hit', {
         cacheKey: this.hashCacheKey(cacheKey),
         resultCount: payload.streams.length
@@ -883,10 +1009,13 @@ export class ProviderService {
 
     const entry = {
       streams: copyStreams(streams),
-      expiresAt: Date.now() + config.PROVIDER_CACHE_TTL_SECONDS * 1000
+      expiresAt: Date.now() + (streams.length === 0
+        ? config.PROVIDER_EMPTY_CACHE_TTL_SECONDS
+        : config.PROVIDER_CACHE_TTL_SECONDS) * 1000
     };
 
-    this.resultCache.set(cacheKey, entry);
+    touchMapEntry(this.resultCache, cacheKey, entry);
+    pruneMapByMaxEntries(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES);
 
     try {
       await writeFile(this.getCacheFilePath(cacheKey), JSON.stringify(entry));
@@ -965,6 +1094,7 @@ export class ProviderService {
     const cached = this.tmdbMetadataCache.get(cacheKey);
 
     if (cached && cached.expiresAt > Date.now()) {
+      touchMapEntry(this.tmdbMetadataCache, cacheKey, cached);
       return cached.value;
     }
 
@@ -985,6 +1115,7 @@ export class ProviderService {
         value: metadata,
         expiresAt: Date.now() + TMDB_METADATA_CACHE_TTL_MS
       });
+      pruneMapByMaxEntries(this.tmdbMetadataCache, config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES);
 
       return metadata;
     })();
@@ -1037,6 +1168,10 @@ export class ProviderService {
 
     if (originalLanguage === 'tr' || originCountries.has('TR')) {
       tags.push('turkish');
+    }
+
+    if (originalLanguage === 'it' || originCountries.has('IT')) {
+      tags.push('italian');
     }
 
     if (originalLanguage === 'pt' || originCountries.has('BR') || originCountries.has('PT')) {

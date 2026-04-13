@@ -5,10 +5,12 @@ import { promises as fsPromises } from 'node:fs';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
-const { mkdir, readFile, writeFile } = fsPromises;
+const { copyFile, mkdir, readFile, rename, rm, writeFile } = fsPromises;
 
 const FLUSH_DELAY_MS = 5000;
 const USERS_FILE = path.join(config.CACHE_DIR, 'analytics', 'users.json');
+const USERS_BACKUP_FILE = `${USERS_FILE}.bak`;
+const USERS_TEMP_FILE = `${USERS_FILE}.tmp`;
 const BOT_USER_AGENT_PATTERN = /\b(bot|crawler|spider|validator|preview|headless|curl|wget|python-requests|go-http-client|facebookexternalhit|slackbot|discordbot)\b/i;
 
 const nowIso = () => new Date().toISOString();
@@ -51,7 +53,7 @@ const isObviousBot = (headers) => {
   const userAgent = String(headers?.['user-agent'] || '').trim();
 
   if (!userAgent) {
-    return true;
+    return false;
   }
 
   return BOT_USER_AGENT_PATTERN.test(userAgent);
@@ -67,6 +69,121 @@ const createEmptyEntry = () => ({
   manifestHits: 0
 });
 
+const getEntryLastSeenMs = (entry) => Date.parse(entry?.lastSeenAt || '') || 0;
+
+const createEmptyBaseline = () => ({
+  totalUsers: 0,
+  activeUsers24h: 0,
+  activeUsers7d: 0,
+  totalTrackedRequests: 0,
+  rawUniqueClients: 0,
+  rawTrackedRequests: 0,
+  botClients: 0,
+  botRequests: 0,
+  mixedClients: 0,
+  streamUsers: 0,
+  streamRequests: 0,
+  manifestRequests: 0
+});
+
+const toSafeInteger = (value) => Number.isInteger(value) && value > 0 ? value : 0;
+const toPositiveNumberOrNull = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const normalizeStringArray = (value) => Array.isArray(value)
+  ? value.map((item) => String(item || '').trim()).filter(Boolean)
+  : [];
+
+const normalizePlainObject = (value, fallback) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : fallback;
+
+const createStreamSearchKey = ({
+  tmdbId,
+  mediaType,
+  season = null,
+  episode = null,
+  providers = [],
+  qualityPriority = [],
+  streamOptions = {}
+}) => JSON.stringify({
+  tmdbId,
+  mediaType,
+  season,
+  episode,
+  providers,
+  qualityPriority,
+  streamOptions
+});
+
+const normalizeStreamSearchInput = (input = {}) => {
+  const tmdbId = toPositiveNumberOrNull(input.tmdbId);
+  const mediaType = String(input.mediaType || '').trim().toLowerCase();
+
+  if (!tmdbId || !['movie', 'series'].includes(mediaType)) {
+    return null;
+  }
+
+  const season = input.season === null || input.season === undefined
+    ? null
+    : toPositiveNumberOrNull(input.season);
+  const episode = input.episode === null || input.episode === undefined
+    ? null
+    : toPositiveNumberOrNull(input.episode);
+
+  if (mediaType === 'series' && (!season || !episode)) {
+    return null;
+  }
+
+  return {
+    imdbId: String(input.imdbId || '').trim(),
+    tmdbId,
+    mediaType,
+    season,
+    episode,
+    providers: normalizeStringArray(input.providers),
+    qualityPriority: normalizeStringArray(input.qualityPriority),
+    streamOptions: normalizePlainObject(input.streamOptions, {})
+  };
+};
+
+const normalizeStreamSearchEntry = (entry = {}) => {
+  const input = normalizeStreamSearchInput(entry);
+
+  if (!input) {
+    return null;
+  }
+
+  return {
+    ...input,
+    firstSeenAt: entry.firstSeenAt || nowIso(),
+    lastSeenAt: entry.lastSeenAt || nowIso(),
+    hits: Number.isInteger(entry.hits) ? entry.hits : 0,
+    uniqueUsers: Number.isInteger(entry.uniqueUsers) ? entry.uniqueUsers : 0,
+    recentUserFingerprints: normalizeStringArray(entry.recentUserFingerprints)
+      .slice(-config.POPULAR_STREAM_SEARCH_MAX_USERS_PER_ENTRY)
+  };
+};
+
+const normalizeBaseline = (baseline = {}) => {
+  const normalized = createEmptyBaseline();
+
+  if (!baseline || typeof baseline !== 'object') {
+    return normalized;
+  }
+
+  for (const key of Object.keys(normalized)) {
+    normalized[key] = toSafeInteger(baseline[key]);
+  }
+
+  return normalized;
+};
+
+const readJsonFile = async (filePath) => JSON.parse(await readFile(filePath, 'utf8'));
+
 export class UserTrackerService {
   constructor() {
     this.entries = new Map();
@@ -75,6 +192,8 @@ export class UserTrackerService {
     this.totalBotRequests = 0;
     this.totalStreamRequests = 0;
     this.totalManifestRequests = 0;
+    this.baseline = createEmptyBaseline();
+    this.streamSearches = new Map();
     this.flushTimer = null;
     this.flushInFlight = null;
   }
@@ -82,14 +201,19 @@ export class UserTrackerService {
   async initialize() {
     await mkdir(path.dirname(USERS_FILE), { recursive: true });
 
-    try {
-      const payload = JSON.parse(await readFile(USERS_FILE, 'utf8'));
+    const payload = await this.readPersistedState();
 
+    if (!payload) {
+      return;
+    }
+
+    try {
       this.totalRequests = Number.isInteger(payload.totalRequests) ? payload.totalRequests : 0;
       this.totalHumanRequests = Number.isInteger(payload.totalHumanRequests) ? payload.totalHumanRequests : 0;
       this.totalBotRequests = Number.isInteger(payload.totalBotRequests) ? payload.totalBotRequests : 0;
       this.totalStreamRequests = Number.isInteger(payload.totalStreamRequests) ? payload.totalStreamRequests : 0;
       this.totalManifestRequests = Number.isInteger(payload.totalManifestRequests) ? payload.totalManifestRequests : 0;
+      this.baseline = normalizeBaseline(payload.baseline);
 
       if (payload.users && typeof payload.users === 'object') {
         for (const [fingerprint, user] of Object.entries(payload.users)) {
@@ -104,9 +228,40 @@ export class UserTrackerService {
           });
         }
       }
+
+      if (payload.streamSearches && typeof payload.streamSearches === 'object') {
+        for (const [key, entry] of Object.entries(payload.streamSearches)) {
+          const normalizedEntry = normalizeStreamSearchEntry(entry);
+
+          if (normalizedEntry) {
+            this.streamSearches.set(key, normalizedEntry);
+          }
+        }
+      }
+
+      this.pruneEntries();
+      this.pruneStreamSearches();
     } catch (error) {
-      if (error.code !== 'ENOENT') {
-        logger.warn('user tracker state load failed', { error });
+      logger.warn('user tracker state load failed', { error });
+    }
+  }
+
+  async readPersistedState() {
+    try {
+      return await readJsonFile(USERS_FILE);
+    } catch (primaryError) {
+      if (primaryError.code !== 'ENOENT') {
+        logger.warn('user tracker primary state load failed', { error: primaryError });
+      }
+
+      try {
+        return await readJsonFile(USERS_BACKUP_FILE);
+      } catch (backupError) {
+        if (backupError.code !== 'ENOENT') {
+          logger.warn('user tracker backup state load failed', { error: backupError });
+        }
+
+        return null;
       }
     }
   }
@@ -143,8 +298,113 @@ export class UserTrackerService {
     }
 
     this.entries.set(fingerprint, entry);
+    this.pruneEntries();
     this.totalRequests += 1;
     this.scheduleFlush();
+  }
+
+  trackStreamSearch(req, input) {
+    const normalizedInput = normalizeStreamSearchInput(input);
+
+    if (!normalizedInput || isObviousBot(req.headers || {})) {
+      return;
+    }
+
+    const fingerprint = this.getFingerprint(req);
+    const key = createStreamSearchKey(normalizedInput);
+    const entry = this.streamSearches.get(key) || {
+      ...normalizedInput,
+      firstSeenAt: nowIso(),
+      lastSeenAt: nowIso(),
+      hits: 0,
+      uniqueUsers: 0,
+      recentUserFingerprints: []
+    };
+
+    entry.lastSeenAt = nowIso();
+    entry.hits += 1;
+
+    if (!entry.recentUserFingerprints.includes(fingerprint)) {
+      entry.uniqueUsers += 1;
+      entry.recentUserFingerprints.push(fingerprint);
+
+      if (entry.recentUserFingerprints.length > config.POPULAR_STREAM_SEARCH_MAX_USERS_PER_ENTRY) {
+        entry.recentUserFingerprints = entry.recentUserFingerprints.slice(-config.POPULAR_STREAM_SEARCH_MAX_USERS_PER_ENTRY);
+      }
+    }
+
+    this.streamSearches.set(key, entry);
+    this.pruneStreamSearches();
+    this.scheduleFlush();
+  }
+
+  pruneEntries(maxEntries = config.USER_TRACKER_MAX_ENTRIES) {
+    if (this.entries.size <= maxEntries) {
+      return;
+    }
+
+    const overflowCount = this.entries.size - maxEntries;
+    const oldestFingerprints = Array.from(this.entries.entries())
+      .sort((left, right) => getEntryLastSeenMs(left[1]) - getEntryLastSeenMs(right[1]))
+      .slice(0, overflowCount)
+      .map(([fingerprint]) => fingerprint);
+
+    for (const fingerprint of oldestFingerprints) {
+      this.entries.delete(fingerprint);
+    }
+  }
+
+  handleMemoryPressure({ critical = false } = {}) {
+    const targetEntries = critical
+      ? Math.max(1000, Math.floor(config.USER_TRACKER_MAX_ENTRIES / 4))
+      : Math.max(1000, Math.floor(config.USER_TRACKER_MAX_ENTRIES / 2));
+
+    this.pruneEntries(targetEntries);
+    this.pruneStreamSearches(critical
+      ? Math.max(25, Math.floor(config.POPULAR_STREAM_SEARCH_MAX_ENTRIES / 4))
+      : Math.max(50, Math.floor(config.POPULAR_STREAM_SEARCH_MAX_ENTRIES / 2)));
+  }
+
+  pruneStreamSearches(maxEntries = config.POPULAR_STREAM_SEARCH_MAX_ENTRIES) {
+    if (this.streamSearches.size <= maxEntries) {
+      return;
+    }
+
+    const overflowCount = this.streamSearches.size - maxEntries;
+    const oldestKeys = Array.from(this.streamSearches.entries())
+      .sort((left, right) => Date.parse(left[1].lastSeenAt || '') - Date.parse(right[1].lastSeenAt || ''))
+      .slice(0, overflowCount)
+      .map(([key]) => key);
+
+    for (const key of oldestKeys) {
+      this.streamSearches.delete(key);
+    }
+  }
+
+  getPopularStreamSearches({ limit = config.POPULAR_STREAM_PREWARM_LIMIT, maxAgeHours = config.POPULAR_STREAM_PREWARM_MAX_AGE_HOURS } = {}) {
+    const cutoffMs = Date.now() - (maxAgeHours * 60 * 60 * 1000);
+
+    return Array.from(this.streamSearches.entries())
+      .filter(([, entry]) => (Date.parse(entry.lastSeenAt || '') || 0) >= cutoffMs)
+      .sort((left, right) =>
+        (right[1].uniqueUsers - left[1].uniqueUsers)
+        || (right[1].hits - left[1].hits)
+        || ((Date.parse(right[1].lastSeenAt || '') || 0) - (Date.parse(left[1].lastSeenAt || '') || 0)))
+      .slice(0, limit)
+      .map(([key, entry]) => ({
+        key,
+        imdbId: entry.imdbId,
+        tmdbId: entry.tmdbId,
+        mediaType: entry.mediaType,
+        season: entry.season,
+        episode: entry.episode,
+        providers: [...entry.providers],
+        qualityPriority: [...entry.qualityPriority],
+        streamOptions: { ...entry.streamOptions },
+        hits: entry.hits,
+        uniqueUsers: entry.uniqueUsers,
+        lastSeenAt: entry.lastSeenAt
+      }));
   }
 
   getStats() {
@@ -188,18 +448,19 @@ export class UserTrackerService {
     }
 
     return {
-      totalUsers: totalHumanUsers,
-      activeUsers24h: active24h,
-      activeUsers7d: active7d,
-      totalTrackedRequests: this.totalHumanRequests,
-      rawUniqueClients: this.entries.size,
-      rawTrackedRequests: this.totalRequests,
-      botClients,
-      botRequests: this.totalBotRequests,
-      mixedClients,
-      streamUsers,
-      streamRequests: this.totalStreamRequests,
-      manifestRequests: this.totalManifestRequests
+      totalUsers: this.baseline.totalUsers + totalHumanUsers,
+      activeUsers24h: this.baseline.activeUsers24h + active24h,
+      activeUsers7d: this.baseline.activeUsers7d + active7d,
+      totalTrackedRequests: this.baseline.totalTrackedRequests + this.totalHumanRequests,
+      rawUniqueClients: this.baseline.rawUniqueClients + this.entries.size,
+      rawTrackedRequests: this.baseline.rawTrackedRequests + this.totalRequests,
+      botClients: this.baseline.botClients + botClients,
+      botRequests: this.baseline.botRequests + this.totalBotRequests,
+      mixedClients: this.baseline.mixedClients + mixedClients,
+      streamUsers: this.baseline.streamUsers + streamUsers,
+      streamRequests: this.baseline.streamRequests + this.totalStreamRequests,
+      manifestRequests: this.baseline.manifestRequests + this.totalManifestRequests,
+      popularStreamSearches: this.streamSearches.size
     };
   }
 
@@ -248,15 +509,29 @@ export class UserTrackerService {
       totalBotRequests: this.totalBotRequests,
       totalStreamRequests: this.totalStreamRequests,
       totalManifestRequests: this.totalManifestRequests,
-      users: Object.fromEntries(this.entries.entries())
+      baseline: this.baseline,
+      users: Object.fromEntries(this.entries.entries()),
+      streamSearches: Object.fromEntries(this.streamSearches.entries())
     };
 
-    this.flushInFlight = writeFile(USERS_FILE, JSON.stringify(payload));
+    this.flushInFlight = this.writePersistedState(payload);
 
     try {
       await this.flushInFlight;
     } finally {
       this.flushInFlight = null;
     }
+  }
+
+  async writePersistedState(payload) {
+    await mkdir(path.dirname(USERS_FILE), { recursive: true });
+    await writeFile(USERS_TEMP_FILE, JSON.stringify(payload));
+    await copyFile(USERS_FILE, USERS_BACKUP_FILE).catch((error) => {
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+    });
+    await rename(USERS_TEMP_FILE, USERS_FILE);
+    await rm(USERS_TEMP_FILE, { force: true }).catch(() => {});
   }
 }

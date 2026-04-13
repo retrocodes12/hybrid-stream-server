@@ -18,7 +18,9 @@
     "axios": "^1.14.0",
     "cheerio-without-node-native": "^0.20.2",
     "crypto-js": "^4.2.0",
+    "easystreams": "github:realbestia1/easystreams#e0bcd6872a539b677f0819c1c0d1d5b940c77b66",
     "express": "^5.2.1",
+    "redis": "^5.11.0",
     "torrent-stream": "^1.2.1",
     "ws": "^8.18.3"
   }

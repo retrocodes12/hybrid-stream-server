@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { promises as fsPromises } from 'node:fs';
 import os from 'node:os';
 import express from 'express';
 
@@ -25,6 +26,7 @@ const escapeHtml = (value) =>
 const ADMIN_COOKIE_NAME = 'nebulastreams_admin';
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CPU_SAMPLE_WINDOW_MS = 200;
+const { readFile } = fsPromises;
 
 const sleep = (delayMs) => new Promise((resolve) => {
   const timer = setTimeout(resolve, delayMs);
@@ -40,6 +42,31 @@ const sampleCpuTimes = () => os.cpus().reduce((totals, cpu) => {
   };
 }, { idle: 0, total: 0 });
 
+const getSystemMemorySnapshot = async () => {
+  try {
+    const meminfo = await readFile('/proc/meminfo', 'utf8');
+    const values = Object.fromEntries(meminfo
+      .split('\n')
+      .map((line) => line.match(/^([A-Za-z_()]+):\s+(\d+)\s+kB$/u))
+      .filter(Boolean)
+      .map((match) => [match[1], Number.parseInt(match[2], 10) * 1024]));
+    const totalMemoryBytes = values.MemTotal || os.totalmem();
+    const availableMemoryBytes = values.MemAvailable || values.MemFree || os.freemem();
+
+    return {
+      totalMemoryBytes,
+      availableMemoryBytes,
+      freeMemoryBytes: values.MemFree || os.freemem()
+    };
+  } catch {
+    return {
+      totalMemoryBytes: os.totalmem(),
+      availableMemoryBytes: os.freemem(),
+      freeMemoryBytes: os.freemem()
+    };
+  }
+};
+
 const getSystemStats = async () => {
   const start = sampleCpuTimes();
   await sleep(CPU_SAMPLE_WINDOW_MS);
@@ -47,9 +74,8 @@ const getSystemStats = async () => {
   const totalDelta = Math.max(1, end.total - start.total);
   const idleDelta = Math.max(0, end.idle - start.idle);
   const cpuUsagePercent = Math.max(0, Math.min(100, ((totalDelta - idleDelta) / totalDelta) * 100));
-  const totalMemoryBytes = os.totalmem();
-  const freeMemoryBytes = os.freemem();
-  const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes);
+  const { totalMemoryBytes, availableMemoryBytes, freeMemoryBytes } = await getSystemMemorySnapshot();
+  const usedMemoryBytes = Math.max(0, totalMemoryBytes - availableMemoryBytes);
   const processMemory = process.memoryUsage();
 
   return {
@@ -58,6 +84,7 @@ const getSystemStats = async () => {
     loadAverage: os.loadavg(),
     totalMemoryBytes,
     freeMemoryBytes,
+    availableMemoryBytes,
     usedMemoryBytes,
     memoryUsagePercent: totalMemoryBytes > 0 ? (usedMemoryBytes / totalMemoryBytes) * 100 : 0,
     processRssBytes: processMemory.rss,
@@ -1007,13 +1034,13 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </div>
 
           <nav class="sidebar-nav">
-            <button type="button" class="nav-item is-active" data-section-target="overview-section"><span>Overview</span><span class="nav-index">01</span></button>
-            <button type="button" class="nav-item" data-section-target="presets-section"><span>Presets</span><span class="nav-index">02</span></button>
-            <button type="button" class="nav-item" data-section-target="providers-section"><span>Providers</span><span class="nav-index">03</span></button>
-            <button type="button" class="nav-item" data-section-target="sorting-section"><span>Sorting</span><span class="nav-index">04</span></button>
-            <button type="button" class="nav-item" data-section-target="filters-section"><span>Filters</span><span class="nav-index">05</span></button>
-            <button type="button" class="nav-item" data-section-target="preview-section"><span>Preview</span><span class="nav-index">06</span></button>
-            <button type="button" class="nav-item" data-section-target="support-section"><span>Support</span><span class="nav-index">07</span></button>
+            <button type="button" class="nav-item is-active" data-section-target="support-section"><span>Support</span><span class="nav-index">01</span></button>
+            <button type="button" class="nav-item" data-section-target="overview-section"><span>Overview</span><span class="nav-index">02</span></button>
+            <button type="button" class="nav-item" data-section-target="presets-section"><span>Presets</span><span class="nav-index">03</span></button>
+            <button type="button" class="nav-item" data-section-target="providers-section"><span>Providers</span><span class="nav-index">04</span></button>
+            <button type="button" class="nav-item" data-section-target="sorting-section"><span>Sorting</span><span class="nav-index">05</span></button>
+            <button type="button" class="nav-item" data-section-target="filters-section"><span>Filters</span><span class="nav-index">06</span></button>
+            <button type="button" class="nav-item" data-section-target="preview-section"><span>Preview</span><span class="nav-index">07</span></button>
             <button type="button" class="nav-item" data-section-target="notes-section"><span>Notes</span><span class="nav-index">08</span></button>
           </nav>
 
@@ -1036,6 +1063,53 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </section>
 
           <div class="content-grid">
+            <section class="settings-card" id="support-section">
+              <div class="card-badge">Support</div>
+              <div class="settings-card-inner">
+                <div class="settings-card-header">
+                  <div>
+                    <h3 class="card-title">Support NebulaStreams</h3>
+                    <p class="card-description">The addon is free. If it makes your setup easier, support helps keep the backend stable and maintained.</p>
+                  </div>
+                </div>
+
+                <div class="support-shell">
+                  ${hasDonationSupport ? `
+                    <div class="support-card">
+                      <h3>This addon is completely free.</h3>
+                      <p>If NebulaStreams has made your setup easier, support helps keep the servers online for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
+                      <div class="support-actions">
+                        <button type="button" class="donate-toggle" id="donate-toggle">Support</button>
+                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
+                      </div>
+                    </div>
+                  ` : `
+                    <div class="support-card">
+                      <h3>Feeling generous?</h3>
+                      <p>If NebulaStreams has made your setup easier, support helps keep the backend stable for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
+                      <div class="support-actions">
+                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
+                      </div>
+                    </div>
+                  `}
+
+                  ${nowPaymentsWidgetUrl ? `
+                    <div class="widget-panel" id="donation-widget-panel">
+                      <iframe
+                        class="widget-frame"
+                        src="${nowPaymentsWidgetUrl}"
+                        loading="lazy"
+                        scrolling="no"
+                        title="NOWPayments donation widget"
+                      >
+                        Can't load widget
+                      </iframe>
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            </section>
+
             <section class="settings-card" id="overview-section">
               <div class="card-badge">Save & Install</div>
               <div class="settings-card-inner">
@@ -1109,6 +1183,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   <button type="button" class="preset-card" data-preset-id="indian-content">
                     <p class="preset-name">Indian Content</p>
                     <p class="preset-copy">Bias toward Indian-focused providers with direct-host preference and practical dedupe.</p>
+                  </button>
+                  <button type="button" class="preset-card" data-preset-id="turkish-content">
+                    <p class="preset-name">Turkish Content</p>
+                    <p class="preset-copy">Use Turkish-focused providers first for Turkish movies and series.</p>
+                  </button>
+                  <button type="button" class="preset-card" data-preset-id="italian-content">
+                    <p class="preset-name">Italian Content</p>
+                    <p class="preset-copy">Use Italian-focused providers first for Italian movies, series, and anime.</p>
                   </button>
                 </div>
 
@@ -1208,6 +1290,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <option value="Kannada">Kannada</option>
                       <option value="Japanese">Japanese</option>
                       <option value="Korean">Korean</option>
+                      <option value="Turkish">Turkish</option>
+                      <option value="Italian">Italian</option>
                     </select>
                     <div class="field-help">Keeps matching streams and unknown-language streams. Only clearly different labeled audio gets filtered out.</div>
                   </div>
@@ -1327,53 +1411,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
                 <div class="preview-result" id="preview-result">
                   <div class="preview-empty">Use an IMDb id to preview the current provider and filter settings.</div>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-card" id="support-section">
-              <div class="card-badge">Support</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">Support NebulaStreams</h3>
-                    <p class="card-description">The addon is free. If it makes your setup easier, support helps keep the backend stable and maintained.</p>
-                  </div>
-                </div>
-
-                <div class="support-shell">
-                  ${hasDonationSupport ? `
-                    <div class="support-card">
-                      <h3>This addon is completely free.</h3>
-                      <p>If NebulaStreams has made your setup easier, support helps keep the servers online for everyone using it right now.</p>
-                      <div class="support-actions">
-                        <button type="button" class="donate-toggle" id="donate-toggle">Support</button>
-                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
-                      </div>
-                    </div>
-                  ` : `
-                    <div class="support-card">
-                      <h3>Feeling generous?</h3>
-                      <p>If NebulaStreams has made your setup easier, support helps keep the backend stable for everyone using it right now.</p>
-                      <div class="support-actions">
-                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
-                      </div>
-                    </div>
-                  `}
-
-                  ${nowPaymentsWidgetUrl ? `
-                    <div class="widget-panel" id="donation-widget-panel">
-                      <iframe
-                        class="widget-frame"
-                        src="${nowPaymentsWidgetUrl}"
-                        loading="lazy"
-                        scrolling="no"
-                        title="NOWPayments donation widget"
-                      >
-                        Can't load widget
-                      </iframe>
-                    </div>
-                  ` : ''}
                 </div>
               </div>
             </section>
@@ -1534,7 +1571,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         },
         anime: {
           label: 'Anime',
-          providers: ['anime-sama', 'animekai', 'animesalt', 'animeworld', 'kisskh', 'vidlink', 'videasy'],
+          providers: ['anime-sama', 'animekai', 'animesalt', 'animeworld', '4khdhub_tv', '4khdhub', 'hdhub4u', 'kisskh', 'vidlink', 'videasy'],
           qualityPriority: ['1080p', '720p', '1440p', '2160p', '480p', '360p', 'auto', 'unknown'],
           webReadyOnly: false,
           hideHeavyFormats: false,
@@ -1558,6 +1595,36 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferSmallerFiles: false,
           preferDirectHosts: true,
           preferredAudioLanguage: '',
+          maxSizeGb: '0',
+          blockedHosts: '',
+          dedupeMode: 'host-quality'
+        },
+        'turkish-content': {
+          label: 'Turkish Content',
+          providers: ['vidmody-tr', 'turkish-m3u', 'rectv-tr', 'diziyou', 'sinemacx', 'cinemacity', 'vidlink', 'videasy'],
+          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
+          webReadyOnly: false,
+          hideHeavyFormats: false,
+          preferHdr: false,
+          preferH264: false,
+          preferSmallerFiles: false,
+          preferDirectHosts: true,
+          preferredAudioLanguage: 'Turkish',
+          maxSizeGb: '0',
+          blockedHosts: '',
+          dedupeMode: 'host-quality'
+        },
+        'italian-content': {
+          label: 'Italian Content',
+          providers: ['it-streamingcommunity', 'it-guardahd', 'it-guardaserie', 'it-guardoserie', 'it-cc', 'it-animeunity', 'it-animeworld', 'it-animesaturn', 'vidlink', 'videasy'],
+          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
+          webReadyOnly: false,
+          hideHeavyFormats: false,
+          preferHdr: false,
+          preferH264: false,
+          preferSmallerFiles: false,
+          preferDirectHosts: true,
+          preferredAudioLanguage: 'Italian',
           maxSizeGb: '0',
           blockedHosts: '',
           dedupeMode: 'host-quality'
@@ -2017,8 +2084,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         threshold: [0.1, 0.35, 0.6]
       });
 
-      ['overview-section', 'providers-section', 'sorting-section', 'filters-section', 'preview-section', 'support-section', 'notes-section']
-        .concat('presets-section')
+      ['support-section', 'overview-section', 'presets-section', 'providers-section', 'sorting-section', 'filters-section', 'preview-section', 'notes-section']
         .map((id) => document.getElementById(id))
         .filter(Boolean)
         .forEach((section) => sectionObserver.observe(section));
@@ -2156,6 +2222,7 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         <div class="card"><div class="label">System Memory</div><div class="value">${formatPercent(stats.system.memoryUsagePercent)}</div></div>
         <div class="card"><div class="label">Process RSS</div><div class="value">${formatBytes(stats.system.processRssBytes)}</div></div>
         <div class="card"><div class="label">Active Streams</div><div class="value">${stats.runtime.activeStreams}/${stats.runtime.maxActiveStreams}</div></div>
+        <div class="card"><div class="label">Stream Searches</div><div class="value">${stats.runtime.streamSearchesInFlight}/${stats.runtime.maxStreamSearchesInFlight}</div></div>
         <div class="card"><div class="label">Active Torrents</div><div class="value">${stats.runtime.activeTorrentEngines}</div></div>
         <div class="card"><div class="label">Human Users</div><div class="value">${stats.users.totalUsers}</div></div>
         <div class="card"><div class="label">Users 24h</div><div class="value">${stats.users.activeUsers24h}</div></div>
@@ -2170,6 +2237,7 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
           <div><div class="label">CPU Cores</div><code>${escapeHtml(String(stats.system.cpuCount))}</code></div>
           <div><div class="label">Load Average</div><code>${escapeHtml(stats.system.loadAverage.map((value) => value.toFixed(2)).join(' / '))}</code></div>
           <div><div class="label">Memory Used</div><code>${escapeHtml(formatBytes(stats.system.usedMemoryBytes))}</code></div>
+          <div><div class="label">Memory Available</div><code>${escapeHtml(formatBytes(stats.system.availableMemoryBytes))}</code></div>
           <div><div class="label">Memory Free</div><code>${escapeHtml(formatBytes(stats.system.freeMemoryBytes))}</code></div>
           <div><div class="label">Memory Total</div><code>${escapeHtml(formatBytes(stats.system.totalMemoryBytes))}</code></div>
           <div><div class="label">Process RSS</div><code>${escapeHtml(formatBytes(stats.system.processRssBytes))}</code></div>
@@ -2191,6 +2259,21 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
       </section>
 
       <section class="section">
+        <h2>Stream Search</h2>
+        <div class="meta-grid">
+          <div><div class="label">Searches In Flight</div><code>${escapeHtml(`${stats.runtime.streamSearchesInFlight}/${stats.runtime.maxStreamSearchesInFlight}`)}</code></div>
+          <div><div class="label">Background Refresh</div><code>${escapeHtml(`${stats.runtime.stremioBackgroundRefreshActive}/${stats.runtime.stremioBackgroundRefreshQueued}`)}</code></div>
+          <div><div class="label">Stremio Result Cache</div><code>${escapeHtml(String(stats.runtime.stremioResultCacheEntries))}</code></div>
+          <div><div class="label">Redis Result Cache</div><code>${escapeHtml(stats.runtime.redisStreamResultCache?.enabled ? (stats.runtime.redisStreamResultCache.available ? 'connected' : 'unavailable') : 'disabled')}</code></div>
+          <div><div class="label">HubCloud Cache</div><code>${escapeHtml(String(stats.runtime.hubCloudCacheEntries))}</code></div>
+          <div><div class="label">Popular Searches</div><code>${escapeHtml(String(stats.users.popularStreamSearches))}</code></div>
+          <div><div class="label">Popular Prewarm</div><code>${escapeHtml(stats.runtime.popularStreamPrewarm?.enabled ? (stats.runtime.popularStreamPrewarm.running ? 'running' : 'enabled') : 'disabled')}</code></div>
+          <div><div class="label">Last Prewarm</div><code>${escapeHtml(stats.runtime.popularStreamPrewarm?.lastFinishedAt || 'never')}</code></div>
+          <div><div class="label">Last Prewarm Refreshed</div><code>${escapeHtml(String(stats.runtime.popularStreamPrewarm?.lastResultCount ?? 0))}</code></div>
+        </div>
+      </section>
+
+      <section class="section">
         <h2>Cache</h2>
         <div class="meta-grid">
           <div><div class="label">Cache Dir</div><code>${escapeHtml(stats.cache.cacheDir)}</code></div>
@@ -2208,6 +2291,7 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
           <div><div class="label">Discovered</div><code>${escapeHtml(String(stats.providers.discoveredProviders))}</code></div>
           <div><div class="label">Memory Cache Entries</div><code>${escapeHtml(String(stats.providers.inMemoryCacheEntries))}</code></div>
           <div><div class="label">In-Flight Requests</div><code>${escapeHtml(String(stats.providers.inFlightRequests))}</code></div>
+          <div><div class="label">Active Executions</div><code>${escapeHtml(String(stats.providers.activeProviderExecutions))}</code></div>
           <div><div class="label">Provider Cache Dir</div><code>${escapeHtml(stats.providers.providerCacheDir)}</code></div>
         </div>
       </section>
@@ -2727,6 +2811,29 @@ const getClientAddress = (req) => {
 
 const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
   const buckets = new Map();
+  let requestCount = 0;
+
+  const pruneBuckets = (now) => {
+    for (const [key, bucket] of buckets.entries()) {
+      if (bucket.resetAt <= now) {
+        buckets.delete(key);
+      }
+    }
+
+    if (buckets.size <= config.RATE_LIMIT_MAX_BUCKETS) {
+      return;
+    }
+
+    const overflowCount = buckets.size - config.RATE_LIMIT_MAX_BUCKETS;
+    const oldestKeys = Array.from(buckets.entries())
+      .sort((left, right) => left[1].resetAt - right[1].resetAt)
+      .slice(0, overflowCount)
+      .map(([key]) => key);
+
+    for (const key of oldestKeys) {
+      buckets.delete(key);
+    }
+  };
 
   return (req, res, next) => {
     if (!matcher(req)) {
@@ -2735,6 +2842,12 @@ const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
     }
 
     const now = Date.now();
+    requestCount += 1;
+
+    if (requestCount % 100 === 0 || buckets.size > config.RATE_LIMIT_MAX_BUCKETS) {
+      pruneBuckets(now);
+    }
+
     const key = `${name}:${getClientAddress(req)}`;
     const current = buckets.get(key);
 
@@ -2776,6 +2889,281 @@ const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
       retryAfterSeconds
     });
   };
+};
+
+const BOT_USER_AGENT_PATTERN = /\b(?:ahrefs|aiohttp|axios|baiduspider|bingbot|bot|bytespider|claudebot|crawler|curl|discordbot|facebookexternalhit|googlebot|gptbot|go-http-client|headless|httpx|insomnia|libwww-perl|node-fetch|petalbot|phantomjs|playwright|postmanruntime|puppeteer|python-requests|python-urllib|scraper|selenium|semrush|slackbot|spider|undici|wget|yandex)\b/iu;
+const BOT_STRICT_USER_AGENT_PATTERN = /(?:headless|phantomjs|playwright|puppeteer|selenium)/iu;
+
+const isBotProtectionIgnoredPath = (pathName) =>
+  pathName === '/health'
+  || pathName.startsWith('/admin')
+  || pathName.startsWith('/assets/')
+  || pathName === '/favicon.ico';
+
+const isExpensiveBotProtectionPath = (pathName) =>
+  pathName === '/stream'
+  || pathName === '/http-stream'
+  || pathName === '/stream/http'
+  || pathName === '/stream/torrent'
+  || pathName.startsWith('/stream/')
+  || pathName.startsWith('/stremio/stream/')
+  || pathName.startsWith('/preview/')
+  || pathName.startsWith('/stremio/preview/')
+  || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/preview/')))
+  || pathName.startsWith('/providers/');
+
+const isAllowedBotProtectionClient = (userAgent) => {
+  const normalized = String(userAgent || '').toLowerCase();
+
+  return normalized.includes('stremio')
+    || normalized.includes('mozilla/')
+    || normalized.includes('applewebkit/')
+    || normalized.includes('chrome/')
+    || normalized.includes('safari/')
+    || normalized.includes('firefox/');
+};
+
+const sendBotProtectionResponse = (req, res, retryAfterSeconds) => {
+  if (retryAfterSeconds) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+  }
+
+  const acceptsHtml = String(req.headers.accept || '').includes('text/html');
+
+  if (acceptsHtml) {
+    res.status(403).type('html').send('Access blocked.');
+    return;
+  }
+
+  res.status(403).json({
+    error: 'Forbidden'
+  });
+};
+
+const createBotProtection = () => {
+  const clients = new Map();
+  let requestCount = 0;
+
+  const windowMs = config.BOT_PROTECTION_WINDOW_SECONDS * 1000;
+  const blockMs = config.BOT_PROTECTION_BLOCK_SECONDS * 1000;
+
+  const pruneClients = (now) => {
+    for (const [key, state] of clients.entries()) {
+      if (state.resetAt <= now && state.blockedUntil <= now) {
+        clients.delete(key);
+      }
+    }
+
+    if (clients.size <= config.BOT_PROTECTION_MAX_TRACKED_CLIENTS) {
+      return;
+    }
+
+    const overflowCount = clients.size - config.BOT_PROTECTION_MAX_TRACKED_CLIENTS;
+    const oldestKeys = Array.from(clients.entries())
+      .sort((left, right) => Math.min(left[1].resetAt, left[1].blockedUntil) - Math.min(right[1].resetAt, right[1].blockedUntil))
+      .slice(0, overflowCount)
+      .map(([key]) => key);
+
+    for (const key of oldestKeys) {
+      clients.delete(key);
+    }
+  };
+
+  const getClientState = (key, now) => {
+    const current = clients.get(key);
+
+    if (current && current.resetAt > now) {
+      return current;
+    }
+
+    const nextState = {
+      expensiveCount: 0,
+      suspiciousCount: 0,
+      resetAt: now + windowMs,
+      blockedUntil: current?.blockedUntil && current.blockedUntil > now ? current.blockedUntil : 0
+    };
+
+    clients.set(key, nextState);
+    return nextState;
+  };
+
+  return (req, res, next) => {
+    if (!config.BOT_PROTECTION_ENABLED || req.method === 'OPTIONS' || isBotProtectionIgnoredPath(req.path)) {
+      next();
+      return;
+    }
+
+    const pathName = req.path || '';
+    const isExpensivePath = isExpensiveBotProtectionPath(pathName);
+    const userAgent = String(req.headers['user-agent'] || '').trim();
+    const suspiciousUserAgent = BOT_STRICT_USER_AGENT_PATTERN.test(userAgent)
+      || (BOT_USER_AGENT_PATTERN.test(userAgent) && !isAllowedBotProtectionClient(userAgent));
+
+    if (!isExpensivePath && !suspiciousUserAgent) {
+      next();
+      return;
+    }
+
+    const now = Date.now();
+    requestCount += 1;
+
+    if (requestCount % 100 === 0 || clients.size > config.BOT_PROTECTION_MAX_TRACKED_CLIENTS) {
+      pruneClients(now);
+    }
+
+    const ip = getClientAddress(req);
+    const state = getClientState(ip, now);
+
+    if (state.blockedUntil > now) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((state.blockedUntil - now) / 1000));
+      logger.warn('bot protection blocked request', {
+        reason: 'temporary-ip-block',
+        path: pathName,
+        ip,
+        retryAfterSeconds,
+        userAgent: userAgent.slice(0, 160)
+      });
+      sendBotProtectionResponse(req, res, retryAfterSeconds);
+      return;
+    }
+
+    if (isExpensivePath) {
+      state.expensiveCount += 1;
+    }
+
+    if (suspiciousUserAgent) {
+      state.suspiciousCount += 1;
+    }
+
+    const overExpensiveLimit = state.expensiveCount > config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT;
+    const overSuspiciousLimit = state.suspiciousCount > config.BOT_PROTECTION_SUSPICIOUS_REQUEST_LIMIT;
+    const instantScraperBlock = suspiciousUserAgent && isExpensivePath;
+
+    if (!overExpensiveLimit && !overSuspiciousLimit && !instantScraperBlock) {
+      next();
+      return;
+    }
+
+    state.blockedUntil = now + blockMs;
+    const reason = instantScraperBlock
+      ? 'scraper-user-agent-on-expensive-route'
+      : overSuspiciousLimit
+        ? 'suspicious-user-agent-limit'
+        : 'expensive-request-limit';
+
+    logger.warn('bot protection blocked request', {
+      reason,
+      path: pathName,
+      ip,
+      expensiveCount: state.expensiveCount,
+      suspiciousCount: state.suspiciousCount,
+      retryAfterSeconds: config.BOT_PROTECTION_BLOCK_SECONDS,
+      userAgent: userAgent.slice(0, 160)
+    });
+
+    sendBotProtectionResponse(req, res, config.BOT_PROTECTION_BLOCK_SECONDS);
+  };
+};
+
+const startMemoryGuard = ({
+  streamManager,
+  providerService,
+  imdbResolver,
+  userTracker,
+  sourceRegistry
+}) => {
+  if (!config.MEMORY_GUARD_ENABLED) {
+    return null;
+  }
+
+  let running = false;
+  let criticalStrikes = 0;
+  const runCleanup = async () => {
+    if (running) {
+      return;
+    }
+
+    running = true;
+
+    try {
+      const memory = await getSystemMemorySnapshot();
+      const usagePercent = memory.totalMemoryBytes > 0
+        ? ((memory.totalMemoryBytes - memory.availableMemoryBytes) / memory.totalMemoryBytes) * 100
+        : 0;
+
+      if (usagePercent < config.MEMORY_GUARD_PRESSURE_PERCENT) {
+        criticalStrikes = 0;
+        return;
+      }
+
+      const critical = usagePercent >= config.MEMORY_GUARD_CRITICAL_PERCENT;
+      criticalStrikes = critical ? criticalStrikes + 1 : 0;
+      const before = {
+        availableMemoryBytes: memory.availableMemoryBytes,
+        usagePercent,
+        processMemory: process.memoryUsage(),
+        streams: streamManager.getStats(),
+        providers: providerService.getStats(),
+        users: userTracker.getStats(),
+        sourceRegistry: sourceRegistry.getStats()
+      };
+
+      streamManager.handleMemoryPressure({ critical });
+      streamManager.enableLoadShedding({
+        durationMs: config.MEMORY_GUARD_SHED_SECONDS * 1000,
+        reason: critical ? 'critical-memory-pressure' : 'memory-pressure'
+      });
+      providerService.handleMemoryPressure({ critical });
+      imdbResolver.handleMemoryPressure({ critical });
+      userTracker.handleMemoryPressure({ critical });
+      sourceRegistry.handleMemoryPressure({ critical });
+
+      logger.warn('memory guard trimmed runtime caches', {
+        critical,
+        pressurePercent: Number(usagePercent.toFixed(1)),
+        thresholdPercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
+        criticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT,
+        availableMemoryBytes: memory.availableMemoryBytes,
+        processRssBytes: before.processMemory.rss,
+        stremioResultCacheEntries: before.streams.stremioResultCacheEntries,
+        hubCloudCacheEntries: before.streams.hubCloudCacheEntries,
+        providerCacheEntries: before.providers.inMemoryCacheEntries,
+        rawUniqueClients: before.users.rawUniqueClients,
+        sourceRegistryEntries: before.sourceRegistry.entries
+      });
+
+      const restartRequired = usagePercent >= config.MEMORY_GUARD_RESTART_PERCENT
+        || criticalStrikes >= config.MEMORY_GUARD_RESTART_AFTER_CRITICAL
+        || memory.availableMemoryBytes <= config.MEMORY_GUARD_MIN_AVAILABLE_MB * 1024 * 1024;
+
+      if (restartRequired) {
+        logger.error('memory guard restarting process before system lockup', {
+          criticalStrikes,
+          pressurePercent: Number(usagePercent.toFixed(1)),
+          restartPercent: config.MEMORY_GUARD_RESTART_PERCENT,
+          availableMemoryBytes: memory.availableMemoryBytes,
+          minAvailableBytes: config.MEMORY_GUARD_MIN_AVAILABLE_MB * 1024 * 1024,
+          processRssBytes: before.processMemory.rss
+        });
+
+        await Promise.race([
+          userTracker.flush(),
+          sleep(1000)
+        ]).catch((error) => {
+          logger.warn('memory guard analytics flush before restart failed', { error });
+        });
+        process.exit(1);
+      }
+    } catch (error) {
+      logger.warn('memory guard cleanup failed', { error });
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(runCleanup, config.MEMORY_GUARD_INTERVAL_SECONDS * 1000);
+  timer.unref();
+  return timer;
 };
 
 const hasValidAdminSession = (req) => {
@@ -2861,13 +3249,11 @@ const bootstrap = async () => {
     cacheManager,
     sourceRegistry,
     providerService,
-    imdbResolver
+    imdbResolver,
+    userTracker
   });
+  await streamManager.initialize();
 
-  app.use((req, _res, next) => {
-    userTracker.trackRequest(req);
-    next();
-  });
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,OPTIONS');
@@ -2879,6 +3265,11 @@ const bootstrap = async () => {
       return;
     }
 
+    next();
+  });
+  app.use(createBotProtection());
+  app.use((req, _res, next) => {
+    userTracker.trackRequest(req);
     next();
   });
   app.use(express.json({ limit: '32kb' }));
@@ -2926,13 +3317,28 @@ const bootstrap = async () => {
   app.get('/health', async (_req, res, next) => {
     try {
       const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
+      const streamStats = streamManager.getStats();
+      const memory = await getSystemMemorySnapshot();
+      const memoryUsagePercent = memory.totalMemoryBytes > 0
+        ? ((memory.totalMemoryBytes - memory.availableMemoryBytes) / memory.totalMemoryBytes) * 100
+        : 0;
 
       res.json({
         status: 'ok',
         uptimeSeconds: Math.round(process.uptime()),
         activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
-        activeStreams: streamManager.activeStreams,
-        maxActiveStreams: config.MAX_ACTIVE_STREAMS,
+        activeStreams: streamStats.activeStreams,
+        maxActiveStreams: streamStats.maxActiveStreams,
+        streams: streamStats,
+        memory: {
+          totalMemoryBytes: memory.totalMemoryBytes,
+          availableMemoryBytes: memory.availableMemoryBytes,
+          freeMemoryBytes: memory.freeMemoryBytes,
+          usagePercent: memoryUsagePercent,
+          guardEnabled: config.MEMORY_GUARD_ENABLED,
+          guardPressurePercent: config.MEMORY_GUARD_PRESSURE_PERCENT,
+          guardCriticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT
+        },
         users: userTracker.getStats(),
         cache: cacheStats
       });
@@ -2996,12 +3402,21 @@ const bootstrap = async () => {
     try {
       const systemStats = await getSystemStats();
       const cacheStats = await cacheManager.getCacheStats(torrentEngine.getActiveCachePaths());
+      const streamStats = streamManager.getStats();
       const stats = {
         runtime: {
           uptimeSeconds: Math.round(process.uptime()),
           activeTorrentEngines: torrentEngine.getActiveCachePaths().length,
-          activeStreams: streamManager.activeStreams,
-          maxActiveStreams: config.MAX_ACTIVE_STREAMS
+          activeStreams: streamStats.activeStreams,
+          maxActiveStreams: streamStats.maxActiveStreams,
+          streamSearchesInFlight: streamStats.stremioResultInFlight,
+          maxStreamSearchesInFlight: streamStats.maxStremioResultInFlight,
+          stremioResultCacheEntries: streamStats.stremioResultCacheEntries,
+          stremioBackgroundRefreshActive: streamStats.stremioBackgroundRefreshActive,
+          stremioBackgroundRefreshQueued: streamStats.stremioBackgroundRefreshQueued,
+          redisStreamResultCache: streamStats.redisStreamResultCache,
+          hubCloudCacheEntries: streamStats.hubCloudCacheEntries,
+          popularStreamPrewarm: streamStats.popularStreamPrewarm
         },
         system: systemStats,
         users: userTracker.getStats(),
@@ -3089,6 +3504,13 @@ const bootstrap = async () => {
   });
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
+  const memoryGuardTimer = startMemoryGuard({
+    streamManager,
+    providerService,
+    imdbResolver,
+    userTracker,
+    sourceRegistry
+  });
 
   let shuttingDown = false;
   const shutdown = async (signal) => {
@@ -3099,11 +3521,22 @@ const bootstrap = async () => {
     shuttingDown = true;
     logger.info('server shutting down', { signal });
 
-    const forceExitTimer = setTimeout(() => {
-      process.exit(1);
-    }, 10_000);
+    const closeActiveConnectionsTimer = setTimeout(() => {
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections();
+      }
+    }, 5_000);
 
+    const forceExitTimer = setTimeout(() => {
+      process.exit(0);
+    }, 20_000);
+
+    closeActiveConnectionsTimer.unref();
     forceExitTimer.unref();
+
+    if (typeof server.closeIdleConnections === 'function') {
+      server.closeIdleConnections();
+    }
 
     await new Promise((resolve, reject) => {
       server.close((error) => {
@@ -3116,13 +3549,15 @@ const bootstrap = async () => {
       });
     });
 
-    if (typeof server.closeIdleConnections === 'function') {
-      server.closeIdleConnections();
+    if (memoryGuardTimer) {
+      clearInterval(memoryGuardTimer);
     }
 
     await torrentEngine.close();
+    await streamManager.close();
     sourceRegistry.close();
     await userTracker.close();
+    clearTimeout(closeActiveConnectionsTimer);
     clearTimeout(forceExitTimer);
     process.exit(0);
   };

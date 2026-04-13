@@ -2,6 +2,7 @@ import { pipeline } from 'node:stream/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
+import { createClient } from 'redis';
 import { config, cacheConfig } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
@@ -159,6 +160,153 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferSmallerFiles: false,
   preferDirectHosts: false
 });
+
+const copyObjects = (items) => items.map((item) => ({ ...item }));
+
+const normalizeStremioResultCacheEntry = (payload) => {
+  if (!payload || !Array.isArray(payload.streams)) {
+    return null;
+  }
+
+  const expiresAt = Number(payload.expiresAt || 0);
+  const staleExpiresAt = Number(payload.staleExpiresAt || expiresAt);
+
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(staleExpiresAt)) {
+    return null;
+  }
+
+  return {
+    expiresAt,
+    staleExpiresAt,
+    streams: copyObjects(payload.streams)
+  };
+};
+
+class RedisStreamResultCache {
+  constructor() {
+    this.client = null;
+    this.enabled = false;
+    this.available = false;
+    this.failureCount = 0;
+  }
+
+  async initialize() {
+    if (!config.STREAM_RESULT_EXTERNAL_CACHE_ENABLED || !config.REDIS_URL) {
+      return;
+    }
+
+    this.enabled = true;
+    this.client = createClient({
+      url: config.REDIS_URL,
+      socket: {
+        connectTimeout: 3000,
+        reconnectStrategy: (retries) => retries > 3 ? false : Math.min(retries * 100, 1000)
+      }
+    });
+
+    this.client.on('error', (error) => {
+      this.available = false;
+      this.failureCount += 1;
+      logger.warn('redis stream result cache error', { error });
+    });
+
+    this.client.on('ready', () => {
+      this.available = true;
+      logger.info('redis stream result cache connected');
+    });
+
+    try {
+      await this.client.connect();
+      this.available = true;
+    } catch (error) {
+      this.available = false;
+      this.failureCount += 1;
+      logger.warn('redis stream result cache unavailable, using local cache fallback', { error });
+    }
+  }
+
+  getStats() {
+    return {
+      enabled: this.enabled,
+      available: this.available,
+      failureCount: this.failureCount
+    };
+  }
+
+  getKey(cacheKey) {
+    return `${config.REDIS_CACHE_PREFIX}:stremio-result:${createHash('sha1').update(cacheKey).digest('hex')}`;
+  }
+
+  async get(cacheKey) {
+    if (!this.client || !this.available) {
+      return null;
+    }
+
+    try {
+      const rawPayload = await this.client.get(this.getKey(cacheKey));
+
+      if (!rawPayload) {
+        return null;
+      }
+
+      return normalizeStremioResultCacheEntry(JSON.parse(rawPayload));
+    } catch (error) {
+      this.available = false;
+      this.failureCount += 1;
+      logger.warn('redis stream result cache read failed', { error });
+      return null;
+    }
+  }
+
+  async set(cacheKey, entry) {
+    if (!this.client || !this.available) {
+      return;
+    }
+
+    const ttlSeconds = Math.max(1, Math.ceil((entry.staleExpiresAt - Date.now()) / 1000));
+
+    try {
+      await this.client.setEx(this.getKey(cacheKey), ttlSeconds, JSON.stringify(entry));
+    } catch (error) {
+      this.available = false;
+      this.failureCount += 1;
+      logger.warn('redis stream result cache write failed', { error });
+    }
+  }
+
+  async close() {
+    if (!this.client) {
+      return;
+    }
+
+    try {
+      await this.client.quit();
+    } catch (error) {
+      logger.warn('redis stream result cache close failed', { error });
+    }
+  }
+}
+
+const touchMapEntry = (map, key, value) => {
+  map.delete(key);
+  map.set(key, value);
+};
+
+const pruneMapByMaxEntries = (map, maxEntries) => {
+  if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+    return;
+  }
+
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    map.delete(oldestKey);
+  }
+};
 const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
@@ -686,6 +834,92 @@ const isHubCloudUrl = (streamUrl) => {
   }
 };
 
+const getStreamSearchText = (stream) =>
+  `${String(stream.name || '')} ${String(stream.title || '')} ${String(stream.filename || '')}`.toLowerCase();
+
+const getVisualTags = (stream) => {
+  const text = getStreamSearchText(stream);
+  const tags = [];
+
+  if (text.includes('dolby vision') || text.includes('dovi')) {
+    tags.push('DV');
+  }
+
+  if (text.includes('hdr10+')) {
+    tags.push('HDR10+');
+  } else if (text.includes('hdr10')) {
+    tags.push('HDR10');
+  } else if (text.includes('hdr')) {
+    tags.push('HDR');
+  }
+
+  if (text.includes('imax')) {
+    tags.push('IMAX');
+  }
+
+  if (text.includes('remux')) {
+    tags.push('Remux');
+  }
+
+  if (text.includes('web-dl')) {
+    tags.push('WEB-DL');
+  } else if (text.includes('webrip')) {
+    tags.push('WEBRip');
+  } else if (text.includes('bluray') || text.includes('blu-ray')) {
+    tags.push('BluRay');
+  }
+
+  return tags.filter((tag, index, list) => list.indexOf(tag) === index);
+};
+
+const getEncodeTags = (stream) => {
+  const text = getStreamSearchText(stream);
+  const tags = [];
+
+  if (text.includes('hevc') || text.includes('x265') || text.includes('h265')) {
+    tags.push('HEVC');
+  } else if (text.includes('x264') || text.includes('h264')) {
+    tags.push('H.264');
+  }
+
+  if (text.includes('10bit') || text.includes('10-bit')) {
+    tags.push('10-bit');
+  }
+
+  return tags;
+};
+
+const getAudioTags = (stream) => {
+  const text = getStreamSearchText(stream);
+  const tags = [];
+
+  if (text.includes('truehd')) {
+    tags.push('TrueHD');
+  }
+
+  if (text.includes('atmos')) {
+    tags.push('Atmos');
+  }
+
+  if (text.includes('ddp') || text.includes('dd+')) {
+    tags.push('DD+');
+  } else if (/\bdd\b/u.test(text)) {
+    tags.push('DD');
+  }
+
+  if (text.includes('dts-hd')) {
+    tags.push('DTS-HD');
+  } else if (/\bdts\b/u.test(text)) {
+    tags.push('DTS');
+  }
+
+  if (text.includes('aac')) {
+    tags.push('AAC');
+  }
+
+  return tags.filter((tag, index, list) => list.indexOf(tag) === index);
+};
+
 const getCompactTags = (stream) => {
   const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
   const tags = [];
@@ -719,6 +953,53 @@ const getCompactTags = (stream) => {
   }
 
   return tags;
+};
+
+const getTransportLabel = (stream) => {
+  if (stream.transport === 'torrent' || stream.magnet || stream.torrent) {
+    return 'P2P';
+  }
+
+  if (stream.transport === 'http') {
+    return hasForwardHeaders(stream.headers) ? 'WEB PROXY' : 'WEB';
+  }
+
+  return 'EXT';
+};
+
+const truncateCardLine = (value, maxLength = 120) => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
+};
+
+const getStreamFilenameLabel = (stream) => {
+  const filename = truncateCardLine(stream.filename || extractFilenameFromUrl(stream.url) || '');
+
+  if (filename) {
+    return filename;
+  }
+
+  const titleLine = String(stream.title || stream.name || '')
+    .split('\n')
+    .map((line) => truncateCardLine(line))
+    .find(Boolean);
+  return titleLine || null;
+};
+
+const getStreamSizeLabel = (stream) => {
+  const explicitSize = truncateCardLine(stream.size || '');
+
+  if (explicitSize) {
+    return explicitSize;
+  }
+
+  const sizeMatch = `${String(stream.title || '')}\n${String(stream.name || '')}`.match(/\b\d+(?:\.\d+)?\s*(?:tb|gb|mb|kb)\b/iu);
+  return sizeMatch ? sizeMatch[0].replace(/\s+/g, ' ') : null;
 };
 
 const AUDIO_LANGUAGE_PATTERNS = Object.freeze([
@@ -835,19 +1116,22 @@ const getStreamPreferenceScore = (stream, streamOptions) => {
 };
 
 const formatStremioCardTitle = (stream) => {
-  const tags = getCompactTags(stream);
-  const topLine = [
-    `🎬 ${stream.quality || 'Unknown'}`,
-    ...tags
-  ].join(' ✦ ');
-
+  const quality = String(stream.quality || 'Unknown').toUpperCase();
+  const visualTags = getVisualTags(stream);
+  const encodeTags = getEncodeTags(stream);
+  const audioTags = getAudioTags(stream);
+  const filename = getStreamFilenameLabel(stream);
+  const size = getStreamSizeLabel(stream);
   const lines = [
-    topLine,
-    `💾 ${stream.size || 'Unknown size'}`,
+    `${quality} | ${getTransportLabel(stream)}`,
+    visualTags.length > 0 ? `📺 ${visualTags.join(' • ')}` : null,
+    encodeTags.length > 0 ? `🎞️ ${encodeTags.join(' • ')}` : null,
+    audioTags.length > 0 ? `🎧 ${audioTags.join(' • ')}` : null,
+    size ? `📦 ${size}` : null,
     `🌐 ${getLanguageLabel(stream)}`,
-    `🔗 ${getSourceLabel(stream)}`,
-    `${String(stream.quality || 'Unknown').toUpperCase()}`
-  ];
+    `🔍 ${getSourceLabel(stream)}`,
+    filename ? `📁 ${filename}` : null
+  ].filter(Boolean);
 
   return lines.join('\n');
 };
@@ -886,10 +1170,10 @@ const getTorrentSources = (magnet) => {
 };
 
 const toStremioStreamObject = (stream, parsedRequest) => {
+  const streamQuality = stream.quality || 'Unknown';
+  const providerLabel = stream.provider ? toTitleCaseLabel(stream.provider) : 'Default';
   const base = {
-    name: stream.provider
-      ? `NebulaStreams | ${toTitleCaseLabel(stream.provider)}`
-      : 'NebulaStreams',
+    name: `NebulaStreams ${streamQuality} | ${providerLabel}`,
     title: formatStremioCardTitle(stream),
     behaviorHints: {
       bingeGroup: parsedRequest.mediaType === 'series'
@@ -1008,19 +1292,200 @@ export const parseRangeHeader = (rangeHeader, totalSize) => {
 };
 
 export class StreamManager {
-  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService, imdbResolver }) {
+  constructor({ torrentEngine, httpProxy, cacheManager, sourceRegistry, providerService, imdbResolver, userTracker = null }) {
     this.torrentEngine = torrentEngine;
     this.httpProxy = httpProxy;
     this.cacheManager = cacheManager;
     this.sourceRegistry = sourceRegistry;
     this.providerService = providerService;
     this.imdbResolver = imdbResolver;
+    this.userTracker = userTracker;
     this.activeStreams = 0;
     this.stremioResultCache = new Map();
+    this.stremioResultInFlight = new Map();
+    this.stremioBackgroundRefreshes = new Set();
+    this.stremioBackgroundRefreshQueue = [];
+    this.activeStremioBackgroundRefreshes = 0;
     this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
     this.stremioResultCacheDirReady = null;
+    this.redisStreamResultCache = new RedisStreamResultCache();
     this.hubCloudCache = new Map();
     this.hubCloudInFlight = new Map();
+    this.loadSheddingUntil = 0;
+    this.loadSheddingReason = null;
+    this.popularStreamPrewarmTimer = null;
+    this.popularStreamPrewarmInitialTimer = null;
+    this.popularStreamPrewarmRunning = false;
+    this.popularStreamPrewarmLastStartedAt = null;
+    this.popularStreamPrewarmLastFinishedAt = null;
+    this.popularStreamPrewarmLastError = null;
+    this.popularStreamPrewarmLastResultCount = 0;
+  }
+
+  async initialize() {
+    await this.ensureStremioResultCacheDir();
+    await this.redisStreamResultCache.initialize();
+    this.startPopularStreamPrewarm();
+  }
+
+  async close() {
+    if (this.popularStreamPrewarmTimer) {
+      clearInterval(this.popularStreamPrewarmTimer);
+      this.popularStreamPrewarmTimer = null;
+    }
+
+    if (this.popularStreamPrewarmInitialTimer) {
+      clearTimeout(this.popularStreamPrewarmInitialTimer);
+      this.popularStreamPrewarmInitialTimer = null;
+    }
+
+    this.stremioBackgroundRefreshQueue = [];
+    this.stremioBackgroundRefreshes.clear();
+    await this.redisStreamResultCache.close();
+  }
+
+  getStats() {
+    return {
+      activeStreams: this.activeStreams,
+      maxActiveStreams: config.MAX_ACTIVE_STREAMS,
+      stremioResultCacheEntries: this.stremioResultCache.size,
+      stremioResultInFlight: this.stremioResultInFlight.size,
+      maxStremioResultInFlight: config.STREMIO_MAX_INFLIGHT_SEARCHES,
+      stremioBackgroundRefreshActive: this.activeStremioBackgroundRefreshes,
+      stremioBackgroundRefreshQueued: this.stremioBackgroundRefreshQueue.length,
+      stremioBackgroundRefreshTracked: this.stremioBackgroundRefreshes.size,
+      maxStremioBackgroundRefreshQueue: config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX,
+      redisStreamResultCache: this.redisStreamResultCache.getStats(),
+      hubCloudCacheEntries: this.hubCloudCache.size,
+      hubCloudInFlight: this.hubCloudInFlight.size,
+      popularStreamPrewarm: {
+        enabled: Boolean(config.POPULAR_STREAM_PREWARM_ENABLED && this.userTracker),
+        running: this.popularStreamPrewarmRunning,
+        intervalSeconds: config.POPULAR_STREAM_PREWARM_INTERVAL_SECONDS,
+        limit: config.POPULAR_STREAM_PREWARM_LIMIT,
+        lastStartedAt: this.popularStreamPrewarmLastStartedAt,
+        lastFinishedAt: this.popularStreamPrewarmLastFinishedAt,
+        lastError: this.popularStreamPrewarmLastError,
+        lastResultCount: this.popularStreamPrewarmLastResultCount
+      },
+      loadSheddingUntil: this.loadSheddingUntil,
+      loadSheddingReason: this.loadSheddingReason
+    };
+  }
+
+  enableLoadShedding({ durationMs, reason }) {
+    this.loadSheddingUntil = Math.max(this.loadSheddingUntil, Date.now() + durationMs);
+    this.loadSheddingReason = reason || 'memory-pressure';
+  }
+
+  isLoadShedding() {
+    if (this.loadSheddingUntil <= Date.now()) {
+      this.loadSheddingReason = null;
+      return false;
+    }
+
+    return true;
+  }
+
+  handleMemoryPressure({ critical = false } = {}) {
+    if (critical) {
+      this.stremioResultCache.clear();
+      this.hubCloudCache.clear();
+      return;
+    }
+
+    pruneMapByMaxEntries(this.stremioResultCache, Math.max(50, Math.floor(config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES / 4)));
+    pruneMapByMaxEntries(this.hubCloudCache, Math.max(20, Math.floor(config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES / 4)));
+  }
+
+  startPopularStreamPrewarm() {
+    if (!config.POPULAR_STREAM_PREWARM_ENABLED || !this.userTracker || this.popularStreamPrewarmTimer) {
+      return;
+    }
+
+    const runPrewarm = () => {
+      this.prewarmPopularStreams().catch((error) => {
+        this.popularStreamPrewarmLastError = error?.message || String(error);
+        logger.warn('popular stream prewarm failed', { error });
+      });
+    };
+
+    const intervalMs = config.POPULAR_STREAM_PREWARM_INTERVAL_SECONDS * 1000;
+    this.popularStreamPrewarmInitialTimer = setTimeout(runPrewarm, Math.min(60_000, intervalMs));
+    this.popularStreamPrewarmInitialTimer.unref();
+    this.popularStreamPrewarmTimer = setInterval(runPrewarm, intervalMs);
+    this.popularStreamPrewarmTimer.unref();
+  }
+
+  async prewarmPopularStreams() {
+    if (this.popularStreamPrewarmRunning || this.isLoadShedding()) {
+      return;
+    }
+
+    const popularSearches = this.userTracker.getPopularStreamSearches({
+      limit: config.POPULAR_STREAM_PREWARM_LIMIT,
+      maxAgeHours: config.POPULAR_STREAM_PREWARM_MAX_AGE_HOURS
+    });
+
+    if (popularSearches.length === 0) {
+      return;
+    }
+
+    this.popularStreamPrewarmRunning = true;
+    this.popularStreamPrewarmLastStartedAt = new Date().toISOString();
+    this.popularStreamPrewarmLastError = null;
+    let refreshedCount = 0;
+
+    try {
+      for (const search of popularSearches) {
+        if (this.isLoadShedding()) {
+          break;
+        }
+
+        const resultCacheKey = this.buildStremioResultCacheKey({
+          tmdbId: search.tmdbId,
+          mediaType: search.mediaType,
+          season: search.season,
+          episode: search.episode,
+          providers: search.providers,
+          qualityPriority: search.qualityPriority,
+          streamOptions: search.streamOptions
+        });
+        const cachedResult = await this.getCachedStremioStreams(resultCacheKey);
+
+        if (cachedResult?.state === 'fresh') {
+          continue;
+        }
+
+        await this.getOrBuildStremioStreams({
+          resultCacheKey,
+          baseUrl: config.PUBLIC_BASE_URL,
+          parsed: {
+            imdbId: search.imdbId || String(search.tmdbId),
+            mediaType: search.mediaType,
+            season: search.season,
+            episode: search.episode
+          },
+          requestedProviders: search.providers,
+          qualityPriority: search.qualityPriority,
+          streamOptions: search.streamOptions,
+          tmdbId: search.tmdbId
+        });
+        refreshedCount += 1;
+      }
+
+      this.popularStreamPrewarmLastResultCount = refreshedCount;
+      this.popularStreamPrewarmLastFinishedAt = new Date().toISOString();
+      logger.info('popular stream prewarm finished', {
+        checkedCount: popularSearches.length,
+        refreshedCount
+      });
+    } catch (error) {
+      this.popularStreamPrewarmLastError = error?.message || String(error);
+      throw error;
+    } finally {
+      this.popularStreamPrewarmRunning = false;
+    }
   }
 
   async ensureStremioResultCacheDir() {
@@ -1033,7 +1498,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
     return JSON.stringify({
-      version: 1,
+      version: 6,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -1049,33 +1514,76 @@ export class StreamManager {
     return path.join(this.stremioResultCacheDir, fileName);
   }
 
-  async getCachedStremioStreams(cacheKey) {
-    const cached = this.stremioResultCache.get(cacheKey);
-
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.streams.map((stream) => ({ ...stream }));
+  toCacheLookupResult(cacheKey, entry) {
+    if (!entry) {
+      return null;
     }
 
-    if (cached) {
-      this.stremioResultCache.delete(cacheKey);
+    const now = Date.now();
+
+    if (entry.expiresAt > now) {
+      touchMapEntry(this.stremioResultCache, cacheKey, entry);
+      return {
+        state: 'fresh',
+        streams: copyObjects(entry.streams),
+        expiresAt: entry.expiresAt,
+        staleExpiresAt: entry.staleExpiresAt
+      };
+    }
+
+    if (entry.staleExpiresAt > now) {
+      touchMapEntry(this.stremioResultCache, cacheKey, entry);
+      return {
+        state: 'stale',
+        streams: copyObjects(entry.streams),
+        expiresAt: entry.expiresAt,
+        staleExpiresAt: entry.staleExpiresAt
+      };
+    }
+
+    this.stremioResultCache.delete(cacheKey);
+    return null;
+  }
+
+  async getCachedStremioStreams(cacheKey, { allowStale = false } = {}) {
+    const cached = this.stremioResultCache.get(cacheKey);
+    const cachedResult = this.toCacheLookupResult(cacheKey, cached);
+
+    if (cachedResult && (cachedResult.state === 'fresh' || allowStale)) {
+      return cachedResult;
+    }
+
+    const redisEntry = await this.redisStreamResultCache.get(cacheKey);
+    const redisResult = this.toCacheLookupResult(cacheKey, redisEntry);
+
+    if (redisResult && (redisResult.state === 'fresh' || allowStale)) {
+      logger.info('stremio result redis cache hit', {
+        state: redisResult.state,
+        resultCount: redisResult.streams.length
+      });
+      return redisResult;
     }
 
     await this.ensureStremioResultCacheDir();
 
     try {
       const payload = JSON.parse(await readFile(this.getStremioResultCachePath(cacheKey), 'utf8'));
+      const entry = normalizeStremioResultCacheEntry(payload);
+      const diskResult = this.toCacheLookupResult(cacheKey, entry);
 
-      if (!payload || payload.expiresAt <= Date.now() || !Array.isArray(payload.streams)) {
+      if (!diskResult) {
         await rm(this.getStremioResultCachePath(cacheKey), { force: true });
         return null;
       }
 
-      this.stremioResultCache.set(cacheKey, {
-        expiresAt: payload.expiresAt,
-        streams: payload.streams.map((stream) => ({ ...stream }))
-      });
+      touchMapEntry(this.stremioResultCache, cacheKey, entry);
+      pruneMapByMaxEntries(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES);
 
-      return payload.streams.map((stream) => ({ ...stream }));
+      if (diskResult.state === 'fresh' || allowStale) {
+        return diskResult;
+      }
+
+      return null;
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         logger.warn('stremio result cache read failed', {
@@ -1088,12 +1596,26 @@ export class StreamManager {
   }
 
   async setCachedStremioStreams(cacheKey, streams) {
+    const now = Date.now();
+    const freshTtlSeconds = streams.length === 0
+      ? config.STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
+      : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
+    const freshTtlMs = freshTtlSeconds * 1000;
+    const staleTtlMs = streams.length === 0
+      ? freshTtlMs
+      : Math.max(
+        freshTtlMs,
+        config.STREMIO_RESULT_STALE_TTL_SECONDS * 1000
+      );
     const entry = {
-      expiresAt: Date.now() + (config.STREMIO_RESULT_CACHE_TTL_SECONDS * 1000),
-      streams: streams.map((stream) => ({ ...stream }))
+      expiresAt: now + freshTtlMs,
+      staleExpiresAt: now + staleTtlMs,
+      streams: copyObjects(streams)
     };
 
-    this.stremioResultCache.set(cacheKey, entry);
+    touchMapEntry(this.stremioResultCache, cacheKey, entry);
+    pruneMapByMaxEntries(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES);
+    await this.redisStreamResultCache.set(cacheKey, entry);
     await this.ensureStremioResultCacheDir();
 
     try {
@@ -1325,48 +1847,45 @@ export class StreamManager {
         qualityPriority,
         streamOptions
       });
-      const cachedStreams = await this.getCachedStremioStreams(resultCacheKey);
+      this.userTracker?.trackStreamSearch(req, {
+        imdbId: parsed.imdbId,
+        tmdbId,
+        mediaType: parsed.mediaType,
+        season: parsed.season,
+        episode: parsed.episode,
+        providers: requestedProviders,
+        qualityPriority,
+        streamOptions
+      });
+      const cachedResult = await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
 
-      if (cachedStreams) {
+      if (cachedResult?.state === 'fresh') {
         res.json({
-          streams: cachedStreams
+          streams: cachedResult.streams
         });
         return;
       }
 
-      const result = await this.providerService.getFastStreams({
-        providers: requestedProviders.length > 0 ? requestedProviders : null,
-        tmdbId,
-        mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
-        season: parsed.season,
-        episode: parsed.episode
-      });
+      const buildInput = {
+        resultCacheKey,
+        baseUrl,
+        parsed,
+        requestedProviders,
+        qualityPriority,
+        streamOptions,
+        tmdbId
+      };
 
-      if (result.streams.length === 0) {
-        await this.setCachedStremioStreams(resultCacheKey, []);
-        res.json({ streams: [] });
+      if (cachedResult?.state === 'stale') {
+        this.scheduleStremioBackgroundRefresh(buildInput);
+        res.setHeader('X-NebulaStreams-Cache', 'stale');
+        res.json({
+          streams: cachedResult.streams
+        });
         return;
       }
 
-      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
-      const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
-
-      if (configuredStreams.length === 0) {
-        await this.setCachedStremioStreams(resultCacheKey, []);
-        res.json({ streams: [] });
-        return;
-      }
-
-      configuredStreams.sort((left, right) =>
-        (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
-        (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
-      );
-      const dedupedStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
-      const stremioStreams = dedupedStreams
-        .map((stream) => toStremioStreamObject(stream, parsed))
-        .filter(Boolean);
-
-      await this.setCachedStremioStreams(resultCacheKey, stremioStreams);
+      const stremioStreams = await this.getOrBuildStremioStreams(buildInput);
 
       res.json({
         streams: stremioStreams
@@ -1374,6 +1893,155 @@ export class StreamManager {
     } catch (error) {
       next(error);
     }
+  }
+
+  scheduleStremioBackgroundRefresh(input) {
+    if (config.STREMIO_BACKGROUND_REFRESH_CONCURRENCY <= 0 || config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX <= 0) {
+      return;
+    }
+
+    if (this.stremioBackgroundRefreshes.has(input.resultCacheKey) || this.stremioResultInFlight.has(input.resultCacheKey)) {
+      return;
+    }
+
+    const trackedCount = this.stremioBackgroundRefreshes.size;
+
+    if (trackedCount >= config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX) {
+      logger.warn('stremio background refresh skipped because queue is full', {
+        queueSize: this.stremioBackgroundRefreshQueue.length,
+        activeRefreshes: this.activeStremioBackgroundRefreshes,
+        maxQueue: config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX,
+        tmdbId: input.tmdbId,
+        mediaType: input.parsed?.mediaType
+      });
+      return;
+    }
+
+    this.stremioBackgroundRefreshes.add(input.resultCacheKey);
+    this.stremioBackgroundRefreshQueue.push(input);
+    this.runStremioBackgroundRefreshQueue();
+  }
+
+  runStremioBackgroundRefreshQueue() {
+    while (
+      this.activeStremioBackgroundRefreshes < config.STREMIO_BACKGROUND_REFRESH_CONCURRENCY &&
+      this.stremioBackgroundRefreshQueue.length > 0
+    ) {
+      const input = this.stremioBackgroundRefreshQueue.shift();
+      this.activeStremioBackgroundRefreshes += 1;
+
+      this.getOrBuildStremioStreams(input)
+        .catch((error) => {
+          logger.warn('stremio background refresh failed', {
+            error,
+            tmdbId: input.tmdbId,
+            mediaType: input.parsed?.mediaType
+          });
+        })
+        .finally(() => {
+          this.activeStremioBackgroundRefreshes -= 1;
+          this.stremioBackgroundRefreshes.delete(input.resultCacheKey);
+          this.runStremioBackgroundRefreshQueue();
+        });
+    }
+  }
+
+  async getOrBuildStremioStreams({
+    resultCacheKey,
+    baseUrl,
+    parsed,
+    requestedProviders,
+    qualityPriority,
+    streamOptions,
+    tmdbId
+  }) {
+    const existingRequest = this.stremioResultInFlight.get(resultCacheKey);
+
+    if (existingRequest) {
+      return existingRequest.then((streams) => copyObjects(streams));
+    }
+
+    if (this.isLoadShedding()) {
+      logger.warn('stremio stream search rejected due to load shedding', {
+        loadSheddingUntil: new Date(this.loadSheddingUntil).toISOString(),
+        reason: this.loadSheddingReason,
+        tmdbId,
+        mediaType: parsed.mediaType
+      });
+      throw createHttpError(503, 'Server is recovering from high load');
+    }
+
+    if (this.stremioResultInFlight.size >= config.STREMIO_MAX_INFLIGHT_SEARCHES) {
+      logger.warn('stremio stream search rejected due to in-flight limit', {
+        inFlightSearches: this.stremioResultInFlight.size,
+        maxInFlightSearches: config.STREMIO_MAX_INFLIGHT_SEARCHES,
+        tmdbId,
+        mediaType: parsed.mediaType
+      });
+      throw createHttpError(503, 'Server is busy preparing streams');
+    }
+
+    const request = this.buildStremioStreams({
+      resultCacheKey,
+      baseUrl,
+      parsed,
+      requestedProviders,
+      qualityPriority,
+      streamOptions,
+      tmdbId
+    });
+
+    this.stremioResultInFlight.set(resultCacheKey, request);
+
+    try {
+      const streams = await request;
+      return copyObjects(streams);
+    } finally {
+      this.stremioResultInFlight.delete(resultCacheKey);
+    }
+  }
+
+  async buildStremioStreams({
+    resultCacheKey,
+    baseUrl,
+    parsed,
+    requestedProviders,
+    qualityPriority,
+    streamOptions,
+    tmdbId
+  }) {
+    const result = await this.providerService.getFastStreams({
+      providers: requestedProviders.length > 0 ? requestedProviders : null,
+      tmdbId,
+      mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
+      season: parsed.season,
+      episode: parsed.episode
+    });
+
+    if (result.streams.length === 0) {
+      await this.setCachedStremioStreams(resultCacheKey, []);
+      return [];
+    }
+
+    const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+    const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
+
+    if (configuredStreams.length === 0) {
+      await this.setCachedStremioStreams(resultCacheKey, []);
+      return [];
+    }
+
+    configuredStreams.sort((left, right) =>
+      (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+      (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+    );
+    const dedupedStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
+    const stremioStreams = dedupedStreams
+      .map((stream) => toStremioStreamObject(stream, parsed))
+      .filter(Boolean);
+
+    await this.setCachedStremioStreams(resultCacheKey, stremioStreams);
+    return stremioStreams;
   }
 
   async handleTorrentStream(req, res, next) {
@@ -1773,6 +2441,7 @@ export class StreamManager {
     const cached = this.hubCloudCache.get(normalizedUrl);
 
     if (cached && cached.expiresAt > Date.now()) {
+      touchMapEntry(this.hubCloudCache, normalizedUrl, cached);
       return Array.isArray(cached.value) ? cached.value.map((entry) => ({ ...entry })) : [];
     }
 
@@ -1792,7 +2461,8 @@ export class StreamManager {
           || initialHtml.match(/id=["']download["'][^>]*href=["']([^"']+)["']/i);
 
         if (!redirectMatch?.[1]) {
-          this.hubCloudCache.set(normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          touchMapEntry(this.hubCloudCache, normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
           return [];
         }
 
@@ -1815,7 +2485,8 @@ export class StreamManager {
           .sort((left, right) => right.score - left.score);
 
         if (candidates.length === 0) {
-          this.hubCloudCache.set(normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          touchMapEntry(this.hubCloudCache, normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
           return [];
         }
 
@@ -1871,10 +2542,11 @@ export class StreamManager {
           });
         }
 
-        this.hubCloudCache.set(normalizedUrl, {
+        touchMapEntry(this.hubCloudCache, normalizedUrl, {
           expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
           value: deduped
         });
+        pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
 
         return deduped.map((entry) => ({ ...entry }));
       } catch (error) {
@@ -1882,10 +2554,11 @@ export class StreamManager {
           streamUrl: normalizedUrl,
           error
         });
-        this.hubCloudCache.set(normalizedUrl, {
+        touchMapEntry(this.hubCloudCache, normalizedUrl, {
           expiresAt: Date.now() + (10 * 60 * 1000),
           value: []
         });
+        pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
         return [];
       }
     })();

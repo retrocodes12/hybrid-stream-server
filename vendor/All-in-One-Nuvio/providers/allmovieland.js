@@ -130,11 +130,13 @@ function findBestTitleMatch(mediaInfo, searchResults) {
     if (mediaInfo.year && result.year) {
       const yearDiff = Math.abs(mediaInfo.year - result.year);
       if (yearDiff === 0)
-        score += 0.2;
+        score += 0.4;
       else if (yearDiff <= 1)
-        score += 0.1;
-      else if (yearDiff > 5)
-        score -= 0.3;
+        score += 0.15;
+      else {
+        console.log(`[AllMovieLand] Skipping year mismatch: "${result.title}" (${result.year}) vs ${mediaInfo.year}`);
+        continue;
+      }
     }
     if (score > bestScore && score > 0.3) {
       bestScore = score;
@@ -151,7 +153,7 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
     try {
       const mediaInfo = yield getTMDBDetails(tmdbId, mediaType);
       console.log(`[AllMovieLand] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
-      const query = mediaInfo.title;
+      const query = mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : mediaInfo.title;
       const searchUrl = `${MAIN_URL}/index.php?story=${encodeURIComponent(query)}&do=search&subaction=search`;
       const res = yield fetch(searchUrl, { headers: HEADERS });
       const html = yield res.text();

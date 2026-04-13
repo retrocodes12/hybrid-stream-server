@@ -229,11 +229,13 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     if (mediaInfo.year && result.year) {
       const yearDiff = Math.abs(mediaInfo.year - result.year);
       if (yearDiff === 0)
-        score += 0.2;
+        score += 0.4;
       else if (yearDiff <= 1)
-        score += 0.1;
-      else if (yearDiff > 5)
-        score -= 0.3;
+        score += 0.15;
+      else {
+        console.log(`[HDHub4u] Skipping year mismatch: "${result.title}" (${result.year}) vs ${mediaInfo.year}`);
+        continue;
+      }
     }
     if (mediaType === "tv" && season) {
       const titleLower = result.title.toLowerCase();
@@ -723,12 +725,16 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
     try {
       const mediaInfo = yield getTMDBDetails(tmdbId, mediaType);
       console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
-      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
+      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : mediaInfo.title;
       const searchResults = yield search(searchQuery);
       if (searchResults.length === 0)
         return [];
       const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
-      const selectedMedia = bestMatch || searchResults[0];
+      if (!bestMatch) {
+        console.log(`[HDHub4u] No safe title/year match found for "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
+        return [];
+      }
+      const selectedMedia = bestMatch;
       console.log(`[HDHub4u] Selected: "${selectedMedia.title}" (${selectedMedia.url})`);
       const result = yield getDownloadLinks(selectedMedia.url);
       const finalLinks = result.finalLinks;
