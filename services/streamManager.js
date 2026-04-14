@@ -754,6 +754,30 @@ const getProviderPriorityScore = (stream, providerOrder) => {
   return (providerOrder.length - index) * 1500;
 };
 
+const diversifyStreamsByProvider = (streams, { leadingCount = 5, softLimit = 6 } = {}) => {
+  if (!Array.isArray(streams) || streams.length <= leadingCount) {
+    return streams;
+  }
+
+  const output = [];
+  const deferred = [];
+  const providerCounts = new Map();
+
+  for (const stream of streams) {
+    const providerId = String(stream.provider || 'default').trim().toLowerCase();
+    const currentCount = providerCounts.get(providerId) || 0;
+
+    if (output.length < leadingCount || currentCount < softLimit) {
+      output.push(stream);
+      providerCounts.set(providerId, currentCount + 1);
+    } else {
+      deferred.push(stream);
+    }
+  }
+
+  return output.concat(deferred);
+};
+
 const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -1592,7 +1616,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
     return JSON.stringify({
-      version: 20,
+      version: 21,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2188,7 +2212,9 @@ export class StreamManager {
       (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
       (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
     );
-    const dedupedStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
+    const dedupedStreams = diversifyStreamsByProvider(
+      applyConfiguredDedupe(configuredStreams, streamOptions).streams
+    );
     const useWeakCache = shouldUseWeakResultCache(dedupedStreams);
     const stremioStreams = dedupedStreams
       .map((stream) => toStremioStreamObject(stream, parsed))

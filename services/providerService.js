@@ -123,6 +123,7 @@ const PROVIDER_PRIORITY = [
 ];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
+const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy']);
 const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
@@ -755,6 +756,12 @@ export class ProviderService {
 
     if (!hasExplicitProviders && rest.streamOptions?.webReadyOnly) {
       for (const providerId of WEB_READY_FALLBACK_PROVIDERS) {
+        if (baseProviders.includes(providerId) && !normalizedProviders.includes(providerId)) {
+          normalizedProviders.push(providerId);
+        }
+      }
+    } else if (!hasExplicitProviders) {
+      for (const providerId of DEFAULT_DIVERSITY_FALLBACK_PROVIDERS) {
         if (baseProviders.includes(providerId) && !normalizedProviders.includes(providerId)) {
           normalizedProviders.push(providerId);
         }
