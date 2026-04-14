@@ -70,11 +70,25 @@ function getSyncInfo(id, mediaType, season, episode) {
             .then(function(data) {
                 var meta = data.meta;
                 if (!meta) throw new Error('No Cinemata metadata');
-                if (mediaType === 'movie') return { date: meta.released ? meta.released.split('T')[0] : null, title: meta.name, dayIndex: 1 };
+                if (mediaType === 'movie') {
+                    return {
+                        date: meta.released ? meta.released.split('T')[0] : null,
+                        title: meta.name,
+                        episodeTitle: null,
+                        dayIndex: 1
+                    };
+                }
                 
                 var videos = meta.videos || [];
                 var target = videos.find(function(v) { return v.season == season && v.episode == episode; });
-                if (!target || !target.released) return { date: null, title: null, dayIndex: 1 };
+                if (!target || !target.released) {
+                    return {
+                        date: null,
+                        title: meta.name || null,
+                        episodeTitle: null,
+                        dayIndex: 1
+                    };
+                }
 
                 var targetDate = target.released.split('T')[0];
                 var targetTitle = target.name || null;
@@ -90,7 +104,12 @@ function getSyncInfo(id, mediaType, season, episode) {
                     }
                 }
 
-                return { date: targetDate, title: targetTitle, dayIndex: dayIndex };
+                return {
+                    date: targetDate,
+                    title: meta.name || null,
+                    episodeTitle: targetTitle,
+                    dayIndex: dayIndex
+                };
             }).catch(function() { return { date: null, title: null, dayIndex: 1 }; });
     };
 
@@ -102,7 +121,16 @@ function getSyncInfo(id, mediaType, season, episode) {
 
     if (isImdb) {
         return getCinemetaInfo(id).then(function(info) {
-            if (info.date) return { imdbId: id, releaseDate: info.date, episodeTitle: info.title, dayIndex: info.dayIndex, episode: episode };
+            if (info.date) {
+                return {
+                    imdbId: id,
+                    releaseDate: info.date,
+                    title: info.title,
+                    episodeTitle: info.episodeTitle,
+                    dayIndex: info.dayIndex,
+                    episode: episode
+                };
+            }
             throw new Error('Could not find release date on Cinemata');
         });
     } else {
@@ -154,6 +182,10 @@ function getSyncInfo(id, mediaType, season, episode) {
 
 function resolveByDate(releaseDateStr, rid, showTitle, season, episodeTitle, dayIndex, originalEpisode) {
     if (!releaseDateStr || !/^\d{4}-\d{2}-\d{2}/.test(releaseDateStr)) {
+        return Promise.resolve(null);
+    }
+    if (!showTitle) {
+        logRid(rid, 'ArmSync: missing show title, refusing date-only AniList match');
         return Promise.resolve(null);
     }
 
