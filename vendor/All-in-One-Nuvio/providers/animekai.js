@@ -12,7 +12,7 @@ const HEADERS = {
 
 const API = 'https://enc-dec.app/api';
 const DB_API = 'https://enc-dec.app/db/kai';
-const KAI_AJAX = 'https://animekai.to/ajax';
+const KAI_AJAX = 'https://anikai.to/ajax';
 const ARM_BASE = 'https://arm.haglund.dev/api/v2';
 
 // Debug helpers
@@ -34,12 +34,27 @@ function logRid(rid, msg, extra) {
 // Generic fetch helper
 function fetchRequest(url, options) {
     var merged = Object.assign({ method: 'GET', headers: HEADERS }, options || {});
-    return fetch(url, merged).then(function (response) {
-        if (!response.ok) {
-            throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-        }
-        return response;
-    });
+    var attempts = 0;
+
+    function attempt() {
+        attempts++;
+        return fetch(url, merged).then(function (response) {
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+            }
+            return response;
+        }).catch(function (error) {
+            var isAbort = error && (error.name === 'AbortError' || error.name === 'TimeoutError');
+            if (isAbort || attempts >= 3) {
+                throw error;
+            }
+            return new Promise(function (resolve) {
+                setTimeout(resolve, attempts * 300);
+            }).then(attempt);
+        });
+    }
+
+    return attempt();
 }
 
 // Resolve metadata via AniList Search for perfect matching

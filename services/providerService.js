@@ -59,13 +59,14 @@ const LOCAL_PROVIDERS = Object.freeze({
     invocation: 'subprocess'
   }
 });
-const PROVIDER_CACHE_VERSION = '14';
+const PROVIDER_CACHE_VERSION = '16';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
 const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
 const PRIORITY_COOLDOWN_HOSTS = new Set(['4khdhub', 'hdhub4u']);
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   hdhub4u: 25,
+  animekai: 25,
   'latino-lamovie': 25,
   'latino-cinecalidad': 25,
   'latino-embed69': 20,
