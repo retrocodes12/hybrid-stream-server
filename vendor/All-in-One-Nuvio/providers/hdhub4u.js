@@ -198,6 +198,24 @@ function normalizeTitle(title) {
     return "";
   return title.toLowerCase().replace(/\b(the|a|an)\b/g, "").replace(/[:\-_]/g, " ").replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim();
 }
+function getTitleCandidates(mediaInfo) {
+  const seen = /* @__PURE__ */ new Set();
+  const values = [mediaInfo.title, mediaInfo.originalTitle, ...(mediaInfo.alternativeTitles || [])];
+  const candidates = [];
+  for (const value of values) {
+    const candidate = String(value || "").replace(/\s+/g, " ").trim();
+    if (!candidate || candidate.length < 4)
+      continue;
+    if (!/^[\x20-\x7E]+$/.test(candidate))
+      continue;
+    const key = candidate.toLowerCase();
+    if (seen.has(key))
+      continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return candidates.length ? candidates : [mediaInfo.title];
+}
 function calculateTitleSimilarity(title1, title2) {
   const norm1 = normalizeTitle(title1);
   const norm2 = normalizeTitle(title2);
@@ -224,8 +242,11 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     return null;
   let bestMatch = null;
   let bestScore = 0;
+  const titleCandidates = getTitleCandidates(mediaInfo);
   for (const result of searchResults) {
-    let score = calculateTitleSimilarity(mediaInfo.title, result.title);
+    let score = titleCandidates.reduce((maxScore, titleCandidate) => {
+      return Math.max(maxScore, calculateTitleSimilarity(titleCandidate, result.title));
+    }, 0);
     if (mediaInfo.year && result.year) {
       const yearDiff = Math.abs(mediaInfo.year - result.year);
       if (yearDiff === 0)
@@ -274,7 +295,7 @@ function getTMDBDetails(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
     const endpoint = mediaType === "tv" ? "tv" : "movie";
-    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
+    const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,alternative_titles`;
     const response = yield fetch(url, {
       method: "GET",
       headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
@@ -283,9 +304,14 @@ function getTMDBDetails(tmdbId, mediaType) {
       throw new Error(`TMDB API error: ${response.status}`);
     const data = yield response.json();
     const title = mediaType === "tv" ? data.name : data.title;
+    const originalTitle = mediaType === "tv" ? data.original_name : data.original_title;
     const releaseDate = mediaType === "tv" ? data.first_air_date : data.release_date;
     const year = releaseDate ? parseInt(releaseDate.split("-")[0]) : null;
-    return { title, year, imdbId: ((_a = data.external_ids) == null ? void 0 : _a.imdb_id) || null };
+    const alternativeTitles = (((_a = data.alternative_titles) == null ? void 0 : _a.titles) || []).slice().sort((left, right) => {
+      const score = (entry) => (entry == null ? void 0 : entry.iso_3166_1) === "IN" ? 0 : (entry == null ? void 0 : entry.iso_3166_1) === "US" ? 1 : 2;
+      return score(left) - score(right);
+    }).map((entry) => entry == null ? void 0 : entry.title).filter(Boolean);
+    return { title, originalTitle, alternativeTitles, year, imdbId: ((_a = data.external_ids) == null ? void 0 : _a.imdb_id) || null };
   });
 }
 
@@ -610,10 +636,44 @@ function search(query) {
     });
   });
 }
+function searchMediaCandidates(mediaInfo, mediaType, season) {
+  return __async(this, null, function* () {
+    const seenUrls = /* @__PURE__ */ new Set();
+    const mergedResults = [];
+    const titleCandidates = getTitleCandidates(mediaInfo).slice(0, 6);
+    for (const titleCandidate of titleCandidates) {
+      const searchQuery = mediaType === "tv" && season ? `${titleCandidate} Season ${season}` : titleCandidate;
+      if (titleCandidate !== mediaInfo.title) {
+        console.log(`[HDHub4u] Trying alternate title search: "${searchQuery}"`);
+      }
+      const results = yield search(searchQuery);
+      for (const result of results) {
+        const key = result.url || result.title;
+        if (!key || seenUrls.has(key))
+          continue;
+        seenUrls.add(key);
+        mergedResults.push(result);
+      }
+    }
+    return mergedResults;
+  });
+}
+function normalizeMediaUrlToDomain(mediaUrl, domain) {
+  try {
+    const currentDomain = new URL(domain);
+    const parsedUrl = new URL(mediaUrl);
+    parsedUrl.protocol = currentDomain.protocol;
+    parsedUrl.host = currentDomain.host;
+    return parsedUrl.toString();
+  } catch (e) {
+    return mediaUrl;
+  }
+}
 function getDownloadLinks(mediaUrl) {
   return __async(this, null, function* () {
     const domain = yield getCurrentDomain();
-    const response = yield fetch(mediaUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }) });
+    const currentMediaUrl = normalizeMediaUrlToDomain(mediaUrl, domain);
+    const response = yield fetch(currentMediaUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }) });
     const data = yield response.text();
     const $ = import_cheerio_without_node_native2.default.load(data);
     const typeRaw = $("h1.page-title span").text();
@@ -725,16 +785,14 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
     try {
       const mediaInfo = yield getTMDBDetails(tmdbId, mediaType);
       console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
-      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : mediaInfo.title;
-      const searchResults = yield search(searchQuery);
+      const searchResults = yield searchMediaCandidates(mediaInfo, mediaType, season);
       if (searchResults.length === 0)
         return [];
       const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
+      const selectedMedia = bestMatch || searchResults[0];
       if (!bestMatch) {
-        console.log(`[HDHub4u] No safe title/year match found for "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
-        return [];
+        console.log(`[HDHub4u] No safe title/year match found for "${mediaInfo.title}" (${mediaInfo.year || "N/A"}), falling back to first result: "${selectedMedia.title}"`);
       }
-      const selectedMedia = bestMatch;
       console.log(`[HDHub4u] Selected: "${selectedMedia.title}" (${selectedMedia.url})`);
       const result = yield getDownloadLinks(selectedMedia.url);
       const finalLinks = result.finalLinks;

@@ -124,18 +124,51 @@ function getTmdbDetails(tmdbId, type) {
   if (hit) return Promise.resolve(hit);
 
   var isTv = (type === 'tv' || type === 'series');
-  var url  = 'https://api.themoviedb.org/3/' + (isTv ? 'tv' : 'movie') + '/' + tmdbId + '?api_key=' + TMDB_API_KEY;
+  var url  = 'https://api.themoviedb.org/3/' + (isTv ? 'tv' : 'movie') + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=alternative_titles';
   console.log(PLUGIN_TAG + ' TMDB → ' + url);
 
   return fetchJson(url).then(function (d) {
     if (!d) return null;
     var title   = isTv ? d.name  : d.title;
+    var originalTitle = isTv ? d.original_name : d.original_title;
     var dateStr = isTv ? d.first_air_date : d.release_date;
     var year    = dateStr ? parseInt(dateStr.slice(0, 4)) : 0;
-    var result  = { title: title || null, year: year, isTv: isTv };
+    var alternativeTitles = [];
+    if (d.alternative_titles && Array.isArray(d.alternative_titles.titles)) {
+      alternativeTitles = d.alternative_titles.titles.slice().sort(function (left, right) {
+        function score(entry) { return entry && entry.iso_3166_1 === 'IN' ? 0 : entry && entry.iso_3166_1 === 'US' ? 1 : 2; }
+        return score(left) - score(right);
+      }).map(function (entry) { return entry && entry.title; }).filter(Boolean);
+    }
+    var result  = { title: title || null, originalTitle: originalTitle || null, alternativeTitles: alternativeTitles, year: year, isTv: isTv };
     if (title) metaCache.set(cacheKey, result);
     return result;
   });
+}
+
+function normaliseTitleCandidate(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getTitleCandidates(details) {
+  var seen = {};
+  var candidates = [];
+  var values = [details.title, details.originalTitle].concat(details.alternativeTitles || []);
+
+  values.forEach(function (value) {
+    var candidate = normaliseTitleCandidate(value);
+    if (!candidate || candidate.length < 4) return;
+    if (!/^[\x20-\x7E]+$/.test(candidate)) return;
+
+    var key = candidate.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    candidates.push(candidate);
+  });
+
+  return candidates.length ? candidates : [details.title];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -625,6 +658,28 @@ function findPageUrl(title, year, isSeries) {
   });
 }
 
+function findFirstPageUrl(titleCandidates, year, isSeries) {
+  var index = 0;
+
+  function next() {
+    if (index >= titleCandidates.length) return Promise.resolve(null);
+
+    var candidate = titleCandidates[index++];
+    if (!candidate) return next();
+
+    if (index > 1) {
+      console.log(PLUGIN_TAG + ' Trying alternate title: "' + candidate + '"');
+    }
+
+    return findPageUrl(candidate, year, isSeries).then(function (url) {
+      if (url) return { url: url, title: candidate };
+      return next();
+    });
+  }
+
+  return next();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Detail Page Scraper
 // ─────────────────────────────────────────────────────────────────────────────
@@ -745,8 +800,12 @@ function getStreams(tmdbId, type, season, episode) {
     var year  = details.year;
     console.log(PLUGIN_TAG + ' Title: "' + title + '" (' + year + ')');
 
-    return findPageUrl(title, year, isSeries).then(function (pageUrl) {
+    return findFirstPageUrl(getTitleCandidates(details), year, isSeries).then(function (pageMatch) {
+      var pageUrl = pageMatch && pageMatch.url;
       if (!pageUrl) { console.log(PLUGIN_TAG + ' Page not found'); return []; }
+      if (pageMatch.title && pageMatch.title !== title) {
+        console.log(PLUGIN_TAG + ' Matched alternate title: "' + pageMatch.title + '"');
+      }
       console.log(PLUGIN_TAG + ' Page → ' + pageUrl);
 
       return scrapeDetailPage(pageUrl, isSeries, s, e).then(function (result) {

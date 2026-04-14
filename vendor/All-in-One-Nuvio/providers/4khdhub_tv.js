@@ -89,7 +89,7 @@ function getTmdbDetails(tmdbId, type) {
   return __async(this, null, function* () {
     const isSeries = type === "series" || type === "tv";
     const endpoint = isSeries ? "tv" : "movie";
-    const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+    const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=alternative_titles`;
     console.log(`[4KHDHub] Fetching TMDB details from: ${url}`);
     try {
       const response = yield fetch(url);
@@ -97,11 +97,21 @@ function getTmdbDetails(tmdbId, type) {
       if (isSeries) {
         return {
           title: data.name,
+          originalTitle: data.original_name || null,
+          alternativeTitles: (data.alternative_titles && Array.isArray(data.alternative_titles.titles) ? data.alternative_titles.titles.slice().sort((left, right) => {
+            const score = (entry) => entry && entry.iso_3166_1 === "IN" ? 0 : entry && entry.iso_3166_1 === "US" ? 1 : 2;
+            return score(left) - score(right);
+          }).map((entry) => entry && entry.title).filter(Boolean) : []),
           year: data.first_air_date ? parseInt(data.first_air_date.split("-")[0]) : 0
         };
       } else {
         return {
           title: data.title,
+          originalTitle: data.original_title || null,
+          alternativeTitles: (data.alternative_titles && Array.isArray(data.alternative_titles.titles) ? data.alternative_titles.titles.slice().sort((left, right) => {
+            const score = (entry) => entry && entry.iso_3166_1 === "IN" ? 0 : entry && entry.iso_3166_1 === "US" ? 1 : 2;
+            return score(left) - score(right);
+          }).map((entry) => entry && entry.title).filter(Boolean) : []),
           year: data.release_date ? parseInt(data.release_date.split("-")[0]) : 0
         };
       }
@@ -110,6 +120,27 @@ function getTmdbDetails(tmdbId, type) {
       return null;
     }
   });
+}
+function normalizeTitleCandidate(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+function getTitleCandidates(details) {
+  const seen = /* @__PURE__ */ new Set();
+  const values = [details.title, details.originalTitle, ...(details.alternativeTitles || [])];
+  const candidates = [];
+  for (const value of values) {
+    const candidate = normalizeTitleCandidate(value);
+    if (!candidate || candidate.length < 4)
+      continue;
+    if (!/^[\x20-\x7E]+$/.test(candidate))
+      continue;
+    const key = candidate.toLowerCase();
+    if (seen.has(key))
+      continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  return candidates.length ? candidates : [details.title];
 }
 
 // src/4khdhub/utils.js
@@ -236,6 +267,23 @@ function fetchPageUrl(name, year, isSeries) {
     return matchingCards.length > 0 ? matchingCards[0] : null;
   });
 }
+function fetchFirstPageUrl(titleCandidates, year, isSeries) {
+  return __async(this, null, function* () {
+    for (let index = 0; index < titleCandidates.length; index++) {
+      const candidate = titleCandidates[index];
+      if (!candidate)
+        continue;
+      if (index > 0) {
+        console.log(`[4KHDHub] Trying alternate title: ${candidate}`);
+      }
+      const pageUrl = yield fetchPageUrl(candidate, year, isSeries);
+      if (pageUrl) {
+        return { url: pageUrl, title: candidate };
+      }
+    }
+    return null;
+  });
+}
 
 // src/4khdhub/extractor.js
 var cheerio2 = require("cheerio-without-node-native");
@@ -355,10 +403,14 @@ function getStreams(tmdbId, type, season, episode) {
     const { title, year } = tmdbDetails;
     console.log(`[4KHDHub] Search: ${title} (${year})`);
     const isSeries = type === "series" || type === "tv";
-    const pageUrl = yield fetchPageUrl(title, year, isSeries);
+    const pageMatch = yield fetchFirstPageUrl(getTitleCandidates(tmdbDetails), year, isSeries);
+    const pageUrl = pageMatch == null ? void 0 : pageMatch.url;
     if (!pageUrl) {
       console.log("[4KHDHub] Page not found");
       return [];
+    }
+    if ((pageMatch == null ? void 0 : pageMatch.title) && pageMatch.title !== title) {
+      console.log(`[4KHDHub] Matched alternate title: ${pageMatch.title}`);
     }
     console.log(`[4KHDHub] Found page: ${pageUrl}`);
     const html = yield fetchText(pageUrl);

@@ -19,22 +19,28 @@ services:
         value: "1"
       - key: PROVIDER_MAX_CONCURRENCY
         value: "2"
+      - key: PROVIDER_HOST_MAX_INFLIGHT
+        value: "1"
       - key: PROVIDER_CACHE_TTL_SECONDS
         value: "3600"
       - key: PROVIDER_EMPTY_CACHE_TTL_SECONDS
         value: "900"
+      - key: PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
+        value: "60"
       - key: STREMIO_FAST_PROVIDER_CONCURRENCY
         value: "2"
       - key: PROVIDER_GLOBAL_MAX_INFLIGHT
-        value: "3"
+        value: "2"
       - key: STREMIO_FAST_PROVIDER_LIMIT
-        value: "6"
+        value: "5"
       - key: STREMIO_MAX_INFLIGHT_SEARCHES
-        value: "10"
+        value: "50"
       - key: STREMIO_RESULT_CACHE_TTL_SECONDS
         value: "3600"
       - key: STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
-        value: "900"
+        value: "120"
+      - key: STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS
+        value: "300"
       - key: STREMIO_RESULT_STALE_TTL_SECONDS
         value: "43200"
       - key: STREMIO_BACKGROUND_REFRESH_CONCURRENCY
@@ -64,9 +70,9 @@ services:
       - key: MEMORY_GUARD_ENABLED
         value: "true"
       - key: MEMORY_GUARD_PRESSURE_PERCENT
-        value: "80"
+        value: "75"
       - key: MEMORY_GUARD_CRITICAL_PERCENT
-        value: "90"
+        value: "88"
       - key: MEMORY_GUARD_RESTART_PERCENT
         value: "94"
       - key: MEMORY_GUARD_RESTART_AFTER_CRITICAL
@@ -74,7 +80,7 @@ services:
       - key: MEMORY_GUARD_MIN_AVAILABLE_MB
         value: "192"
       - key: MEMORY_GUARD_SHED_SECONDS
-        value: "90"
+        value: "180"
       - key: MEMORY_GUARD_INTERVAL_SECONDS
         value: "5"
       - key: BOT_PROTECTION_ENABLED

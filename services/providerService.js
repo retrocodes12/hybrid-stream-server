@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createRequire } from 'node:module';
 import { promises as fsPromises } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -13,6 +14,35 @@ import { createHttpError } from './streamManager.js';
 const require = createRequire(import.meta.url);
 const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
 const execFileAsync = promisify(execFile);
+const providerAbortSignalStorage = new AsyncLocalStorage();
+const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+
+if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
+  const fetchWithProviderAbort = (input, init = {}) => {
+    const providerSignal = providerAbortSignalStorage.getStore();
+
+    if (!providerSignal) {
+      return nativeFetch(input, init);
+    }
+
+    const nextInit = init && typeof init === 'object' ? { ...init } : {};
+
+    if (nextInit.signal) {
+      nextInit.signal = AbortSignal.any
+        ? AbortSignal.any([nextInit.signal, providerSignal])
+        : nextInit.signal;
+    } else {
+      nextInit.signal = providerSignal;
+    }
+
+    return nativeFetch(input, nextInit);
+  };
+
+  Object.defineProperty(fetchWithProviderAbort, '__nebulaProviderAbortWrapped', {
+    value: true
+  });
+  globalThis.fetch = fetchWithProviderAbort;
+}
 
 const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/All-in-One-Nuvio/providers');
 const LOCAL_PROVIDERS = Object.freeze({
@@ -29,10 +59,13 @@ const LOCAL_PROVIDERS = Object.freeze({
     invocation: 'subprocess'
   }
 });
-const PROVIDER_CACHE_VERSION = '9';
+const PROVIDER_CACHE_VERSION = '14';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set(['torrent-scraper']);
+const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
+const PRIORITY_COOLDOWN_HOSTS = new Set(['4khdhub', 'hdhub4u']);
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
+  hdhub4u: 25,
   'latino-lamovie': 25,
   'latino-cinecalidad': 25,
   'latino-embed69': 20,
@@ -45,14 +78,15 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'arabic-cineby': 25
 });
 const PROVIDER_PRIORITY = [
+  '4khdhub',
+  '4khdhub_tv',
+  'hdhub4u',
   'vidlink',
+  'cinestream',
   'moviebox',
   'streamflix',
   'netmirror',
-  '4khdhub',
-  '4khdhub_tv',
   'videasy',
-  'hdhub4u',
   'tamilian',
   'streamflix_eng',
   'moviesmod',
@@ -87,22 +121,23 @@ const PROVIDER_PRIORITY = [
   'torrent-scraper'
 ];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
+const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
 const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
     'anime-sama': 180,
     animekai: 175,
     animesalt: 170,
+    '4khdhub_tv': 168,
+    '4khdhub': 166,
     animeworld: 165,
+    hdhub4u: 150,
     'it-animeunity': 120,
     'it-animeworld': 115,
     'it-animesaturn': 110,
     'arabic-witanime': 105,
     'arabic-animecloud': 100,
     'arabic-cineby': 95,
-    '4khdhub_tv': 95,
-    '4khdhub': 90,
-    hdhub4u: 75,
     kisskh: 55
   }),
   kdrama: Object.freeze({
@@ -111,13 +146,13 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     showbox: 40
   }),
   indian: Object.freeze({
+    '4khdhub': 230,
+    '4khdhub_tv': 225,
+    hdhub4u: 220,
+    flixindia: 205,
     tamilian: 165,
     isaidub: 155,
     hindmoviez: 145,
-    flixindia: 145,
-    hdhub4u: 135,
-    '4khdhub': 125,
-    '4khdhub_tv': 125,
     streamflix: 110,
     streamflix_eng: 105,
     moviesmod: 100,
@@ -163,9 +198,12 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   })
 });
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
+  '4khdhub': 165,
+  '4khdhub_tv': 160,
+  hdhub4u: 150,
   vidlink: 120,
+  cinestream: 118,
   videasy: 115,
-  hdhub4u: 110,
   tamilian: 104,
   'torrent-scraper': 80,
   streamflix: 105,
@@ -317,6 +355,57 @@ const pruneMapByMaxEntries = (map, maxEntries) => {
     map.delete(oldestKey);
   }
 };
+
+const getAbortReason = (signal, fallbackMessage = 'Provider query aborted') => {
+  if (signal?.reason instanceof Error) {
+    return signal.reason;
+  }
+
+  return createHttpError(504, fallbackMessage);
+};
+
+const waitForProviderSlot = (delayMs, signal) => {
+  if (signal?.aborted) {
+    return Promise.reject(getAbortReason(signal));
+  }
+
+  return new Promise((resolve, reject) => {
+    let timeoutId;
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    const onAbort = () => {
+      cleanup();
+      reject(getAbortReason(signal));
+    };
+
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    timeoutId.unref?.();
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+};
+
+const getProviderFailureThreshold = (providerId) =>
+  PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
+    ? config.PROVIDER_FAILURE_THRESHOLD * 4
+    : config.PROVIDER_FAILURE_THRESHOLD;
+
+const getProviderCooldownMs = (providerId) =>
+  (PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId) ? 30 : config.PROVIDER_COOLDOWN_SECONDS) * 1000;
+
+const getProviderHostFailureThreshold = (hostKey) =>
+  PRIORITY_COOLDOWN_HOSTS.has(hostKey)
+    ? config.PROVIDER_HOST_FAILURE_THRESHOLD * 4
+    : config.PROVIDER_HOST_FAILURE_THRESHOLD;
+
+const getProviderHostCooldownMs = (hostKey) =>
+  (PRIORITY_COOLDOWN_HOSTS.has(hostKey) ? 30 : config.PROVIDER_HOST_COOLDOWN_SECONDS) * 1000;
 
 const sanitizeHeaders = (headers) => {
   if (!headers || typeof headers !== 'object') {
@@ -653,10 +742,23 @@ export class ProviderService {
 
   async getFastStreams({ providers = null, ...rest }) {
     const contentProfile = rest.contentProfile || await this.getContentProfile(rest);
-    const normalizedProviders = this.getStremioProviderOrder(
+    const baseProviders = this.getStremioProviderOrder(
       providers && providers.length > 0 ? providers : null,
       contentProfile
-    ).slice(0, config.STREMIO_FAST_PROVIDER_LIMIT);
+    );
+    const hasExplicitProviders = Array.isArray(providers) && providers.length > 0;
+    const providerLimit = hasExplicitProviders
+      ? Math.min(baseProviders.length, Math.max(config.STREMIO_FAST_PROVIDER_LIMIT, 12))
+      : config.STREMIO_FAST_PROVIDER_LIMIT;
+    const normalizedProviders = baseProviders.slice(0, providerLimit);
+
+    if (!hasExplicitProviders && rest.streamOptions?.webReadyOnly) {
+      for (const providerId of WEB_READY_FALLBACK_PROVIDERS) {
+        if (baseProviders.includes(providerId) && !normalizedProviders.includes(providerId)) {
+          normalizedProviders.push(providerId);
+        }
+      }
+    }
 
     if (normalizedProviders.length === 0) {
       throw createHttpError(400, 'No valid providers were supplied for fast search');
@@ -835,27 +937,35 @@ export class ProviderService {
         mediaType: normalizedMediaType
       });
 
-      const streams = await this.withProviderGlobalSlot(() => {
-        let timeoutId;
-        const timeoutSeconds = PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => {
-            reject(createHttpError(504, `Provider ${providerId} timed out`));
-          }, timeoutSeconds * 1000);
-          timeoutId.unref();
-        });
-
-        return Promise.race([
-          this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
+      let timeoutId;
+      const abortController = new AbortController();
+      const timeoutSeconds = PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          const timeoutError = createHttpError(504, `Provider ${providerId} timed out`);
+          abortController.abort(timeoutError);
+          reject(timeoutError);
+        }, timeoutSeconds * 1000);
+        timeoutId.unref?.();
+      });
+      const providerPromise = this.withProviderGlobalSlot(
+        () => providerAbortSignalStorage.run(
+          abortController.signal,
+          () => this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
             tmdbId: normalizedTmdbId,
             mediaType: normalizedMediaType,
             season: normalizedSeason,
             episode: normalizedEpisode
-          })),
-          timeoutPromise
-        ]).finally(() => {
-          clearTimeout(timeoutId);
-        });
+          }), abortController.signal)
+        ),
+        abortController.signal
+      );
+
+      const streams = await Promise.race([
+        providerPromise,
+        timeoutPromise
+      ]).finally(() => {
+        clearTimeout(timeoutId);
       });
 
       if (!Array.isArray(streams)) {
@@ -915,9 +1025,13 @@ export class ProviderService {
     }
   }
 
-  async withProviderGlobalSlot(fn) {
+  async withProviderGlobalSlot(fn, signal = null) {
     while (this.providerGlobalInflight >= config.PROVIDER_GLOBAL_MAX_INFLIGHT) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitForProviderSlot(50, signal);
+    }
+
+    if (signal?.aborted) {
+      throw getAbortReason(signal);
     }
 
     this.providerGlobalInflight += 1;
@@ -936,11 +1050,15 @@ export class ProviderService {
       .replace(/(?:_tv|-tv)$/u, '');
   }
 
-  async withProviderHostSlot(hostKey, fn) {
+  async withProviderHostSlot(hostKey, fn, signal = null) {
     const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
 
     while ((this.providerHostInflight.get(normalizedHostKey) || 0) >= config.PROVIDER_HOST_MAX_INFLIGHT) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitForProviderSlot(100, signal);
+    }
+
+    if (signal?.aborted) {
+      throw getAbortReason(signal);
     }
 
     this.providerHostInflight.set(
@@ -965,10 +1083,11 @@ export class ProviderService {
     const now = Date.now();
     const current = this.providerHealth.get(providerId) || { failures: 0, cooldownUntil: 0 };
     const failures = current.failures + 1;
+    const failureThreshold = getProviderFailureThreshold(providerId);
     const nextState = {
       failures,
-      cooldownUntil: failures >= config.PROVIDER_FAILURE_THRESHOLD
-        ? now + (config.PROVIDER_COOLDOWN_SECONDS * 1000)
+      cooldownUntil: failures >= failureThreshold
+        ? now + getProviderCooldownMs(providerId)
         : 0
     };
 
@@ -978,6 +1097,7 @@ export class ProviderService {
       logger.warn('provider entered cooldown', {
         provider: providerId,
         failures,
+        failureThreshold,
         cooldownUntil: new Date(nextState.cooldownUntil).toISOString()
       });
     }
@@ -988,10 +1108,11 @@ export class ProviderService {
     const now = Date.now();
     const current = this.providerHostHealth.get(normalizedHostKey) || { failures: 0, cooldownUntil: 0 };
     const failures = current.failures + 1;
+    const failureThreshold = getProviderHostFailureThreshold(normalizedHostKey);
     const nextState = {
       failures,
-      cooldownUntil: failures >= config.PROVIDER_HOST_FAILURE_THRESHOLD
-        ? now + (config.PROVIDER_HOST_COOLDOWN_SECONDS * 1000)
+      cooldownUntil: failures >= failureThreshold
+        ? now + getProviderHostCooldownMs(normalizedHostKey)
         : 0
     };
 
@@ -1001,6 +1122,7 @@ export class ProviderService {
       logger.warn('provider host entered cooldown', {
         hostKey: normalizedHostKey,
         failures,
+        failureThreshold,
         cooldownUntil: new Date(nextState.cooldownUntil).toISOString()
       });
     }
@@ -1069,7 +1191,9 @@ export class ProviderService {
     const entry = {
       streams: copyStreams(streams),
       expiresAt: Date.now() + (streams.length === 0
-        ? config.PROVIDER_EMPTY_CACHE_TTL_SECONDS
+        ? PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
+          ? config.PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
+          : config.PROVIDER_EMPTY_CACHE_TTL_SECONDS
         : config.PROVIDER_CACHE_TTL_SECONDS) * 1000
     };
 

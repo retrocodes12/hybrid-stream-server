@@ -2,7 +2,7 @@ import cheerio from 'cheerio-without-node-native';
 import { HEADERS, MAIN_URL } from './constants.js';
 import { 
   getCurrentDomain, getTMDBDetails, findBestTitleMatch, 
-  extractServerName, formatBytes 
+  extractServerName, formatBytes, getTitleCandidates
 } from './utils.js';
 import { loadExtractor, getRedirectLinks } from './extractors.js';
 
@@ -33,9 +33,45 @@ async function search(query) {
   });
 }
 
+async function searchMediaCandidates(mediaInfo, mediaType, season) {
+  const seenUrls = new Set();
+  const mergedResults = [];
+  const titleCandidates = getTitleCandidates(mediaInfo).slice(0, 6);
+
+  for (const titleCandidate of titleCandidates) {
+    const searchQuery = mediaType === "tv" && season ? `${titleCandidate} Season ${season}` : titleCandidate;
+    if (titleCandidate !== mediaInfo.title) {
+      console.log(`[HDHub4u] Trying alternate title search: "${searchQuery}"`);
+    }
+
+    const results = await search(searchQuery);
+    for (const result of results) {
+      const key = result.url || result.title;
+      if (!key || seenUrls.has(key)) continue;
+      seenUrls.add(key);
+      mergedResults.push(result);
+    }
+  }
+
+  return mergedResults;
+}
+
+function normalizeMediaUrlToDomain(mediaUrl, domain) {
+  try {
+    const currentDomain = new URL(domain);
+    const parsedUrl = new URL(mediaUrl);
+    parsedUrl.protocol = currentDomain.protocol;
+    parsedUrl.host = currentDomain.host;
+    return parsedUrl.toString();
+  } catch (e) {
+    return mediaUrl;
+  }
+}
+
 async function getDownloadLinks(mediaUrl) {
   const domain = await getCurrentDomain();
-  const response = await fetch(mediaUrl, { headers: { ...HEADERS, Referer: `${domain}/` } });
+  const currentMediaUrl = normalizeMediaUrlToDomain(mediaUrl, domain);
+  const response = await fetch(currentMediaUrl, { headers: { ...HEADERS, Referer: `${domain}/` } });
   const data = await response.text();
   const $ = cheerio.load(data);
   
@@ -152,12 +188,14 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
     const mediaInfo = await getTMDBDetails(tmdbId, mediaType);
     console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
     
-    const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
-    const searchResults = await search(searchQuery);
+    const searchResults = await searchMediaCandidates(mediaInfo, mediaType, season);
     if (searchResults.length === 0) return [];
     
     const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
     const selectedMedia = bestMatch || searchResults[0];
+    if (!bestMatch) {
+      console.log(`[HDHub4u] No safe title/year match found for "${mediaInfo.title}" (${mediaInfo.year || "N/A"}), falling back to first result: "${selectedMedia.title}"`);
+    }
     console.log(`[HDHub4u] Selected: "${selectedMedia.title}" (${selectedMedia.url})`);
     
     const result = await getDownloadLinks(selectedMedia.url);

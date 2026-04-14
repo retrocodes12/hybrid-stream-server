@@ -161,6 +161,9 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferDirectHosts: false
 });
 
+const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
+const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
+
 const CONFIGURED_PROFILE_LABELS = Object.freeze({
   wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
   md: Object.freeze({ code: 'MD', label: 'Mobile Data' }),
@@ -376,14 +379,38 @@ const getQualityPriorityScore = (stream, qualityPriority) => {
   return (qualityPriority.length - index) * 10000;
 };
 
+const isHighValueCacheStream = (stream) => {
+  const providerId = String(stream.provider || '').trim().toLowerCase();
+  const text = [
+    stream.name,
+    stream.title,
+    stream.sourceSite,
+    stream.url,
+    stream.filename
+  ].map((value) => String(value || '')).join(' ');
+
+  return normalizeQualityKey(stream.quality) === '2160p'
+    || HIGH_VALUE_CACHE_PROVIDERS.has(providerId)
+    || HIGH_VALUE_CACHE_PATTERN.test(text);
+};
+
+const shouldUseWeakResultCache = (streams) =>
+  streams.length > 0 && !streams.some((stream) => isHighValueCacheStream(stream));
+
 const hasForwardHeaders = (headers) =>
   Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
 
 const isWebReadyHttpStream = (stream) =>
   stream.transport === 'http' &&
   Boolean(stream.url) &&
-  isPlainMp4Url(stream.url) &&
+  (isPlainMp4Url(stream.url) || stream.behaviorHints?.notWebReady === false) &&
   !hasForwardHeaders(stream.headers);
+
+const isTrustedDirectHttpStream = (stream) =>
+  stream.transport === 'http' &&
+  Boolean(stream.url) &&
+  !hasForwardHeaders(stream.headers) &&
+  isHighValueCacheStream(stream);
 
 const hasHeavyFormatTraits = (stream) => {
   const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
@@ -598,7 +625,7 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 
     if (stream.transport !== 'http') {
       reason = 'nonHttp';
-    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream)) {
+    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream)) {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
@@ -1222,7 +1249,7 @@ const toStremioStreamObject = (stream, parsedRequest) => {
   }
 
   const requestHeaders = hasForwardHeaders(stream.headers) ? { ...stream.headers } : null;
-  const isWebReady = isPlainMp4Url(stream.url) && !requestHeaders;
+  const isWebReady = isWebReadyHttpStream(stream);
 
   return {
     ...base,
@@ -1565,7 +1592,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
     return JSON.stringify({
-      version: 9,
+      version: 17,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -1662,13 +1689,15 @@ export class StreamManager {
     }
   }
 
-  async setCachedStremioStreams(cacheKey, streams) {
+  async setCachedStremioStreams(cacheKey, streams, { weak = false } = {}) {
     const now = Date.now();
     const freshTtlSeconds = streams.length === 0
       ? config.STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
-      : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
+      : weak
+        ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, config.STREMIO_RESULT_CACHE_TTL_SECONDS)
+        : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
     const freshTtlMs = freshTtlSeconds * 1000;
-    const staleTtlMs = streams.length === 0
+    const staleTtlMs = streams.length === 0 || weak
       ? freshTtlMs
       : Math.max(
         freshTtlMs,
@@ -1677,6 +1706,7 @@ export class StreamManager {
     const entry = {
       expiresAt: now + freshTtlMs,
       staleExpiresAt: now + staleTtlMs,
+      weak: Boolean(weak),
       streams: copyObjects(streams)
     };
 
@@ -2129,7 +2159,8 @@ export class StreamManager {
       tmdbId,
       mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
       season: parsed.season,
-      episode: parsed.episode
+      episode: parsed.episode,
+      streamOptions
     });
 
     if (result.streams.length === 0) {
@@ -2141,6 +2172,14 @@ export class StreamManager {
     const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
     if (configuredStreams.length === 0) {
+      logger.warn('stremio stream search produced no configured streams', {
+        tmdbId,
+        mediaType: parsed.mediaType,
+        providersTried: result.tried,
+        rawStreamCount: result.streams.length,
+        normalizedStreamCount: normalizedStreams.length,
+        streamOptions
+      });
       await this.setCachedStremioStreams(resultCacheKey, []);
       return [];
     }
@@ -2150,11 +2189,12 @@ export class StreamManager {
       (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
     );
     const dedupedStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
+    const useWeakCache = shouldUseWeakResultCache(dedupedStreams);
     const stremioStreams = dedupedStreams
       .map((stream) => toStremioStreamObject(stream, parsed))
       .filter(Boolean);
 
-    await this.setCachedStremioStreams(resultCacheKey, stremioStreams);
+    await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache });
     return stremioStreams;
   }
 
@@ -2347,7 +2387,8 @@ export class StreamManager {
         tmdbId,
         mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
         season: parsed.season,
-        episode: parsed.episode
+        episode: parsed.episode,
+        streamOptions
       });
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
       const { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
