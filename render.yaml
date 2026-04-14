@@ -38,7 +38,7 @@ services:
       - key: STREMIO_RESULT_CACHE_TTL_SECONDS
         value: "3600"
       - key: STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
-        value: "120"
+        value: "20"
       - key: STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS
         value: "300"
       - key: STREMIO_RESULT_STALE_TTL_SECONDS
