@@ -16,6 +16,31 @@ const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
 const execFileAsync = promisify(execFile);
 const providerAbortSignalStorage = new AsyncLocalStorage();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
+const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = null) => {
+  if (providerId !== 'showbox') {
+    return '';
+  }
+
+  const uiToken = String(privateProviderSettings?.febboxUiCookie || '').trim();
+
+  if (!uiToken) {
+    return '';
+  }
+
+  return crypto.createHash('sha1').update(uiToken).digest('hex');
+};
+const getProviderCacheVersion = (providerId) => providerId === 'rgshows' ? '24' : '23';
+const prioritizePrivateTokenProviders = (providers, privateProviderSettings = null) => {
+  const ordered = Array.isArray(providers) ? [...providers] : [];
+  const hasFebboxUiCookie = Boolean(String(privateProviderSettings?.febboxUiCookie || '').trim());
+
+  if (hasFebboxUiCookie && ordered.includes('showbox')) {
+    ordered.splice(ordered.indexOf('showbox'), 1);
+    ordered.unshift('showbox');
+  }
+
+  return ordered;
+};
 
 if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
   const fetchWithProviderAbort = (input, init = {}) => {
@@ -59,9 +84,14 @@ const LOCAL_PROVIDERS = Object.freeze({
     invocation: 'subprocess'
   }
 });
-const PROVIDER_CACHE_VERSION = '21';
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
-const NO_EMPTY_CACHE_PROVIDERS = new Set(['cinestream', 'torrent-scraper']);
+const NO_EMPTY_CACHE_PROVIDERS = new Set([
+  'anime-sama',
+  'animekai',
+  'animesalt',
+  'cinestream',
+  'torrent-scraper'
+]);
 const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub',
   '4khdhub_tv',
@@ -73,9 +103,20 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   'vidlink'
 ]);
 const PRIORITY_COOLDOWN_HOSTS = new Set(['4khdhub', 'hdhub4u']);
+const PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
+  '4khdhub': 2,
+  hdhub4u: 2
+});
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
+  '4khdhub': 25,
+  '4khdhub_tv': 25,
   cinestream: 20,
   hdhub4u: 25,
+  moviebox: 20,
+  rgshows: 20,
+  streamflix: 20,
+  vidlink: 20,
+  videasy: 20,
   animekai: 25,
   'latino-lamovie': 25,
   'latino-cinecalidad': 25,
@@ -95,6 +136,7 @@ const PROVIDER_PRIORITY = [
   'vidlink',
   'cinestream',
   'moviebox',
+  'rgshows',
   'streamflix',
   'netmirror',
   'videasy',
@@ -134,6 +176,18 @@ const PROVIDER_PRIORITY = [
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy']);
+const ANIME_SPECIALIST_PROVIDERS = new Set([
+  'anime-sama',
+  'animekai',
+  'animesalt',
+  'animeworld',
+  'it-animeunity',
+  'it-animeworld',
+  'it-animesaturn',
+  'arabic-witanime',
+  'arabic-animecloud',
+  'kisskh'
+]);
 const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
@@ -346,6 +400,20 @@ const mapConcurrent = async (items, concurrency, iteratee) => {
 };
 
 const copyStreams = (streams) => streams.map((stream) => ({ ...stream }));
+const serializeStreams = (streams) => JSON.stringify(Array.isArray(streams) ? streams : []);
+const deserializeStreams = (payload) => {
+  if (typeof payload !== 'string' || !payload) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(payload);
+    return Array.isArray(parsed) ? copyStreams(parsed) : [];
+  } catch {
+    return [];
+  }
+};
+const getSerializedApproxBytes = (payload) => Buffer.byteLength(String(payload || ''), 'utf8');
 
 const touchMapEntry = (map, key, value) => {
   map.delete(key);
@@ -364,6 +432,30 @@ const pruneMapByMaxEntries = (map, maxEntries) => {
       break;
     }
 
+    map.delete(oldestKey);
+  }
+};
+
+const pruneMapByApproxBytes = (map, maxBytes, getEntryBytes = (entry) => entry?.approxBytes || 0) => {
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0 || map.size === 0) {
+    return;
+  }
+
+  let totalBytes = 0;
+
+  for (const entry of map.values()) {
+    totalBytes += Math.max(0, Number(getEntryBytes(entry)) || 0);
+  }
+
+  while (totalBytes > maxBytes && map.size > 0) {
+    const oldestKey = map.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    const oldestEntry = map.get(oldestKey);
+    totalBytes -= Math.max(0, Number(getEntryBytes(oldestEntry)) || 0);
     map.delete(oldestKey);
   }
 };
@@ -595,6 +687,52 @@ const rankStream = (stream, providerOrder, contentProfile = null) => {
   return (providerScore * 10000) + (qualityScore * 100) + (transportScore * 10) + headerScore;
 };
 
+const mergeAndRankProviderStreams = (settledResults, providerOrder, contentProfile = null, limit = Infinity) => {
+  const mergedStreams = [];
+  const seenSources = new Set();
+
+  for (const result of settledResults) {
+    if (!result) {
+      continue;
+    }
+
+    for (const stream of result.streams) {
+      const normalizedUrl = String(stream.url || '').trim();
+      const normalizedMagnet = String(stream.magnet || stream.torrent || '').trim();
+      const dedupeKey = JSON.stringify({
+        url: normalizedUrl || null,
+        magnet: normalizedMagnet || null
+      });
+
+      if ((!normalizedUrl && !normalizedMagnet) || seenSources.has(dedupeKey)) {
+        continue;
+      }
+
+      seenSources.add(dedupeKey);
+      mergedStreams.push({
+        ...stream,
+        provider: stream.provider || result.provider
+      });
+    }
+  }
+
+  mergedStreams.sort((left, right) => {
+    const scoreDelta = rankStream(right, providerOrder, contentProfile) - rankStream(left, providerOrder, contentProfile);
+
+    if (scoreDelta !== 0) {
+      return scoreDelta;
+    }
+
+    return String(left.name || left.title || left.url).localeCompare(
+      String(right.name || right.title || right.url)
+    );
+  });
+
+  return Number.isFinite(limit)
+    ? mergedStreams.slice(0, limit)
+    : mergedStreams;
+};
+
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
@@ -662,6 +800,7 @@ export class ProviderService {
     }
 
     pruneMapByMaxEntries(this.resultCache, Math.max(50, Math.floor(config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES / 4)));
+    pruneMapByApproxBytes(this.resultCache, Math.max(512 * 1024, Math.floor((config.PROVIDER_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024) / 4)));
     pruneMapByMaxEntries(this.tmdbMetadataCache, Math.max(50, Math.floor(config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES / 4)));
   }
 
@@ -709,60 +848,25 @@ export class ProviderService {
       provider: result.provider,
       count: result.streams.length
     }));
-    const mergedStreams = [];
-    const seenSources = new Set();
-
-    for (const result of settledResults) {
-      for (const stream of result.streams) {
-        const normalizedUrl = String(stream.url || '').trim();
-        const normalizedMagnet = String(stream.magnet || stream.torrent || '').trim();
-        const dedupeKey = JSON.stringify({
-          url: normalizedUrl || null,
-          magnet: normalizedMagnet || null
-        });
-
-        if ((!normalizedUrl && !normalizedMagnet) || seenSources.has(dedupeKey)) {
-          continue;
-        }
-
-        seenSources.add(dedupeKey);
-        mergedStreams.push({
-          ...stream,
-          provider: stream.provider || result.provider
-        });
-      }
-    }
-
-    mergedStreams.sort((left, right) => {
-      const scoreDelta = rankStream(right, normalizedProviders, contentProfile) - rankStream(left, normalizedProviders, contentProfile);
-
-      if (scoreDelta !== 0) {
-        return scoreDelta;
-      }
-
-      return String(left.name || left.title || left.url).localeCompare(
-        String(right.name || right.title || right.url)
-      );
-    });
-
     return {
       providers: normalizedProviders,
       tried,
-      streams: mergedStreams
+      streams: mergeAndRankProviderStreams(settledResults, normalizedProviders, contentProfile)
     };
   }
 
   async getFastStreams({ providers = null, ...rest }) {
     const contentProfile = rest.contentProfile || await this.getContentProfile(rest);
-    const baseProviders = this.getStremioProviderOrder(
+    const orderedProviders = this.getStremioProviderOrder(
       providers && providers.length > 0 ? providers : null,
       contentProfile
     );
     const hasExplicitProviders = Array.isArray(providers) && providers.length > 0;
-    const providerLimit = hasExplicitProviders
+    const baseProviders = prioritizePrivateTokenProviders(orderedProviders, rest.privateProviderSettings);
+    const initialProviderLimit = hasExplicitProviders
       ? Math.min(baseProviders.length, Math.max(config.STREMIO_FAST_PROVIDER_LIMIT, 12))
       : config.STREMIO_FAST_PROVIDER_LIMIT;
-    const normalizedProviders = baseProviders.slice(0, providerLimit);
+    const normalizedProviders = baseProviders.slice(0, initialProviderLimit);
 
     if (!hasExplicitProviders && rest.streamOptions?.webReadyOnly) {
       for (const providerId of WEB_READY_FALLBACK_PROVIDERS) {
@@ -782,70 +886,218 @@ export class ProviderService {
       throw createHttpError(400, 'No valid providers were supplied for fast search');
     }
 
-    const settledResults = await mapConcurrent(
-      normalizedProviders,
-      config.STREMIO_FAST_PROVIDER_CONCURRENCY,
-      async (provider) => {
-        const streams = await this.getStreams({
-          provider,
-          ...rest
-        });
+    const queuedProviders = [...normalizedProviders];
+    const overflowProviders = baseProviders.filter((providerId) => !queuedProviders.includes(providerId));
 
-        return {
-          provider,
-          streams
-        };
-      }
+    const earlyReturnTarget = Math.min(
+      config.STREMIO_FAST_STREAM_LIMIT,
+      config.STREMIO_FAST_EARLY_RETURN_STREAMS
     );
+    const minCompletedProviders = Math.min(
+      normalizedProviders.length,
+      config.STREMIO_FAST_MIN_COMPLETED_PROVIDERS
+    );
+    const startedAt = Date.now();
 
-    const tried = settledResults.map((result) => ({
-      provider: result.provider,
-      count: result.streams.length
-    }));
-    const mergedStreams = [];
-    const seenSources = new Set();
+    return await new Promise((resolve) => {
+      const results = [];
+      let nextIndex = 0;
+      let running = 0;
+      let completed = 0;
+      let resolved = false;
+      let deadlineTimer;
+      const expansionChunkSize = Math.max(3, Math.min(6, config.STREMIO_FAST_PROVIDER_CONCURRENCY * 2));
+      let lastExpansionCompleted = -1;
+      const shouldHoldForAnimeSpecialists = Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('anime');
 
-    for (const result of settledResults) {
-      for (const stream of result.streams) {
-        const normalizedUrl = String(stream.url || '').trim();
-        const normalizedMagnet = String(stream.magnet || stream.torrent || '').trim();
-        const dedupeKey = JSON.stringify({
-          url: normalizedUrl || null,
-          magnet: normalizedMagnet || null
-        });
+      let launchNext = () => {};
 
-        if ((!normalizedUrl && !normalizedMagnet) || seenSources.has(dedupeKey)) {
-          continue;
+      const finalize = (reason) => {
+        if (resolved) {
+          return;
         }
 
-        seenSources.add(dedupeKey);
-        mergedStreams.push({
-          ...stream,
-          provider: stream.provider || result.provider
+        resolved = true;
+        clearTimeout(deadlineTimer);
+
+        const settledResults = results.filter(Boolean);
+        const tried = queuedProviders.map((provider, index) => ({
+          provider,
+          count: Array.isArray(results[index]?.streams) ? results[index].streams.length : 0
+        }));
+        const streams = mergeAndRankProviderStreams(
+          settledResults,
+          queuedProviders,
+          contentProfile,
+          config.STREMIO_FAST_STREAM_LIMIT
+        );
+
+        if (reason !== 'all-complete') {
+          logger.info('fast provider search returned early', {
+            reason,
+            completedProviders: completed,
+            totalProviders: queuedProviders.length,
+            streamCount: streams.length,
+            elapsedMs: Date.now() - startedAt,
+            tmdbId: rest.tmdbId,
+            mediaType: rest.mediaType
+          });
+        }
+
+        resolve({
+          reason,
+          providers: queuedProviders,
+          tried,
+          streams
         });
-      }
-    }
+      };
 
-    mergedStreams.sort((left, right) => {
-      const scoreDelta = rankStream(right, normalizedProviders, contentProfile) - rankStream(left, normalizedProviders, contentProfile);
+      const maybeExpandProviderQueue = (streams) => {
+        if (overflowProviders.length === 0) {
+          return false;
+        }
 
-      if (scoreDelta !== 0) {
-        return scoreDelta;
-      }
+        const initialBatchDone =
+          completed >= Math.min(initialProviderLimit, queuedProviders.length) ||
+          (nextIndex >= Math.min(initialProviderLimit, queuedProviders.length) && running === 0);
+        const shouldExpandForEmpty = completed >= minCompletedProviders && streams.length === 0;
+        const shouldExpandForWeak = initialBatchDone && streams.length < earlyReturnTarget;
 
-      return String(left.name || left.title || left.url).localeCompare(
-        String(right.name || right.title || right.url)
-      );
+        if (!shouldExpandForEmpty && !shouldExpandForWeak) {
+          return false;
+        }
+
+        if (lastExpansionCompleted === completed) {
+          return false;
+        }
+
+        let addedProviders = 0;
+
+        while (overflowProviders.length > 0 && addedProviders < expansionChunkSize) {
+          queuedProviders.push(overflowProviders.shift());
+          addedProviders += 1;
+        }
+
+        if (addedProviders > 0) {
+          lastExpansionCompleted = completed;
+          logger.info('fast provider search expanded', {
+            addedProviders,
+            queuedProviders: queuedProviders.length,
+            completedProviders: completed,
+            streamCount: streams.length,
+            tmdbId: rest.tmdbId,
+            mediaType: rest.mediaType
+          });
+        }
+
+        return addedProviders > 0;
+      };
+
+      const maybeFinalize = () => {
+        if (resolved) {
+          return;
+        }
+
+        const settledResults = results.filter(Boolean);
+        const streams = mergeAndRankProviderStreams(
+          settledResults,
+          queuedProviders,
+          contentProfile,
+          config.STREMIO_FAST_STREAM_LIMIT
+        );
+        const expanded = maybeExpandProviderQueue(streams);
+
+        if (expanded) {
+          launchNext();
+          return;
+        }
+
+        const allDone = completed >= queuedProviders.length || (nextIndex >= queuedProviders.length && running === 0);
+        const animeSpecialistIndexes = shouldHoldForAnimeSpecialists
+          ? queuedProviders
+            .map((providerId, index) => ANIME_SPECIALIST_PROVIDERS.has(providerId) ? index : -1)
+            .filter((index) => index !== -1)
+          : [];
+        const animeSpecialistPending = animeSpecialistIndexes.some((index) => !results[index]);
+        const enoughStreams = streams.length >= earlyReturnTarget
+          && completed >= minCompletedProviders
+          && (!shouldHoldForAnimeSpecialists || !animeSpecialistPending);
+        const deadlineReached = Date.now() - startedAt >= config.STREMIO_FAST_MAX_WAIT_MS;
+
+        if (allDone) {
+          finalize('all-complete');
+          return;
+        }
+
+        if (enoughStreams) {
+          finalize('enough-streams');
+          return;
+        }
+
+        if (deadlineReached && (streams.length > 0 || completed >= minCompletedProviders)) {
+          finalize('deadline');
+        }
+      };
+
+      launchNext = () => {
+        if (resolved) {
+          return;
+        }
+
+        while (running < config.STREMIO_FAST_PROVIDER_CONCURRENCY && nextIndex < queuedProviders.length) {
+          const index = nextIndex;
+          const provider = queuedProviders[index];
+          nextIndex += 1;
+          running += 1;
+
+          Promise.resolve()
+            .then(() => this.getStreams({
+              provider,
+              ...rest
+            }))
+            .then((streams) => {
+              results[index] = {
+                provider,
+                streams: Array.isArray(streams) ? streams : []
+              };
+            })
+            .catch((error) => {
+              logger.warn('fast provider search worker failed', {
+                provider,
+                tmdbId: rest.tmdbId,
+                mediaType: rest.mediaType,
+                error
+              });
+              results[index] = {
+                provider,
+                streams: []
+              };
+            })
+            .finally(() => {
+              running = Math.max(running - 1, 0);
+              completed += 1;
+              maybeFinalize();
+              launchNext();
+            });
+        }
+
+        maybeFinalize();
+      };
+
+      deadlineTimer = setTimeout(() => {
+        maybeFinalize();
+
+        if (!resolved) {
+          finalize('deadline');
+        }
+      }, config.STREMIO_FAST_MAX_WAIT_MS);
+      deadlineTimer.unref?.();
+
+      launchNext();
     });
-
-    return {
-      providers: normalizedProviders,
-      tried,
-      streams: mergedStreams.slice(0, config.STREMIO_FAST_STREAM_LIMIT)
-    };
   }
 
-  async getStreams({ provider, tmdbId, mediaType = 'movie', season = null, episode = null }) {
+  async getStreams({ provider, tmdbId, mediaType = 'movie', season = null, episode = null, privateProviderSettings = null }) {
     const providerId = String(provider || '').trim().toLowerCase();
     const providerConfig = this.providers.get(providerId);
 
@@ -869,12 +1121,13 @@ export class ProviderService {
     const normalizedSeason = toOptionalInteger(season);
     const normalizedEpisode = toOptionalInteger(episode);
     const cacheKey = JSON.stringify({
-      version: PROVIDER_CACHE_VERSION,
+      version: getProviderCacheVersion(providerId),
       provider: providerId,
       tmdbId: normalizedTmdbId,
       mediaType: normalizedMediaType,
       season: normalizedSeason,
-      episode: normalizedEpisode
+      episode: normalizedEpisode,
+      privateProviderSettingsKey: getPrivateProviderSettingsKey(providerId, privateProviderSettings)
     });
 
     const cached = await this.getCachedResult(cacheKey);
@@ -926,7 +1179,8 @@ export class ProviderService {
       normalizedTmdbId,
       normalizedMediaType,
       normalizedSeason,
-      normalizedEpisode
+      normalizedEpisode,
+      privateProviderSettings
     });
 
     this.inFlight.set(cacheKey, execution);
@@ -946,7 +1200,8 @@ export class ProviderService {
     normalizedTmdbId,
     normalizedMediaType,
     normalizedSeason,
-    normalizedEpisode
+    normalizedEpisode,
+    privateProviderSettings
   }) {
     try {
       logger.info('provider scrape started', {
@@ -955,36 +1210,17 @@ export class ProviderService {
         mediaType: normalizedMediaType
       });
 
-      let timeoutId;
-      const abortController = new AbortController();
-      const timeoutSeconds = PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-          const timeoutError = createHttpError(504, `Provider ${providerId} timed out`);
-          abortController.abort(timeoutError);
-          reject(timeoutError);
-        }, timeoutSeconds * 1000);
-        timeoutId.unref?.();
-      });
       const providerPromise = this.withProviderGlobalSlot(
-        () => providerAbortSignalStorage.run(
-          abortController.signal,
-          () => this.withProviderHostSlot(providerHostKey, () => this.invokeProvider(providerConfig, providerId, {
-            tmdbId: normalizedTmdbId,
-            mediaType: normalizedMediaType,
-            season: normalizedSeason,
-            episode: normalizedEpisode
-          }), abortController.signal)
-        ),
-        abortController.signal
+        () => this.withProviderHostSlot(providerHostKey, () => this.invokeProviderWithTimeout(providerConfig, providerId, {
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          season: normalizedSeason,
+          episode: normalizedEpisode,
+          privateProviderSettings
+        }))
       );
 
-      const streams = await Promise.race([
-        providerPromise,
-        timeoutPromise
-      ]).finally(() => {
-        clearTimeout(timeoutId);
-      });
+      const streams = await providerPromise;
 
       if (!Array.isArray(streams)) {
         throw createHttpError(502, `Provider ${providerId} returned an invalid stream payload`);
@@ -1025,7 +1261,7 @@ export class ProviderService {
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType
         });
-        await this.setCachedResult(cacheKey, [], providerId);
+        await this.deleteCachedResult(cacheKey);
         return [];
       }
 
@@ -1038,9 +1274,35 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         error
       });
-      await this.setCachedResult(cacheKey, [], providerId);
+      await this.deleteCachedResult(cacheKey);
       return [];
     }
+  }
+
+  async invokeProviderWithTimeout(providerConfig, providerId, params) {
+    let timeoutId;
+    const abortController = new AbortController();
+    const timeoutSeconds = PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        const timeoutError = createHttpError(504, `Provider ${providerId} timed out`);
+        abortController.abort(timeoutError);
+        reject(timeoutError);
+      }, timeoutSeconds * 1000);
+      timeoutId.unref?.();
+    });
+
+    const providerPromise = providerAbortSignalStorage.run(
+      abortController.signal,
+      () => this.invokeProvider(providerConfig, providerId, params)
+    );
+
+    return Promise.race([
+      providerPromise,
+      timeoutPromise
+    ]).finally(() => {
+      clearTimeout(timeoutId);
+    });
   }
 
   async withProviderGlobalSlot(fn, signal = null) {
@@ -1070,8 +1332,9 @@ export class ProviderService {
 
   async withProviderHostSlot(hostKey, fn, signal = null) {
     const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
+    const maxInflight = PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES[normalizedHostKey] || config.PROVIDER_HOST_MAX_INFLIGHT;
 
-    while ((this.providerHostInflight.get(normalizedHostKey) || 0) >= config.PROVIDER_HOST_MAX_INFLIGHT) {
+    while ((this.providerHostInflight.get(normalizedHostKey) || 0) >= maxInflight) {
       await waitForProviderSlot(100, signal);
     }
 
@@ -1100,7 +1363,9 @@ export class ProviderService {
   recordProviderFailure(providerId) {
     const now = Date.now();
     const current = this.providerHealth.get(providerId) || { failures: 0, cooldownUntil: 0 };
-    const failures = current.failures + 1;
+    const failures = current.cooldownUntil && current.cooldownUntil <= now
+      ? 1
+      : current.failures + 1;
     const failureThreshold = getProviderFailureThreshold(providerId);
     const nextState = {
       failures,
@@ -1125,7 +1390,9 @@ export class ProviderService {
     const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
     const now = Date.now();
     const current = this.providerHostHealth.get(normalizedHostKey) || { failures: 0, cooldownUntil: 0 };
-    const failures = current.failures + 1;
+    const failures = current.cooldownUntil && current.cooldownUntil <= now
+      ? 1
+      : current.failures + 1;
     const failureThreshold = getProviderHostFailureThreshold(normalizedHostKey);
     const nextState = {
       failures,
@@ -1159,7 +1426,7 @@ export class ProviderService {
     }
 
     touchMapEntry(this.resultCache, cacheKey, entry);
-    return copyStreams(entry.streams);
+    return deserializeStreams(entry.serializedStreams);
   }
 
   async getDiskCachedResult(cacheKey) {
@@ -1167,24 +1434,32 @@ export class ProviderService {
 
     try {
       const payload = JSON.parse(await readFile(cachePath, 'utf8'));
+      const serializedStreams = typeof payload?.serializedStreams === 'string'
+        ? payload.serializedStreams
+        : Array.isArray(payload?.streams)
+          ? serializeStreams(payload.streams)
+          : '';
+      const hydratedStreams = deserializeStreams(serializedStreams);
 
-      if (!payload || payload.expiresAt <= Date.now() || !Array.isArray(payload.streams)) {
+      if (!payload || payload.expiresAt <= Date.now() || hydratedStreams.length === 0 && !serializedStreams) {
         await rm(cachePath, { force: true });
         return null;
       }
 
       const entry = {
-        streams: copyStreams(payload.streams),
+        serializedStreams,
+        approxBytes: getSerializedApproxBytes(serializedStreams),
         expiresAt: payload.expiresAt
       };
 
       touchMapEntry(this.resultCache, cacheKey, entry);
       pruneMapByMaxEntries(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES);
+      pruneMapByApproxBytes(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024);
       logger.info('provider disk cache hit', {
         cacheKey: this.hashCacheKey(cacheKey),
-        resultCount: payload.streams.length
+        resultCount: hydratedStreams.length
       });
-      return copyStreams(payload.streams);
+      return hydratedStreams;
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         logger.warn('provider disk cache read failed', {
@@ -1206,8 +1481,10 @@ export class ProviderService {
       return;
     }
 
+    const serializedStreams = serializeStreams(streams);
     const entry = {
-      streams: copyStreams(streams),
+      serializedStreams,
+      approxBytes: getSerializedApproxBytes(serializedStreams),
       expiresAt: Date.now() + (streams.length === 0
         ? PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
           ? config.PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
@@ -1217,15 +1494,27 @@ export class ProviderService {
 
     touchMapEntry(this.resultCache, cacheKey, entry);
     pruneMapByMaxEntries(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_ENTRIES);
+    pruneMapByApproxBytes(this.resultCache, config.PROVIDER_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024);
 
     try {
-      await writeFile(this.getCacheFilePath(cacheKey), JSON.stringify(entry));
+      await writeFile(this.getCacheFilePath(cacheKey), JSON.stringify({
+        expiresAt: entry.expiresAt,
+        serializedStreams
+      }));
     } catch (error) {
       logger.warn('provider disk cache write failed', {
         cacheKey: this.hashCacheKey(cacheKey),
         error
       });
     }
+  }
+
+  async deleteCachedResult(cacheKey) {
+    this.resultCache.delete(cacheKey);
+
+    try {
+      await rm(this.getCacheFilePath(cacheKey), { force: true });
+    } catch {}
   }
 
   normalizeProviders(providers) {
@@ -1428,6 +1717,20 @@ export class ProviderService {
     }
 
     const providerModule = this.loadProviderModule(providerConfig, providerId);
+
+    if (providerId === 'showbox') {
+      return Promise.resolve().then(() => providerModule.getStreams(
+        params.tmdbId,
+        params.mediaType,
+        params.season,
+        params.episode,
+        {
+          uiToken: String(params.privateProviderSettings?.febboxUiCookie || '').trim(),
+          ossGroup: String(params.privateProviderSettings?.showboxOssGroup || '').trim()
+        }
+      ));
+    }
+
     return Promise.resolve().then(() => providerModule.getStreams(
       params.tmdbId,
       params.mediaType,

@@ -17,8 +17,23 @@ const WORKING_HEADERS = {
     'Content-Type': 'application/json'
 };
 
+function getEnvString(name) {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env[name]) {
+            return String(process.env[name]).trim();
+        }
+    } catch (e) {
+        // ignore and fall through
+    }
+    return '';
+}
+
 // UI token (cookie) is provided by the host app via per-scraper settings (Plugin Screen)
-function getUiToken() {
+function getUiToken(scraperSettings = null) {
+    if (scraperSettings && scraperSettings.uiToken) {
+        return String(scraperSettings.uiToken).trim();
+    }
+
     try {
         // Prefer sandbox-injected globals
         if (typeof global !== 'undefined' && global.SCRAPER_SETTINGS && global.SCRAPER_SETTINGS.uiToken) {
@@ -30,11 +45,19 @@ function getUiToken() {
     } catch (e) {
         // ignore and fall through
     }
+    const envToken = getEnvString('SHOWBOX_UI_TOKEN') || getEnvString('SHOWBOX_COOKIE');
+    if (envToken) {
+        return envToken;
+    }
     return '';
 }
 
 // OSS Group is provided by the host app via per-scraper settings (Plugin Screen) - optional
-function getOssGroup() {
+function getOssGroup(scraperSettings = null) {
+    if (scraperSettings && scraperSettings.ossGroup) {
+        return String(scraperSettings.ossGroup).trim();
+    }
+
     try {
         // Prefer sandbox-injected globals
         if (typeof global !== 'undefined' && global.SCRAPER_SETTINGS && global.SCRAPER_SETTINGS.ossGroup) {
@@ -45,6 +68,10 @@ function getOssGroup() {
         }
     } catch (e) {
         // ignore and fall through
+    }
+    const envOssGroup = getEnvString('SHOWBOX_OSS_GROUP');
+    if (envOssGroup) {
+        return envOssGroup;
     }
     return null; // OSS group is optional
 }
@@ -221,18 +248,18 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
 }
 
 // Main scraping function
-function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null) {
+function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null, scraperSettings = null) {
     console.log(`[ShowBox] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${mediaType === 'tv' ? `, S:${seasonNum}E:${episodeNum}` : ''}`);
 
     // Get cookie (uiToken) - required
-    const cookie = getUiToken();
+    const cookie = getUiToken(scraperSettings);
     if (!cookie) {
         console.error('[ShowBox] No UI token (cookie) found in scraper settings');
         return Promise.resolve([]);
     }
 
     // Get OSS group - optional
-    const ossGroup = getOssGroup();
+    const ossGroup = getOssGroup(scraperSettings);
     console.log(`[ShowBox] Using cookie: ${cookie.substring(0, 20)}...${ossGroup ? `, OSS Group: ${ossGroup}` : ' (no OSS group)'}`);
 
     // Get TMDB details for title formatting

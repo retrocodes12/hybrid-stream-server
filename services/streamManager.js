@@ -7,7 +7,7 @@ import { config, cacheConfig } from '../config.js';
 import { enhanceMagnet, extractInfoHash } from '../utils/magnet.js';
 import { logger } from '../utils/logger.js';
 
-const { mkdir, readFile, rm, writeFile } = fsPromises;
+const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
 
 const detectSourceType = (source) => {
   const normalized = String(source || '').trim();
@@ -160,6 +160,12 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferSmallerFiles: false,
   preferDirectHosts: false
 });
+const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
+  febboxUiCookie: null,
+  showboxOssGroup: null
+});
+const PRIVATE_CONFIG_VERSION = 1;
+const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
 
 const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
@@ -177,6 +183,20 @@ const CONFIGURED_PROFILE_LABELS = Object.freeze({
 });
 
 const copyObjects = (items) => items.map((item) => ({ ...item }));
+const serializeObjects = (items) => JSON.stringify(Array.isArray(items) ? items : []);
+const deserializeObjects = (payload) => {
+  if (typeof payload !== 'string' || !payload) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(payload);
+    return Array.isArray(parsed) ? copyObjects(parsed) : [];
+  } catch {
+    return [];
+  }
+};
+const getSerializedApproxBytes = (payload) => Buffer.byteLength(String(payload || ''), 'utf8');
 
 const delay = (ms) => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
@@ -184,7 +204,7 @@ const delay = (ms) => new Promise((resolve) => {
 });
 
 const normalizeStremioResultCacheEntry = (payload) => {
-  if (!payload || !Array.isArray(payload.streams)) {
+  if (!payload || (typeof payload.serializedStreams !== 'string' && !Array.isArray(payload.streams))) {
     return null;
   }
 
@@ -198,7 +218,12 @@ const normalizeStremioResultCacheEntry = (payload) => {
   return {
     expiresAt,
     staleExpiresAt,
-    streams: copyObjects(payload.streams)
+    approxBytes: getSerializedApproxBytes(typeof payload.serializedStreams === 'string'
+      ? payload.serializedStreams
+      : serializeObjects(payload.streams)),
+    serializedStreams: typeof payload.serializedStreams === 'string'
+      ? payload.serializedStreams
+      : serializeObjects(payload.streams)
   };
 };
 
@@ -327,6 +352,30 @@ const pruneMapByMaxEntries = (map, maxEntries) => {
     map.delete(oldestKey);
   }
 };
+
+const pruneMapByApproxBytes = (map, maxBytes, getEntryBytes = (entry) => entry?.approxBytes || 0) => {
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0 || map.size === 0) {
+    return;
+  }
+
+  let totalBytes = 0;
+
+  for (const entry of map.values()) {
+    totalBytes += Math.max(0, Number(getEntryBytes(entry)) || 0);
+  }
+
+  while (totalBytes > maxBytes && map.size > 0) {
+    const oldestKey = map.keys().next().value;
+
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    const oldestEntry = map.get(oldestKey);
+    totalBytes -= Math.max(0, Number(getEntryBytes(oldestEntry)) || 0);
+    map.delete(oldestKey);
+  }
+};
 const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
@@ -396,6 +445,9 @@ const isHighValueCacheStream = (stream) => {
 
 const shouldUseWeakResultCache = (streams) =>
   streams.length > 0 && !streams.some((stream) => isHighValueCacheStream(stream));
+
+const shouldCacheEmptyFastResult = (result) =>
+  result?.reason === 'all-complete';
 
 const hasForwardHeaders = (headers) =>
   Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
@@ -618,7 +670,6 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
   const blockedHosts = Array.isArray(streamOptions.blockHosts)
     ? streamOptions.blockHosts.filter(Boolean)
     : [];
-  const preferredAudioLanguage = normalizeAudioLanguageKey(streamOptions.preferredAudioLanguage);
 
   for (const stream of streams) {
     let reason = null;
@@ -642,14 +693,6 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 
       if (hostname && blockedHosts.some((blockedHost) => hostname.includes(blockedHost))) {
         reason = 'blockedHost';
-      }
-    }
-
-    if (!reason && preferredAudioLanguage) {
-      const languages = getStreamLanguages(stream);
-
-      if (languages.length > 0 && !languages.includes(preferredAudioLanguage)) {
-        reason = 'languageMismatch';
       }
     }
 
@@ -696,7 +739,7 @@ const summarizeStreamOptions = (streamOptions) => {
   }
 
   if (streamOptions.preferredAudioLanguage) {
-    parts.push(`Audio: ${streamOptions.preferredAudioLanguage} + Unknown`);
+    parts.push(`Prefer audio: ${streamOptions.preferredAudioLanguage}`);
   }
 
   if (normalizeDedupeMode(streamOptions.dedupeMode) !== 'off') {
@@ -725,6 +768,37 @@ const summarizeStreamOptions = (streamOptions) => {
   }
 
   return parts.length > 0 ? parts.join(', ') : 'Default HTTP playback';
+};
+
+const normalizePrivateCookie = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.slice(0, PRIVATE_PROVIDER_COOKIE_MAX_LENGTH);
+};
+
+const normalizePrivateProviderSettings = (value) => ({
+  febboxUiCookie: normalizePrivateCookie(value?.febboxUiCookie),
+  showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup)
+});
+
+const getPrivateProviderSettingsHash = (privateProviderSettings) => {
+  const normalized = normalizePrivateProviderSettings(privateProviderSettings);
+
+  if (!normalized.febboxUiCookie && !normalized.showboxOssGroup) {
+    return null;
+  }
+
+  return createHash('sha1')
+    .update(JSON.stringify(normalized))
+    .digest('hex');
 };
 
 const getDeliveryPriorityScore = (stream) => {
@@ -1084,7 +1158,9 @@ const AUDIO_LANGUAGE_PATTERNS = Object.freeze([
   ['Arabic', /(?:\barabic\b|\barab\b|عربي|مدبلج|مترجم)/u],
   ['Portuguese', /\bportuguese\b/u],
   ['Japanese', /\bjapanese\b/u],
-  ['Korean', /\bkorean\b/u]
+  ['Korean', /\bkorean\b/u],
+  ['Turkish', /\b(?:turkish|turkce|türkçe|tr)\b/u],
+  ['Italian', /\b(?:italian|italiano|ita)\b/u]
 ]);
 
 const normalizeAudioLanguageKey = (value) => {
@@ -1378,6 +1454,9 @@ export class StreamManager {
     this.activeStremioBackgroundRefreshes = 0;
     this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
     this.stremioResultCacheDirReady = null;
+    this.privateConfigDir = path.join(config.CACHE_DIR, 'private-configs');
+    this.privateConfigDirReady = null;
+    this.privateConfigStore = new Map();
     this.redisStreamResultCache = new RedisStreamResultCache();
     this.hubCloudCache = new Map();
     this.hubCloudInFlight = new Map();
@@ -1394,6 +1473,8 @@ export class StreamManager {
 
   async initialize() {
     await this.ensureStremioResultCacheDir();
+    await this.ensurePrivateConfigDir();
+    await this.loadPrivateConfigs();
     await this.redisStreamResultCache.initialize();
     this.startPopularStreamPrewarm();
   }
@@ -1513,7 +1594,9 @@ export class StreamManager {
     }
 
     pruneMapByMaxEntries(this.stremioResultCache, Math.max(50, Math.floor(config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES / 4)));
+    pruneMapByApproxBytes(this.stremioResultCache, Math.max(512 * 1024, Math.floor((config.STREMIO_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024) / 4)));
     pruneMapByMaxEntries(this.hubCloudCache, Math.max(20, Math.floor(config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES / 4)));
+    pruneMapByApproxBytes(this.hubCloudCache, Math.max(128 * 1024, Math.floor((config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024) / 4)));
   }
 
   startPopularStreamPrewarm() {
@@ -1614,16 +1697,179 @@ export class StreamManager {
     await this.stremioResultCacheDirReady;
   }
 
-  buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions }) {
+  async ensurePrivateConfigDir() {
+    if (!this.privateConfigDirReady) {
+      this.privateConfigDirReady = mkdir(this.privateConfigDir, { recursive: true });
+    }
+
+    await this.privateConfigDirReady;
+  }
+
+  normalizePrivateConfigRecord(payload) {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const providers = this.providerService.normalizeProviders(payload.providers);
+    const requestedQualityPriority = Array.isArray(payload.qualityPriority)
+      ? payload.qualityPriority
+        .map((value) => normalizeQualityKey(value))
+        .filter(Boolean)
+      : [];
+    const qualityPriority = requestedQualityPriority.filter((quality, index) =>
+      requestedQualityPriority.indexOf(quality) === index
+    );
+
+    for (const quality of DEFAULT_QUALITY_PRIORITY) {
+      if (!qualityPriority.includes(quality)) {
+        qualityPriority.push(quality);
+      }
+    }
+
+    const baseStreamOptions = payload.streamOptions && typeof payload.streamOptions === 'object'
+      ? payload.streamOptions
+      : {};
+    const streamOptions = {
+      webReadyOnly: Boolean(baseStreamOptions.webReadyOnly),
+      hideHeavyFormats: Boolean(baseStreamOptions.hideHeavyFormats),
+      maxSizeGb: Number.isFinite(Number(baseStreamOptions.maxSizeGb)) && Number(baseStreamOptions.maxSizeGb) > 0
+        ? Number(baseStreamOptions.maxSizeGb)
+        : 0,
+      blockHosts: Array.isArray(baseStreamOptions.blockHosts)
+        ? baseStreamOptions.blockHosts
+          .map((value) => String(value || '').trim().toLowerCase())
+          .filter(Boolean)
+          .filter((value, index, values) => values.indexOf(value) === index)
+        : [],
+      preferredAudioLanguage: normalizeAudioLanguageKey(baseStreamOptions.preferredAudioLanguage),
+      dedupeMode: normalizeDedupeMode(baseStreamOptions.dedupeMode),
+      preferHdr: Boolean(baseStreamOptions.preferHdr),
+      preferH264: Boolean(baseStreamOptions.preferH264),
+      preferSmallerFiles: Boolean(baseStreamOptions.preferSmallerFiles),
+      preferDirectHosts: Boolean(baseStreamOptions.preferDirectHosts)
+    };
+    const privateProviderSettings = normalizePrivateProviderSettings(payload.privateProviderSettings);
+    const profileCode = typeof payload.profileCode === 'string'
+      ? payload.profileCode.trim().toLowerCase()
+      : null;
+
+    return {
+      version: PRIVATE_CONFIG_VERSION,
+      providers,
+      qualityPriority,
+      streamOptions,
+      privateProviderSettings,
+      profileCode: profileCode && CONFIGURED_PROFILE_LABELS[profileCode] ? profileCode : null,
+      updatedAt: typeof payload.updatedAt === 'string' ? payload.updatedAt : new Date().toISOString()
+    };
+  }
+
+  getPrivateConfigPath(configId) {
+    return path.join(this.privateConfigDir, `${configId}.json`);
+  }
+
+  async loadPrivateConfigs() {
+    try {
+      await this.ensurePrivateConfigDir();
+      const entries = await readdir(this.privateConfigDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) {
+          continue;
+        }
+
+        const configId = entry.name.slice(0, -'.json'.length);
+
+        try {
+          const payload = JSON.parse(await readFile(this.getPrivateConfigPath(configId), 'utf8'));
+          const normalized = this.normalizePrivateConfigRecord(payload);
+
+          if (normalized) {
+            this.privateConfigStore.set(configId, normalized);
+          }
+        } catch (error) {
+          logger.warn('private config load failed', {
+            configId,
+            error
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('private config directory scan failed', { error });
+    }
+  }
+
+  getRequestedPrivateConfig(req) {
+    const configId = typeof req.params?.privateConfigId === 'string'
+      ? req.params.privateConfigId.trim()
+      : '';
+
+    if (!configId) {
+      return null;
+    }
+
+    const privateConfig = this.privateConfigStore.get(configId) || null;
+
+    if (!privateConfig) {
+      throw createHttpError(404, 'Private config not found');
+    }
+
+    return privateConfig;
+  }
+
+  getRequestedPrivateProviderSettings(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
+
+    if (!privateConfig) {
+      return { ...DEFAULT_PRIVATE_PROVIDER_SETTINGS };
+    }
+
+    return {
+      ...DEFAULT_PRIVATE_PROVIDER_SETTINGS,
+      ...normalizePrivateProviderSettings(privateConfig.privateProviderSettings)
+    };
+  }
+
+  async createPrivateConfig(payload) {
+    const normalized = this.normalizePrivateConfigRecord(payload);
+
+    if (!normalized) {
+      throw createHttpError(400, 'Invalid private config payload');
+    }
+
+    const configId = createHash('sha1')
+      .update(JSON.stringify({
+        version: PRIVATE_CONFIG_VERSION,
+        providers: normalized.providers,
+        qualityPriority: normalized.qualityPriority,
+        streamOptions: normalized.streamOptions,
+        privateProviderSettingsHash: getPrivateProviderSettingsHash(normalized.privateProviderSettings),
+        profileCode: normalized.profileCode
+      }))
+      .digest('hex')
+      .slice(0, 24);
+
+    await this.ensurePrivateConfigDir();
+    await writeFile(this.getPrivateConfigPath(configId), JSON.stringify(normalized));
+    this.privateConfigStore.set(configId, normalized);
+
+    return {
+      configId,
+      manifestPath: `/private/${configId}/manifest.json`
+    };
+  }
+
+  buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 26,
+      version: 34,
       tmdbId,
       mediaType,
       season: season ?? null,
       episode: episode ?? null,
       providers: providers ?? [],
       qualityPriority,
-      streamOptions: streamOptions ?? DEFAULT_STREAM_OPTIONS
+      streamOptions: streamOptions ?? DEFAULT_STREAM_OPTIONS,
+      privateProviderSettingsHash
     });
   }
 
@@ -1643,7 +1889,7 @@ export class StreamManager {
       touchMapEntry(this.stremioResultCache, cacheKey, entry);
       return {
         state: 'fresh',
-        streams: copyObjects(entry.streams),
+        streams: deserializeObjects(entry.serializedStreams),
         expiresAt: entry.expiresAt,
         staleExpiresAt: entry.staleExpiresAt
       };
@@ -1653,7 +1899,7 @@ export class StreamManager {
       touchMapEntry(this.stremioResultCache, cacheKey, entry);
       return {
         state: 'stale',
-        streams: copyObjects(entry.streams),
+        streams: deserializeObjects(entry.serializedStreams),
         expiresAt: entry.expiresAt,
         staleExpiresAt: entry.staleExpiresAt
       };
@@ -1696,6 +1942,7 @@ export class StreamManager {
 
       touchMapEntry(this.stremioResultCache, cacheKey, entry);
       pruneMapByMaxEntries(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES);
+      pruneMapByApproxBytes(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024);
 
       if (diskResult.state === 'fresh' || allowStale) {
         return diskResult;
@@ -1727,15 +1974,18 @@ export class StreamManager {
         freshTtlMs,
         config.STREMIO_RESULT_STALE_TTL_SECONDS * 1000
       );
+    const serializedStreams = serializeObjects(streams);
     const entry = {
       expiresAt: now + freshTtlMs,
       staleExpiresAt: now + staleTtlMs,
       weak: Boolean(weak),
-      streams: copyObjects(streams)
+      approxBytes: getSerializedApproxBytes(serializedStreams),
+      serializedStreams
     };
 
     touchMapEntry(this.stremioResultCache, cacheKey, entry);
     pruneMapByMaxEntries(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_ENTRIES);
+    pruneMapByApproxBytes(this.stremioResultCache, config.STREMIO_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024);
     await this.redisStreamResultCache.set(cacheKey, entry);
     await this.ensureStremioResultCacheDir();
 
@@ -1749,6 +1999,12 @@ export class StreamManager {
   }
 
   getRequestedProviders(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
+
+    if (privateConfig) {
+      return [...privateConfig.providers];
+    }
+
     const rawConfig = typeof req.params?.providerConfig === 'string'
       ? req.params.providerConfig
       : typeof req.query?.providers === 'string'
@@ -1769,6 +2025,12 @@ export class StreamManager {
   }
 
   getRequestedQualityPriority(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
+
+    if (privateConfig) {
+      return [...privateConfig.qualityPriority];
+    }
+
     const rawConfig = typeof req.params?.qualityConfig === 'string'
       ? req.params.qualityConfig
       : typeof req.query?.qualities === 'string'
@@ -1802,6 +2064,18 @@ export class StreamManager {
   }
 
   getRequestedStreamOptions(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
+
+    if (privateConfig) {
+      return {
+        ...DEFAULT_STREAM_OPTIONS,
+        ...privateConfig.streamOptions,
+        blockHosts: Array.isArray(privateConfig.streamOptions?.blockHosts)
+          ? [...privateConfig.streamOptions.blockHosts]
+          : []
+      };
+    }
+
     const rawConfig = typeof req.params?.optionConfig === 'string'
       ? req.params.optionConfig
       : typeof req.query?.options === 'string'
@@ -1865,6 +2139,12 @@ export class StreamManager {
   }
 
   getRequestedConfiguredProfile(req) {
+    const privateConfig = this.getRequestedPrivateConfig(req);
+
+    if (privateConfig?.profileCode) {
+      return CONFIGURED_PROFILE_LABELS[privateConfig.profileCode] || null;
+    }
+
     const rawConfig = typeof req.params?.optionConfig === 'string'
       ? req.params.optionConfig
       : typeof req.query?.options === 'string'
@@ -1889,11 +2169,12 @@ export class StreamManager {
     const providers = this.getRequestedProviders(req);
     const qualityPriority = this.getRequestedQualityPriority(req);
     const streamOptions = this.getRequestedStreamOptions(req);
+    const privateProviderSettingsHash = getPrivateProviderSettingsHash(this.getRequestedPrivateProviderSettings(req));
     const configuredProfile = this.getRequestedConfiguredProfile(req);
     const hasDefaultQualityPriority = qualityPriority.join(',') === DEFAULT_QUALITY_PRIORITY.join(',');
     const hasDefaultStreamOptions = JSON.stringify(streamOptions) === JSON.stringify(DEFAULT_STREAM_OPTIONS);
 
-    if (providers.length === 0 && hasDefaultQualityPriority && hasDefaultStreamOptions) {
+    if (providers.length === 0 && hasDefaultQualityPriority && hasDefaultStreamOptions && !privateProviderSettingsHash) {
       return {
         providers,
         qualityPriority,
@@ -1906,7 +2187,7 @@ export class StreamManager {
     }
 
     const providerHash = createHash('sha1')
-      .update(`${providers.join(',')}|${qualityPriority.join(',')}|${JSON.stringify(streamOptions)}`)
+      .update(`${providers.join(',')}|${qualityPriority.join(',')}|${JSON.stringify(streamOptions)}|${privateProviderSettingsHash || ''}`)
       .digest('hex')
       .slice(0, 10);
     const providerSummary = providers.length > 0
@@ -1982,6 +2263,10 @@ export class StreamManager {
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
       const streamOptions = this.getRequestedStreamOptions(req);
+      const privateProviderSettings = this.getRequestedPrivateProviderSettings(req);
+      const privateProviderSettingsHash = getPrivateProviderSettingsHash(privateProviderSettings);
+      const isConfiguredRequest = String(req.path || '').startsWith('/configured/')
+        || String(req.path || '').startsWith('/private/');
       const resultCacheKey = this.buildStremioResultCacheKey({
         tmdbId,
         mediaType: parsed.mediaType,
@@ -1989,7 +2274,8 @@ export class StreamManager {
         episode: parsed.episode,
         providers: requestedProviders,
         qualityPriority,
-        streamOptions
+        streamOptions,
+        privateProviderSettingsHash
       });
       this.userTracker?.trackStreamSearch(req, {
         imdbId: parsed.imdbId,
@@ -2010,6 +2296,32 @@ export class StreamManager {
         return;
       }
 
+      if (isConfiguredRequest && this.isLoadShedding()) {
+        logger.warn('serving configured request through degraded uncached path during load shedding', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          loadSheddingUntil: new Date(this.loadSheddingUntil).toISOString(),
+          reason: this.loadSheddingReason
+        });
+        const degradedStreams = await this.buildStremioStreams({
+          resultCacheKey,
+          baseUrl,
+          parsed,
+          requestedProviders,
+          qualityPriority,
+          streamOptions,
+          tmdbId,
+          privateProviderSettings,
+          cacheResult: false
+        });
+
+        res.setHeader('X-NebulaStreams-Mode', 'configured-degraded');
+        res.json({
+          streams: degradedStreams
+        });
+        return;
+      }
+
       const buildInput = {
         resultCacheKey,
         baseUrl,
@@ -2017,7 +2329,8 @@ export class StreamManager {
         requestedProviders,
         qualityPriority,
         streamOptions,
-        tmdbId
+        tmdbId,
+        privateProviderSettings
       };
 
       if (cachedResult?.state === 'stale') {
@@ -2097,7 +2410,8 @@ export class StreamManager {
     requestedProviders,
     qualityPriority,
     streamOptions,
-    tmdbId
+    tmdbId,
+    privateProviderSettings
   }) {
     const existingRequest = this.stremioResultInFlight.get(resultCacheKey);
 
@@ -2156,7 +2470,8 @@ export class StreamManager {
       requestedProviders,
       qualityPriority,
       streamOptions,
-      tmdbId
+      tmdbId,
+      privateProviderSettings
     });
 
     this.stremioResultInFlight.set(resultCacheKey, request);
@@ -2176,7 +2491,9 @@ export class StreamManager {
     requestedProviders,
     qualityPriority,
     streamOptions,
-    tmdbId
+    tmdbId,
+    privateProviderSettings,
+    cacheResult = true
   }) {
     const result = await this.providerService.getFastStreams({
       providers: requestedProviders.length > 0 ? requestedProviders : null,
@@ -2184,11 +2501,28 @@ export class StreamManager {
       mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
       season: parsed.season,
       episode: parsed.episode,
-      streamOptions
+      streamOptions,
+      privateProviderSettings
     });
 
     if (result.streams.length === 0) {
-      await this.setCachedStremioStreams(resultCacheKey, []);
+      if (cacheResult && shouldCacheEmptyFastResult(result)) {
+        await this.setCachedStremioStreams(resultCacheKey, []);
+      } else if (!cacheResult) {
+        logger.info('skipping stremio cache write for degraded configured request', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          reason: result.reason,
+          providersTried: result.tried
+        });
+      } else {
+        logger.info('skipping empty stremio cache write for partial fast search result', {
+          tmdbId,
+          mediaType: parsed.mediaType,
+          reason: result.reason,
+          providersTried: result.tried
+        });
+      }
       return [];
     }
 
@@ -2199,12 +2533,15 @@ export class StreamManager {
       logger.warn('stremio stream search produced no configured streams', {
         tmdbId,
         mediaType: parsed.mediaType,
+        reason: result.reason,
         providersTried: result.tried,
         rawStreamCount: result.streams.length,
         normalizedStreamCount: normalizedStreams.length,
         streamOptions
       });
-      await this.setCachedStremioStreams(resultCacheKey, []);
+      if (cacheResult && shouldCacheEmptyFastResult(result)) {
+        await this.setCachedStremioStreams(resultCacheKey, []);
+      }
       return [];
     }
 
@@ -2220,7 +2557,10 @@ export class StreamManager {
       .map((stream) => toStremioStreamObject(stream, parsed))
       .filter(Boolean);
 
-    await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache });
+    if (cacheResult) {
+      await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache });
+    }
+
     return stremioStreams;
   }
 
@@ -2279,6 +2619,25 @@ export class StreamManager {
       logger.error('add-source failed', {
         error
       });
+      next(error);
+    }
+  }
+
+  async handleCreatePrivateConfig(req, res, next) {
+    try {
+      const { configId, manifestPath } = await this.createPrivateConfig({
+        providers: req.body?.providers,
+        qualityPriority: req.body?.qualityPriority,
+        streamOptions: req.body?.streamOptions,
+        privateProviderSettings: req.body?.privateProviderSettings,
+        profileCode: req.body?.profileCode
+      });
+
+      res.json({
+        configId,
+        manifestPath
+      });
+    } catch (error) {
       next(error);
     }
   }
@@ -2408,13 +2767,15 @@ export class StreamManager {
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
       const streamOptions = this.getRequestedStreamOptions(req);
+      const privateProviderSettings = this.getRequestedPrivateProviderSettings(req);
       const result = await this.providerService.getFastStreams({
         providers: requestedProviders.length > 0 ? requestedProviders : null,
         tmdbId,
         mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
         season: parsed.season,
         episode: parsed.episode,
-        streamOptions
+        streamOptions,
+        privateProviderSettings
       });
       const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
       const { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
@@ -2642,8 +3003,13 @@ export class StreamManager {
           || initialHtml.match(/id=["']download["'][^>]*href=["']([^"']+)["']/i);
 
         if (!redirectMatch?.[1]) {
-          touchMapEntry(this.hubCloudCache, normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          touchMapEntry(this.hubCloudCache, normalizedUrl, {
+            expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
+            value: [],
+            approxBytes: 2
+          });
           pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
+          pruneMapByApproxBytes(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024);
           return [];
         }
 
@@ -2666,8 +3032,13 @@ export class StreamManager {
           .sort((left, right) => right.score - left.score);
 
         if (candidates.length === 0) {
-          touchMapEntry(this.hubCloudCache, normalizedUrl, { expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS, value: [] });
+          touchMapEntry(this.hubCloudCache, normalizedUrl, {
+            expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
+            value: [],
+            approxBytes: 2
+          });
           pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
+          pruneMapByApproxBytes(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024);
           return [];
         }
 
@@ -2725,9 +3096,11 @@ export class StreamManager {
 
         touchMapEntry(this.hubCloudCache, normalizedUrl, {
           expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
-          value: deduped
+          value: deduped,
+          approxBytes: getSerializedApproxBytes(JSON.stringify(deduped))
         });
         pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
+        pruneMapByApproxBytes(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024);
 
         return deduped.map((entry) => ({ ...entry }));
       } catch (error) {
@@ -2737,9 +3110,11 @@ export class StreamManager {
         });
         touchMapEntry(this.hubCloudCache, normalizedUrl, {
           expiresAt: Date.now() + (10 * 60 * 1000),
-          value: []
+          value: [],
+          approxBytes: 2
         });
         pruneMapByMaxEntries(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES);
+        pruneMapByApproxBytes(this.hubCloudCache, config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024);
         return [];
       }
     })();

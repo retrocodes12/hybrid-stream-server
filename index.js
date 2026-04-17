@@ -1337,6 +1337,19 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   </div>
 
                   <div class="field">
+                    <label class="field-label" for="febbox-ui-cookie">Febbox UI cookie for ShowBox</label>
+                    <input
+                      id="febbox-ui-cookie"
+                      class="field-input"
+                      type="password"
+                      placeholder="Optional personal token"
+                      spellcheck="false"
+                      autocomplete="off"
+                    >
+                    <div class="field-help">Optional. This enables ShowBox with your own Febbox UI cookie and is stored behind a private config id instead of being exposed in the manifest URL.</div>
+                  </div>
+
+                  <div class="field">
                     <label class="field-label" for="dedupe-mode">Deduplication mode</label>
                     <select id="dedupe-mode" class="field-input">
                       <option value="off">Off</option>
@@ -1485,6 +1498,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const preferredAudioLanguage = document.getElementById('preferred-audio-language');
       const maxSizeGb = document.getElementById('max-size-gb');
       const blockedHosts = document.getElementById('blocked-hosts');
+      const febboxUiCookie = document.getElementById('febbox-ui-cookie');
       const dedupeMode = document.getElementById('dedupe-mode');
       const overviewProviderCount = document.getElementById('overview-provider-count');
       const presetStatus = document.getElementById('preset-status');
@@ -1496,6 +1510,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const runPreviewButton = document.getElementById('run-preview');
       const previewResult = document.getElementById('preview-result');
       const navItems = Array.from(document.querySelectorAll('[data-section-target]'));
+      let latestManifestPath = '/manifest.json';
+      let manifestResolveNonce = 0;
 
       const escapeHtmlClient = (value) => String(value)
         .replaceAll('&', '&amp;')
@@ -1833,6 +1849,67 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         return '/configured/' + providerSegment + '/' + qualitySegment + '/' + encodeURIComponent(optionTokens.join(',')) + '/manifest.json';
       };
 
+      const buildPrivateConfigPayload = () => {
+        const orderedProviders = getOrderedProviders();
+
+        return {
+        providers: orderedProviders.length === 0 || orderedProviders.length === providerData.length
+          ? []
+          : orderedProviders,
+        qualityPriority: [...qualityPriority],
+        streamOptions: {
+          webReadyOnly: webReadyOnly.checked,
+          hideHeavyFormats: hideHeavyFormats.checked,
+          maxSizeGb: Number.parseFloat(maxSizeGb.value) > 0 ? Number.parseFloat(maxSizeGb.value) : 0,
+          blockHosts: blockedHosts.value
+            .split(/[,\\n]/)
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean)
+            .filter((value, index, values) => values.indexOf(value) === index),
+          preferredAudioLanguage: preferredAudioLanguage.value || null,
+          dedupeMode: dedupeMode.value || 'off',
+          preferHdr: preferHdr.checked,
+          preferH264: preferH264.checked,
+          preferSmallerFiles: preferSmallerFiles.checked,
+          preferDirectHosts: preferDirectHosts.checked
+        },
+        privateProviderSettings: {
+          febboxUiCookie: febboxUiCookie.value.trim()
+        },
+        profileCode: activePresetId && presetDefinitions[activePresetId]?.code
+          ? presetDefinitions[activePresetId].code.toLowerCase()
+          : null
+        };
+      };
+
+      const resolveManifestPath = async () => {
+        const privateCookie = febboxUiCookie.value.trim();
+
+        if (!privateCookie) {
+          return buildManifestPath();
+        }
+
+        const response = await fetch(origin + '/configure/private-config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(buildPrivateConfigPayload())
+        });
+
+        if (!response.ok) {
+          throw new Error('Private config request failed');
+        }
+
+        const payload = await response.json();
+
+        if (!payload || typeof payload.manifestPath !== 'string' || !payload.manifestPath) {
+          throw new Error('Private config response was invalid');
+        }
+
+        return payload.manifestPath;
+      };
+
       const updateProviderSummary = () => {
         const orderedProviders = getOrderedProviders();
 
@@ -1885,19 +1962,46 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         ).join('');
       };
 
-      const updateManifest = () => {
-        manifestUrl.textContent = origin + buildManifestPath();
+      const updateManifest = async () => {
         updateProviderSummary();
+        const requestNonce = ++manifestResolveNonce;
+        const fallbackPath = buildManifestPath();
+
+        latestManifestPath = fallbackPath;
+        manifestUrl.textContent = febboxUiCookie.value.trim()
+          ? 'Preparing private manifest...'
+          : origin + fallbackPath;
+
+        try {
+          const resolvedPath = await resolveManifestPath();
+
+          if (requestNonce !== manifestResolveNonce) {
+            return;
+          }
+
+          latestManifestPath = resolvedPath;
+          manifestUrl.textContent = origin + resolvedPath;
+        } catch (error) {
+          console.error('Manifest resolution failed', error);
+
+          if (requestNonce !== manifestResolveNonce) {
+            return;
+          }
+
+          latestManifestPath = fallbackPath;
+          manifestUrl.textContent = origin + fallbackPath;
+          showFlash('Private manifest setup failed.', true);
+        }
       };
 
-      const buildPreviewPath = () => {
+      const buildPreviewPath = async () => {
         const rawId = previewId.value.trim();
 
         if (!rawId) {
           return null;
         }
 
-        const manifestPath = buildManifestPath();
+        const manifestPath = await resolveManifestPath();
         const prefix = manifestPath.replace(/\\/manifest\\.json$/u, '');
         return (prefix || '') + '/preview/' + encodeURIComponent(previewType.value) + '/' + encodeURIComponent(rawId) + '.json';
       };
@@ -1971,7 +2075,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const runPreview = async () => {
-        const previewPath = buildPreviewPath();
+        const previewPath = await buildPreviewPath();
 
         if (!previewPath) {
           showFlash('Enter an IMDb id first.', true);
@@ -2084,6 +2188,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateManifest();
       });
 
+      febboxUiCookie.addEventListener('input', () => {
+        markPresetAsCustom();
+        updateManifest();
+      });
+
       presetButtons.forEach((button) => {
         button.addEventListener('click', () => {
           applyPreset(button.dataset.presetId);
@@ -2098,12 +2207,24 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         }
       });
 
-      installButton.addEventListener('click', () => {
-        window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(manifestUrl.textContent.trim());
+      installButton.addEventListener('click', async () => {
+        try {
+          const manifestPath = await resolveManifestPath();
+          window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(origin + manifestPath);
+        } catch (error) {
+          console.error('Install manifest resolution failed', error);
+          showFlash('Install URL could not be prepared.', true);
+        }
       });
 
-      copyButton.addEventListener('click', () => {
-        copyText(manifestUrl.textContent.trim(), 'Manifest URL copied.');
+      copyButton.addEventListener('click', async () => {
+        try {
+          const manifestPath = await resolveManifestPath();
+          copyText(origin + manifestPath, 'Manifest URL copied.');
+        } catch (error) {
+          console.error('Copy manifest resolution failed', error);
+          showFlash('Manifest URL could not be prepared.', true);
+        }
       });
 
       if (donateToggle && donationWidgetPanel) {
@@ -2981,6 +3102,7 @@ const isExpensiveBotProtectionPath = (pathName) =>
   || pathName.startsWith('/preview/')
   || pathName.startsWith('/stremio/preview/')
   || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/preview/')))
+  || (pathName.startsWith('/private/') && (pathName.includes('/stream/') || pathName.includes('/preview/')))
   || pathName.startsWith('/providers/');
 
 const isAllowedBotProtectionClient = (userAgent) => {
@@ -2992,6 +3114,31 @@ const isAllowedBotProtectionClient = (userAgent) => {
     || normalized.includes('chrome/')
     || normalized.includes('safari/')
     || normalized.includes('firefox/');
+};
+
+const isLikelyAddonPlaybackClient = (req, pathName, userAgent) => {
+  if ((req.method || 'GET').toUpperCase() !== 'GET' || !isExpensiveBotProtectionPath(pathName)) {
+    return false;
+  }
+
+  const normalizedUserAgent = String(userAgent || '').trim().toLowerCase();
+
+  if (normalizedUserAgent) {
+    return false;
+  }
+
+  const accepts = String(req.headers.accept || '').toLowerCase();
+  const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+  const wantsStructuredResponse = accepts.includes('application/json')
+    || accepts.includes('text/plain')
+    || accepts.includes('*/*');
+  const isHtmlNavigation = accepts.includes('text/html') && !wantsStructuredResponse;
+  const isAddonDataPath = pathName.endsWith('.json')
+    || pathName.includes('/stream/')
+    || pathName.includes('/preview/')
+    || pathName.endsWith('/manifest.json');
+
+  return wantsStructuredResponse && !isHtmlNavigation && isAddonDataPath && fetchDest !== 'document';
 };
 
 const sendBotProtectionResponse = (req, res, retryAfterSeconds) => {
@@ -3008,6 +3155,23 @@ const sendBotProtectionResponse = (req, res, retryAfterSeconds) => {
 
   res.status(403).json({
     error: 'Forbidden'
+  });
+};
+
+const sendBotThrottleResponse = (req, res, retryAfterSeconds) => {
+  if (retryAfterSeconds) {
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+  }
+
+  const acceptsHtml = String(req.headers.accept || '').includes('text/html');
+
+  if (acceptsHtml) {
+    res.status(429).type('html').send('Too many requests. Try again shortly.');
+    return;
+  }
+
+  res.status(429).json({
+    error: 'Too Many Requests'
   });
 };
 
@@ -3067,8 +3231,16 @@ const createBotProtection = () => {
     const pathName = req.path || '';
     const isExpensivePath = isExpensiveBotProtectionPath(pathName);
     const userAgent = String(req.headers['user-agent'] || '').trim();
+    const normalizedUserAgent = userAgent.toLowerCase();
+    const trustedStremioClient = normalizedUserAgent.includes('stremio/');
+    const likelyAddonPlaybackClient = isLikelyAddonPlaybackClient(req, pathName, userAgent);
     const suspiciousUserAgent = BOT_STRICT_USER_AGENT_PATTERN.test(userAgent)
       || (BOT_USER_AGENT_PATTERN.test(userAgent) && !isAllowedBotProtectionClient(userAgent));
+
+    if (trustedStremioClient && !suspiciousUserAgent) {
+      next();
+      return;
+    }
 
     if (!isExpensivePath && !suspiciousUserAgent) {
       next();
@@ -3106,12 +3278,30 @@ const createBotProtection = () => {
       state.suspiciousCount += 1;
     }
 
-    const overExpensiveLimit = state.expensiveCount > config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT;
+    const expensiveRequestLimit = likelyAddonPlaybackClient
+      ? Math.max(config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT * 3, config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT + 18)
+      : config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT;
+    const overExpensiveLimit = state.expensiveCount > expensiveRequestLimit;
     const overSuspiciousLimit = state.suspiciousCount > config.BOT_PROTECTION_SUSPICIOUS_REQUEST_LIMIT;
     const instantScraperBlock = suspiciousUserAgent && isExpensivePath;
 
     if (!overExpensiveLimit && !overSuspiciousLimit && !instantScraperBlock) {
       next();
+      return;
+    }
+
+    if (overExpensiveLimit && likelyAddonPlaybackClient && !suspiciousUserAgent) {
+      const retryAfterSeconds = Math.max(5, Math.min(30, Math.ceil((state.resetAt - now) / 1000)));
+      logger.warn('bot protection rate limited request', {
+        reason: 'expensive-request-throttle',
+        path: pathName,
+        ip,
+        expensiveCount: state.expensiveCount,
+        expensiveRequestLimit,
+        retryAfterSeconds,
+        userAgent: userAgent.slice(0, 160)
+      });
+      sendBotThrottleResponse(req, res, retryAfterSeconds);
       return;
     }
 
@@ -3364,7 +3554,8 @@ const bootstrap = async () => {
         || req.path === '/stremio/manifest.json'
         || req.path.startsWith('/preview/')
         || req.path.startsWith('/stremio/preview/')
-        || req.path.startsWith('/configured/');
+        || req.path.startsWith('/configured/')
+        || req.path.startsWith('/private/');
     }
   }));
   app.use(createRateLimiter({
@@ -3509,16 +3700,23 @@ const bootstrap = async () => {
 
   app.get('/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.post('/configure/private-config', streamManager.handleCreatePrivateConfig.bind(streamManager));
   app.get('/configured/:providerConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/private/:privateConfigId/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
+  app.get('/private/:privateConfigId/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
+  app.get('/private/:privateConfigId/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
+  app.get('/private/:privateConfigId/stremio/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));
   app.get('/configured/:providerConfig/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
   app.get('/configured/:providerConfig/preview/:type/:id.json', streamManager.handleStremioPreview.bind(streamManager));

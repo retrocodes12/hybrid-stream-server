@@ -75,6 +75,19 @@ const createEmptyEntry = () => ({
 });
 
 const getEntryLastSeenMs = (entry) => Date.parse(entry?.lastSeenAt || '') || 0;
+const classifyEntry = (entry = {}) => {
+  const humanOnly = entry.humanHits > 0 && entry.botHits === 0;
+  const botOnly = entry.botHits > 0 && entry.humanHits === 0;
+  const mixed = entry.botHits > 0 && entry.humanHits > 0;
+
+  return {
+    humanOnly,
+    botOnly,
+    mixed,
+    streamUser: humanOnly && entry.streamHits > 0,
+    configureUser: humanOnly && entry.configureHits > 0
+  };
+};
 
 const createEmptyBaseline = () => ({
   totalUsers: 0,
@@ -92,6 +105,21 @@ const createEmptyBaseline = () => ({
   configureUsers: 0,
   configureRequests: 0
 });
+
+const MONOTONIC_STAT_KEYS = Object.freeze([
+  'totalUsers',
+  'totalTrackedRequests',
+  'rawUniqueClients',
+  'rawTrackedRequests',
+  'botClients',
+  'botRequests',
+  'mixedClients',
+  'streamUsers',
+  'streamRequests',
+  'manifestRequests',
+  'configureUsers',
+  'configureRequests'
+]);
 
 const toSafeInteger = (value) => Number.isInteger(value) && value > 0 ? value : 0;
 const toPositiveNumberOrNull = (value) => {
@@ -189,6 +217,24 @@ const normalizeBaseline = (baseline = {}) => {
   return normalized;
 };
 
+const createEmptyStatsFloor = () => Object.fromEntries(
+  MONOTONIC_STAT_KEYS.map((key) => [key, 0])
+);
+
+const normalizeStatsFloor = (statsFloor = {}) => {
+  const normalized = createEmptyStatsFloor();
+
+  if (!statsFloor || typeof statsFloor !== 'object') {
+    return normalized;
+  }
+
+  for (const key of MONOTONIC_STAT_KEYS) {
+    normalized[key] = toSafeInteger(statsFloor[key]);
+  }
+
+  return normalized;
+};
+
 const readJsonFile = async (filePath) => JSON.parse(await readFile(filePath, 'utf8'));
 
 export class UserTrackerService {
@@ -201,6 +247,7 @@ export class UserTrackerService {
     this.totalManifestRequests = 0;
     this.totalConfigureRequests = 0;
     this.baseline = createEmptyBaseline();
+    this.statsFloor = createEmptyStatsFloor();
     this.streamSearches = new Map();
     this.flushTimer = null;
     this.flushInFlight = null;
@@ -223,6 +270,7 @@ export class UserTrackerService {
       this.totalManifestRequests = Number.isInteger(payload.totalManifestRequests) ? payload.totalManifestRequests : 0;
       this.totalConfigureRequests = Number.isInteger(payload.totalConfigureRequests) ? payload.totalConfigureRequests : 0;
       this.baseline = normalizeBaseline(payload.baseline);
+      this.statsFloor = normalizeStatsFloor(payload.statsFloor);
 
       if (payload.users && typeof payload.users === 'object') {
         for (const [fingerprint, user] of Object.entries(payload.users)) {
@@ -251,6 +299,7 @@ export class UserTrackerService {
 
       this.pruneEntries();
       this.pruneStreamSearches();
+      this.migrateStatsFloorToBaseline();
     } catch (error) {
       logger.warn('user tracker state load failed', { error });
     }
@@ -363,6 +412,12 @@ export class UserTrackerService {
       .map(([fingerprint]) => fingerprint);
 
     for (const fingerprint of oldestFingerprints) {
+      const entry = this.entries.get(fingerprint);
+
+      if (entry) {
+        this.promoteEntryToBaseline(entry);
+      }
+
       this.entries.delete(fingerprint);
     }
   }
@@ -421,6 +476,10 @@ export class UserTrackerService {
   }
 
   getStats() {
+    return this.computeStatsRaw();
+  }
+
+  computeStatsRaw() {
     const now = Date.now();
     let active24h = 0;
     let active7d = 0;
@@ -432,18 +491,16 @@ export class UserTrackerService {
 
     for (const entry of this.entries.values()) {
       const lastSeenMs = Date.parse(entry.lastSeenAt || '');
-      const humanOnly = entry.humanHits > 0 && entry.botHits === 0;
-      const botOnly = entry.botHits > 0 && entry.humanHits === 0;
-      const mixed = entry.botHits > 0 && entry.humanHits > 0;
+      const { humanOnly, botOnly, mixed, streamUser, configureUser } = classifyEntry(entry);
 
       if (humanOnly) {
         totalHumanUsers += 1;
 
-        if (entry.streamHits > 0) {
+        if (streamUser) {
           streamUsers += 1;
         }
 
-        if (entry.configureHits > 0) {
+        if (configureUser) {
           configureUsers += 1;
         }
       } else if (botOnly) {
@@ -467,8 +524,8 @@ export class UserTrackerService {
 
     return {
       totalUsers: this.baseline.totalUsers + totalHumanUsers,
-      activeUsers24h: this.baseline.activeUsers24h + active24h,
-      activeUsers7d: this.baseline.activeUsers7d + active7d,
+      activeUsers24h: active24h,
+      activeUsers7d: active7d,
       totalTrackedRequests: this.baseline.totalTrackedRequests + this.totalHumanRequests,
       rawUniqueClients: this.baseline.rawUniqueClients + this.entries.size,
       rawTrackedRequests: this.baseline.rawTrackedRequests + this.totalRequests,
@@ -482,6 +539,66 @@ export class UserTrackerService {
       configureRequests: this.baseline.configureRequests + this.totalConfigureRequests,
       popularStreamSearches: this.streamSearches.size
     };
+  }
+
+  promoteEntryToBaseline(entry) {
+    const { humanOnly, botOnly, mixed, streamUser, configureUser } = classifyEntry(entry);
+
+    this.baseline.rawUniqueClients += 1;
+
+    if (humanOnly) {
+      this.baseline.totalUsers += 1;
+
+      if (streamUser) {
+        this.baseline.streamUsers += 1;
+      }
+
+      if (configureUser) {
+        this.baseline.configureUsers += 1;
+      }
+
+      return;
+    }
+
+    if (botOnly) {
+      this.baseline.botClients += 1;
+      return;
+    }
+
+    if (mixed) {
+      this.baseline.mixedClients += 1;
+    }
+  }
+
+  migrateStatsFloorToBaseline() {
+    const hasFloor = MONOTONIC_STAT_KEYS.some((key) => toSafeInteger(this.statsFloor[key]) > 0);
+
+    this.baseline.activeUsers24h = 0;
+    this.baseline.activeUsers7d = 0;
+
+    if (!hasFloor) {
+      this.statsFloor = createEmptyStatsFloor();
+      return;
+    }
+
+    const currentStats = this.computeStatsRaw();
+    let migrated = false;
+
+    for (const key of MONOTONIC_STAT_KEYS) {
+      const floorValue = toSafeInteger(this.statsFloor[key]);
+      const currentValue = toSafeInteger(currentStats[key]);
+
+      if (floorValue > currentValue) {
+        this.baseline[key] += floorValue - currentValue;
+        migrated = true;
+      }
+    }
+
+    this.statsFloor = createEmptyStatsFloor();
+
+    if (migrated) {
+      this.scheduleFlush();
+    }
   }
 
   async close() {
@@ -531,6 +648,7 @@ export class UserTrackerService {
       totalManifestRequests: this.totalManifestRequests,
       totalConfigureRequests: this.totalConfigureRequests,
       baseline: this.baseline,
+      statsFloor: this.statsFloor,
       users: Object.fromEntries(this.entries.entries()),
       streamSearches: Object.fromEntries(this.streamSearches.entries())
     };
