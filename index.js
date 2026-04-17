@@ -1337,6 +1337,19 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                   </div>
 
                   <div class="field">
+                    <label class="field-label" for="custom-proxy-url">Custom proxy URL</label>
+                    <input
+                      id="custom-proxy-url"
+                      class="field-input"
+                      type="text"
+                      placeholder="Optional. Example: https://your-proxy.example/?url={url}&headers={headers}"
+                      spellcheck="false"
+                      autocomplete="off"
+                    >
+                    <div class="field-help">Optional. If set, HTTP streams are rewritten through your proxy. Supports <code>{url}</code> and <code>{headers}</code> placeholders. If you only provide a base URL, NebulaStreams appends <code>?url=...</code> and <code>&headers=...</code> automatically. Stored behind a private config id.</div>
+                  </div>
+
+                  <div class="field">
                     <label class="field-label" for="febbox-ui-cookie">Febbox UI cookie for ShowBox</label>
                     <input
                       id="febbox-ui-cookie"
@@ -1498,6 +1511,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const preferredAudioLanguage = document.getElementById('preferred-audio-language');
       const maxSizeGb = document.getElementById('max-size-gb');
       const blockedHosts = document.getElementById('blocked-hosts');
+      const customProxyUrl = document.getElementById('custom-proxy-url');
       const febboxUiCookie = document.getElementById('febbox-ui-cookie');
       const dedupeMode = document.getElementById('dedupe-mode');
       const overviewProviderCount = document.getElementById('overview-provider-count');
@@ -1565,6 +1579,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: true,
           preferSmallerFiles: true,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: '',
           maxSizeGb: '5',
           blockedHosts: '',
@@ -1581,6 +1596,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: true,
           preferSmallerFiles: true,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: '',
           maxSizeGb: '3',
           blockedHosts: '',
@@ -1597,6 +1613,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: false,
+          customProxyUrl: '',
           preferredAudioLanguage: '',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1613,6 +1630,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: 'Japanese',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1629,6 +1647,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: '',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1645,6 +1664,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: 'Turkish',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1661,6 +1681,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: 'Italian',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1677,6 +1698,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: 'Latino',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1693,6 +1715,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferH264: false,
           preferSmallerFiles: false,
           preferDirectHosts: true,
+          customProxyUrl: '',
           preferredAudioLanguage: 'Arabic',
           maxSizeGb: '0',
           blockedHosts: '',
@@ -1755,6 +1778,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         preferH264.checked = Boolean(preset.preferH264);
         preferSmallerFiles.checked = Boolean(preset.preferSmallerFiles);
         preferDirectHosts.checked = Boolean(preset.preferDirectHosts);
+        customProxyUrl.value = preset.customProxyUrl || '';
         preferredAudioLanguage.value = preset.preferredAudioLanguage || '';
         maxSizeGb.value = preset.maxSizeGb || '0';
         blockedHosts.value = preset.blockedHosts || '';
@@ -1871,7 +1895,8 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           preferHdr: preferHdr.checked,
           preferH264: preferH264.checked,
           preferSmallerFiles: preferSmallerFiles.checked,
-          preferDirectHosts: preferDirectHosts.checked
+          preferDirectHosts: preferDirectHosts.checked,
+          customProxyUrl: customProxyUrl.value.trim() || null
         },
         privateProviderSettings: {
           febboxUiCookie: febboxUiCookie.value.trim()
@@ -1884,8 +1909,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const resolveManifestPath = async () => {
         const privateCookie = febboxUiCookie.value.trim();
+        const configuredProxyUrl = customProxyUrl.value.trim();
 
-        if (!privateCookie) {
+        if (!privateCookie && !configuredProxyUrl) {
           return buildManifestPath();
         }
 
@@ -2184,6 +2210,11 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       });
 
       blockedHosts.addEventListener('input', () => {
+        markPresetAsCustom();
+        updateManifest();
+      });
+
+      customProxyUrl.addEventListener('input', () => {
         markPresetAsCustom();
         updateManifest();
       });

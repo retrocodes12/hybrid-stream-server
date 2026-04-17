@@ -158,7 +158,8 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferHdr: false,
   preferH264: false,
   preferSmallerFiles: false,
-  preferDirectHosts: false
+  preferDirectHosts: false,
+  customProxyUrl: null
 });
 const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
   febboxUiCookie: null,
@@ -767,6 +768,10 @@ const summarizeStreamOptions = (streamOptions) => {
     parts.push('Prefer direct hosts');
   }
 
+  if (streamOptions.customProxyUrl) {
+    parts.push('Custom proxy');
+  }
+
   return parts.length > 0 ? parts.join(', ') : 'Default HTTP playback';
 };
 
@@ -784,6 +789,30 @@ const normalizePrivateCookie = (value) => {
   return trimmed.slice(0, PRIVATE_PROVIDER_COOKIE_MAX_LENGTH);
 };
 
+const normalizeCustomProxyUrl = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(trimmed);
+
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return null;
+    }
+
+    return parsedUrl.toString();
+  } catch {
+    return null;
+  }
+};
+
 const normalizePrivateProviderSettings = (value) => ({
   febboxUiCookie: normalizePrivateCookie(value?.febboxUiCookie),
   showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup)
@@ -799,6 +828,37 @@ const getPrivateProviderSettingsHash = (privateProviderSettings) => {
   return createHash('sha1')
     .update(JSON.stringify(normalized))
     .digest('hex');
+};
+
+const buildCustomProxyStreamUrl = (stream, customProxyUrl) => {
+  const normalizedProxyUrl = normalizeCustomProxyUrl(customProxyUrl);
+
+  if (!normalizedProxyUrl || !stream || !stream.url || stream.transport !== 'http') {
+    return null;
+  }
+
+  const serializedHeaders = hasForwardHeaders(stream.headers)
+    ? JSON.stringify(stream.headers)
+    : '';
+
+  if (normalizedProxyUrl.includes('{url}') || normalizedProxyUrl.includes('{headers}')) {
+    return normalizedProxyUrl
+      .replaceAll('{url}', encodeURIComponent(stream.url))
+      .replaceAll('{headers}', encodeURIComponent(serializedHeaders));
+  }
+
+  try {
+    const proxyUrl = new URL(normalizedProxyUrl);
+    proxyUrl.searchParams.set('url', stream.url);
+
+    if (serializedHeaders) {
+      proxyUrl.searchParams.set('headers', serializedHeaders);
+    }
+
+    return proxyUrl.toString();
+  } catch {
+    return null;
+  }
 };
 
 const getDeliveryPriorityScore = (stream) => {
@@ -1315,7 +1375,7 @@ const getTorrentSources = (magnet) => {
   }
 };
 
-const toStremioStreamObject = (stream, parsedRequest) => {
+const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_STREAM_OPTIONS) => {
   const streamQuality = stream.quality || 'Unknown';
   const providerLabel = stream.provider ? toTitleCaseLabel(stream.provider) : 'Default';
   const base = {
@@ -1348,13 +1408,15 @@ const toStremioStreamObject = (stream, parsedRequest) => {
     return null;
   }
 
-  const requestHeaders = hasForwardHeaders(stream.headers) ? { ...stream.headers } : null;
-  const isWebReady = isWebReadyHttpStream(stream);
+  const proxiedUrl = buildCustomProxyStreamUrl(stream, streamOptions.customProxyUrl);
+  const requestHeaders = proxiedUrl ? null : hasForwardHeaders(stream.headers) ? { ...stream.headers } : null;
+  const streamUrl = proxiedUrl || stream.url;
+  const isWebReady = proxiedUrl ? true : isWebReadyHttpStream(stream);
 
   return {
     ...base,
-    url: stream.url,
-    ...(extractFilenameFromUrl(stream.url) ? { filename: extractFilenameFromUrl(stream.url) } : {}),
+    url: streamUrl,
+    ...(extractFilenameFromUrl(streamUrl) ? { filename: extractFilenameFromUrl(streamUrl) } : {}),
     behaviorHints: {
       ...base.behaviorHints,
       notWebReady: !isWebReady,
@@ -1746,7 +1808,8 @@ export class StreamManager {
       preferHdr: Boolean(baseStreamOptions.preferHdr),
       preferH264: Boolean(baseStreamOptions.preferH264),
       preferSmallerFiles: Boolean(baseStreamOptions.preferSmallerFiles),
-      preferDirectHosts: Boolean(baseStreamOptions.preferDirectHosts)
+      preferDirectHosts: Boolean(baseStreamOptions.preferDirectHosts),
+      customProxyUrl: normalizeCustomProxyUrl(baseStreamOptions.customProxyUrl)
     };
     const privateProviderSettings = normalizePrivateProviderSettings(payload.privateProviderSettings);
     const profileCode = typeof payload.profileCode === 'string'
@@ -2072,7 +2135,8 @@ export class StreamManager {
         ...privateConfig.streamOptions,
         blockHosts: Array.isArray(privateConfig.streamOptions?.blockHosts)
           ? [...privateConfig.streamOptions.blockHosts]
-          : []
+          : [],
+        customProxyUrl: normalizeCustomProxyUrl(privateConfig.streamOptions?.customProxyUrl)
       };
     }
 
@@ -2134,7 +2198,8 @@ export class StreamManager {
       preferHdr: tokens.includes('prefer-hdr'),
       preferH264: tokens.includes('prefer-h264'),
       preferSmallerFiles: tokens.includes('prefer-smaller-files'),
-      preferDirectHosts: tokens.includes('prefer-direct-hosts')
+      preferDirectHosts: tokens.includes('prefer-direct-hosts'),
+      customProxyUrl: null
     };
   }
 
@@ -2554,7 +2619,7 @@ export class StreamManager {
     );
     const useWeakCache = shouldUseWeakResultCache(dedupedStreams);
     const stremioStreams = dedupedStreams
-      .map((stream) => toStremioStreamObject(stream, parsed))
+      .map((stream) => toStremioStreamObject(stream, parsed, streamOptions))
       .filter(Boolean);
 
     if (cacheResult) {
