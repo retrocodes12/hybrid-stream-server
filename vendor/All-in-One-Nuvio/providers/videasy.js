@@ -11,6 +11,7 @@ const HEADERS = {
 const API = 'https://enc-dec.app/api';
 const TMDB_API_KEY = 'd131017ccc6e5462a81c9304d21476de';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+const SERVER_TIMEOUT_MS = 7000;
 
 // VideoEasy server configurations
 const SERVERS = {
@@ -584,6 +585,17 @@ function fetchFromServer(serverName, serverConfig, mediaType, title, year, tmdbI
     });
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(label + ' timed out'));
+      }, timeoutMs);
+    })
+  ]);
+}
+
 // Main function to extract streaming links for Nuvio
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
   console.log(`[VideoEasy] Starting extraction for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
@@ -611,12 +623,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           );
         });
 
-        return Promise.all(serverPromises)
+        return Promise.allSettled(serverPromises.map((serverPromise, index) =>
+          withTimeout(serverPromise, SERVER_TIMEOUT_MS, `Server ${Object.keys(SERVERS)[index]}`)
+        ))
           .then((results) => {
             // Combine all streams from all servers
             const allStreams = [];
-            results.forEach(streams => {
-              allStreams.push(...streams);
+            results.forEach(result => {
+              if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+                allStreams.push(...result.value);
+              }
             });
 
             // Remove duplicate streams by URL
