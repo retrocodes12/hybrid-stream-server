@@ -235,6 +235,21 @@ const normalizeStatsFloor = (statsFloor = {}) => {
   return normalized;
 };
 
+const parseEnvBaseline = () => {
+  const raw = String(config.USER_TRACKER_BASELINE_JSON || '').trim();
+
+  if (!raw) {
+    return createEmptyBaseline();
+  }
+
+  try {
+    return normalizeBaseline(JSON.parse(raw));
+  } catch (error) {
+    logger.warn('user tracker env baseline parse failed', { error });
+    return createEmptyBaseline();
+  }
+};
+
 const readJsonFile = async (filePath) => JSON.parse(await readFile(filePath, 'utf8'));
 
 export class UserTrackerService {
@@ -259,6 +274,7 @@ export class UserTrackerService {
     const payload = await this.readPersistedState();
 
     if (!payload) {
+      this.applyConfiguredBaselineFloor();
       return;
     }
 
@@ -300,6 +316,7 @@ export class UserTrackerService {
       this.pruneEntries();
       this.pruneStreamSearches();
       this.migrateStatsFloorToBaseline();
+      this.applyConfiguredBaselineFloor();
     } catch (error) {
       logger.warn('user tracker state load failed', { error });
     }
@@ -597,6 +614,26 @@ export class UserTrackerService {
     this.statsFloor = createEmptyStatsFloor();
 
     if (migrated) {
+      this.scheduleFlush();
+    }
+  }
+
+  applyConfiguredBaselineFloor() {
+    const configuredBaseline = parseEnvBaseline();
+    const currentStats = this.computeStatsRaw();
+    let raised = false;
+
+    for (const key of MONOTONIC_STAT_KEYS) {
+      const targetValue = toSafeInteger(configuredBaseline[key]);
+      const currentValue = toSafeInteger(currentStats[key]);
+
+      if (targetValue > currentValue) {
+        this.baseline[key] += targetValue - currentValue;
+        raised = true;
+      }
+    }
+
+    if (raised) {
       this.scheduleFlush();
     }
   }
