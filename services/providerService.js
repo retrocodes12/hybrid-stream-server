@@ -147,6 +147,7 @@ const PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 25,
   '4khdhub_tv': 25,
+  allyoucanwatch: 20,
   cinestream: 20,
   hdhub4u: 25,
   uhdmovies: 25,
@@ -179,6 +180,7 @@ const PROVIDER_PRIORITY = [
   'kisskh',
   'onlykdrama',
   'rgshows',
+  'allyoucanwatch',
   'streamflix',
   'netmirror',
   'videasy',
