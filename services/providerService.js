@@ -50,8 +50,12 @@ const getProviderCacheVersion = (providerId) => {
     return '29';
   }
 
+  if (providerId === 'hdmovie2') {
+    return '25';
+  }
+
   if (providerId === 'kisskh') {
-    return '30';
+    return '31';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -67,7 +71,11 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'allyoucanwatch') {
-    return '39';
+    return '41';
+  }
+
+  if (providerId === 'netmirror') {
+    return '40';
   }
 
   return '23';
@@ -135,6 +143,8 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'animekai',
   'animesalt',
   'cinestream',
+  'hdmovie2',
+  'kisskh',
   'moviesmod',
   'torrent-scraper',
   'vixsrc'
@@ -232,7 +242,8 @@ const PROVIDER_PRIORITY = [
   'arabic-kirmzi',
   'torrent-scraper'
 ];
-const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
+const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
+const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch']);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'rgshows']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'animesalt', 'moviebox']);
@@ -863,7 +874,11 @@ export class ProviderService {
 
   async initialize() {
     await mkdir(this.providerCacheDir, { recursive: true });
-    await this.removeExpiredDiskEntries();
+    setTimeout(() => {
+      this.removeExpiredDiskEntries().catch((error) => {
+        logger.warn('provider cache cleanup after startup failed', { error });
+      });
+    }, 0).unref?.();
   }
 
   listProviders() {
@@ -992,8 +1007,19 @@ export class ProviderService {
 
   getStremioProviderOrder(requestedProviders = null, contentProfile = null) {
     const candidates = this.getProviderOrder(contentProfile, requestedProviders && requestedProviders.length > 0 ? requestedProviders : null);
+    const hasExplicitProviders = Array.isArray(requestedProviders) && requestedProviders.length > 0;
 
-    return candidates.filter((providerId) => !STREMIO_EXCLUDED_PROVIDERS.has(providerId));
+    return candidates.filter((providerId) => {
+      if (STREMIO_ALWAYS_EXCLUDED_PROVIDERS.has(providerId)) {
+        return false;
+      }
+
+      if (!hasExplicitProviders && STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS.has(providerId)) {
+        return false;
+      }
+
+      return true;
+    });
   }
 
   async getContentProfile({ tmdbId, mediaType }) {

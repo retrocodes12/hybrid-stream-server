@@ -34,6 +34,58 @@ function scoreTitleMatch(targetTitle, candidateTitle) {
     return Math.round((overlap / Math.max(targetWords.size, candidateWords.size)) * 80);
 }
 
+function extractSeasonHint(value) {
+    const title = String(value || '');
+    const patterns = [
+        /\bseason\s+(\d+)\b/i,
+        /\bseries\s+(\d+)\b/i,
+        /\bpart\s+(\d+)\b/i,
+        /\bbook\s+(\d+)\b/i,
+        /(?:^|\s)(\d+)\s*$/
+    ];
+
+    for (const pattern of patterns) {
+        const match = title.match(pattern);
+        if (match) {
+            const season = parseInt(match[1], 10);
+            if (!Number.isNaN(season) && season > 0 && season < 100) {
+                return season;
+            }
+        }
+    }
+
+    return null;
+}
+
+function scoreSearchCandidate(targetTitle, candidateTitle, mediaType, seasonNum, year) {
+    let score = scoreTitleMatch(targetTitle, candidateTitle);
+    const candidateSeason = extractSeasonHint(candidateTitle);
+    const requestedSeason = parseInt(seasonNum, 10);
+    const rawCandidate = String(candidateTitle || '').toLowerCase();
+
+    if (mediaType === 'movie') {
+        if (candidateSeason !== null) {
+            score -= 120;
+        }
+    } else if (!Number.isNaN(requestedSeason) && requestedSeason > 0) {
+        if (candidateSeason === requestedSeason) {
+            score += 140;
+        } else if (candidateSeason !== null) {
+            score -= 180;
+        } else if (requestedSeason === 1) {
+            score += 20;
+        } else {
+            score -= 40;
+        }
+    }
+
+    if (year && rawCandidate.includes(String(year))) {
+        score += 10;
+    }
+
+    return score;
+}
+
 function fetchJson(url, options = {}, retries = 2) {
     const headers = Object.assign({}, REQUEST_HEADERS, options.headers || {});
     const timeoutMs = options.timeoutMs || 12000;
@@ -85,13 +137,19 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetchJson(searchUrl)
                     .then(searchList => {
                         // Logika pencarian mirip Kotlin: Cek exact match, lalu fuzzy match
-                        let matched = searchList.find(item => normalizeTitle(item.title) === normalizeTitle(title));
+                        let matched = null;
 
-                        if (!matched && Array.isArray(searchList) && searchList.length > 0) {
+                        if (Array.isArray(searchList) && searchList.length > 0) {
                             matched = [...searchList]
                                 .map((item) => ({
                                     item,
-                                    score: scoreTitleMatch(title, item && item.title)
+                                    score: scoreSearchCandidate(
+                                        title,
+                                        item && item.title,
+                                        mediaType,
+                                        seasonNum,
+                                        year
+                                    )
                                 }))
                                 .sort((a, b) => b.score - a.score)[0]?.item || null;
                         }

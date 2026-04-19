@@ -1536,8 +1536,12 @@ export class StreamManager {
   async initialize() {
     await this.ensureStremioResultCacheDir();
     await this.ensurePrivateConfigDir();
-    await this.loadPrivateConfigs();
     await this.redisStreamResultCache.initialize();
+    setTimeout(() => {
+      this.loadPrivateConfigs().catch((error) => {
+        logger.warn('private config background load failed', { error });
+      });
+    }, 0).unref?.();
     this.startPopularStreamPrewarm();
   }
 
@@ -1924,7 +1928,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 39,
+      version: 42,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2347,6 +2351,7 @@ export class StreamManager {
       const privateProviderSettingsHash = getPrivateProviderSettingsHash(privateProviderSettings);
       const isConfiguredRequest = String(req.path || '').startsWith('/configured/')
         || String(req.path || '').startsWith('/private/');
+      const bypassStremioResultCache = requestedProviders.length === 1 && requestedProviders[0] === 'allyoucanwatch';
       const resultCacheKey = this.buildStremioResultCacheKey({
         tmdbId,
         mediaType: parsed.mediaType,
@@ -2367,10 +2372,30 @@ export class StreamManager {
         qualityPriority,
         streamOptions
       });
-      const cachedResult = await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
+      const cachedResult = bypassStremioResultCache
+        ? null
+        : await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
 
       if (cachedResult?.state === 'fresh') {
         this.sendStremioStreamsResponse(res, cachedResult.streams);
+        return;
+      }
+
+      if (bypassStremioResultCache) {
+        const uncachedStreams = await this.buildStremioStreams({
+          resultCacheKey,
+          baseUrl,
+          parsed,
+          requestedProviders,
+          qualityPriority,
+          streamOptions,
+          tmdbId,
+          privateProviderSettings,
+          cacheResult: false
+        });
+
+        res.setHeader('X-NebulaStreams-Mode', 'uncached-explicit-provider');
+        this.sendStremioStreamsResponse(res, uncachedStreams);
         return;
       }
 

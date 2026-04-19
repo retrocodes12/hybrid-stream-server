@@ -257,7 +257,7 @@ function buildMovieStreams(baseUrl, payload) {
 
   for (const entry of entries) {
     const url = normalizeValue(entry && entry.url);
-    if (!url) {
+    if (!url || /^error$/i.test(url)) {
       continue;
     }
 
@@ -283,28 +283,42 @@ function buildMovieStreams(baseUrl, payload) {
   return streams;
 }
 
-function buildSeriesStream(baseUrl, payload, tmdbId, season, episode) {
+function formatPayloadTypeLabel(payloadType) {
+  const normalized = normalizeValue(payloadType);
+  if (!normalized) {
+    return 'Provider';
+  }
+
+  return normalized
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildDirectStream(baseUrl, payload, tmdbId, mediaType, season, episode) {
   const url = normalizeValue(payload && payload.url);
   if (!url) {
     return null;
   }
 
-  const sourceProvider = normalizeValue(payload && payload.type) || 'Provider';
+  const sourceProvider = formatPayloadTypeLabel(payload && payload.type);
   const subtitleLanguages = parseSubtitleLanguages(payload && payload.captions);
   const subtitleLabel = subtitleLanguages.length > 0
     ? ` | Subs: ${subtitleLanguages.join(', ')}`
     : '';
+  const titleLabel = mediaType === 'series'
+    ? `TMDB ${tmdbId} S${String(season || 1).padStart(2, '0')}E${String(episode || 1).padStart(2, '0')}`
+    : `TMDB ${tmdbId}`;
 
   return {
     name: 'AllYouCanWatch | Auto',
     title: [
-      `TMDB ${tmdbId} S${String(season || 1).padStart(2, '0')}E${String(episode || 1).padStart(2, '0')}`,
+      titleLabel,
       `${sourceProvider}${subtitleLabel}`
     ].join('\n'),
     url: toAbsoluteUrl(baseUrl, url),
     quality: 'Auto',
     headers: {
-      Referer: baseUrl
+      Referer: buildPlayerUrl(baseUrl, tmdbId, mediaType, season, episode)
     },
     provider: 'allyoucanwatch',
     sourceProvider
@@ -348,29 +362,18 @@ async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode, expe
     return [];
   }
 
-  const titledEntries = [];
-  for (const payload of payloads) {
-    if (Array.isArray(payload && payload.streams)) {
-      for (const entry of payload.streams) {
-        const title = normalizeValue(entry && entry.title);
-        if (title) {
-          titledEntries.push(title);
-        }
-      }
-    }
-  }
-
-  const matchingTitledEntries = titledEntries.filter((title) => titleMatchesExpected(title, expectedTitles));
-  const hasMismatchedCatalog = expectedTitles.length > 0 && titledEntries.length > 0 && matchingTitledEntries.length === 0;
-  if (hasMismatchedCatalog) {
-    console.warn(`${TAG} rejected mismatched upstream payload for ${mediaType} ${tmdbId}: ${titledEntries.slice(0, 3).join(' | ')}`);
-    return [];
-  }
-
   const streams = [];
 
   for (const payload of payloads) {
     if (Array.isArray(payload && payload.streams)) {
+      const titledEntries = payload.streams
+        .map((entry) => normalizeValue(entry && entry.title))
+        .filter(Boolean);
+      if (expectedTitles.length === 0 && titledEntries.length > 0) {
+        console.warn(`${TAG} skipping unverified provider catalog for ${mediaType} ${tmdbId}: ${titledEntries.slice(0, 3).join(' | ')}`);
+        continue;
+      }
+
       const filteredPayload = expectedTitles.length > 0
         ? {
           ...payload,
@@ -380,13 +383,19 @@ async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode, expe
           })
         }
         : payload;
+
+      if (expectedTitles.length > 0 && titledEntries.length > 0 && filteredPayload.streams.length === 0) {
+        console.warn(`${TAG} rejected mismatched provider catalog for ${mediaType} ${tmdbId}: ${titledEntries.slice(0, 3).join(' | ')}`);
+        continue;
+      }
+
       streams.push(...buildMovieStreams(baseUrl, filteredPayload));
       continue;
     }
 
-    const seriesStream = buildSeriesStream(baseUrl, payload, tmdbId, season, episode);
-    if (seriesStream) {
-      streams.push(seriesStream);
+    const directStream = buildDirectStream(baseUrl, payload, tmdbId, mediaType, season, episode);
+    if (directStream) {
+      streams.push(directStream);
     }
   }
 
@@ -398,8 +407,7 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
   const expectedTitles = await getExpectedTitles(tmdbId, normalizedMediaType);
 
   if (expectedTitles.length === 0) {
-    console.warn(`${TAG} skipping ${normalizedMediaType} ${tmdbId}: could not verify expected title`);
-    return [];
+    console.warn(`${TAG} proceeding in degraded mode for ${normalizedMediaType} ${tmdbId}: expected title verification unavailable`);
   }
 
   for (const baseUrl of BASE_URLS) {

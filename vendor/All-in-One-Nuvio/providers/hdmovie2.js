@@ -3,7 +3,7 @@
 // NO async/await! Only .then() chains!
 
 var TMDB_KEY = 'd80ba92bc7cefe3359668d30d06f3305'
-var BASE = 'https://hdmovie2.restaurant'
+var BASE = (process.env.HDMOVIE2_BASE_URL || 'https://newhdmovie2.vip').replace(/\/+$/, '')
 var CDN = 'https://hdm2.ink'
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
 
@@ -30,11 +30,53 @@ function httpPost(url, body, headers) {
   })
 }
 
+function fetchTmdbJson(url, retries) {
+  return fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' } })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status)
+      return r.json()
+    })
+    .catch(function(err) {
+      if (retries <= 0) throw err
+      return new Promise(function(resolve) {
+        setTimeout(resolve, 400)
+      }).then(function() {
+        return fetchTmdbJson(url, retries - 1)
+      })
+    })
+}
+
 function cleanTitle(title) {
   return title.toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function titleSimilarity(target, candidate) {
+  var targetWords = cleanTitle(target).split(' ').filter(Boolean)
+  var candidateWords = cleanTitle(candidate).split(' ').filter(Boolean)
+  if (!targetWords.length || !candidateWords.length) return 0
+
+  var overlap = 0
+  for (var i = 0; i < targetWords.length; i++) {
+    if (candidateWords.indexOf(targetWords[i]) !== -1) overlap++
+  }
+
+  return overlap / Math.max(targetWords.length, candidateWords.length)
+}
+
+function looksRelevantResult(searchTitle, itemTitle) {
+  var cleanSearch = cleanTitle(searchTitle)
+  var cleanItem = cleanTitle(itemTitle)
+
+  if (!cleanSearch || !cleanItem) return false
+  if (cleanItem === cleanSearch) return true
+  if (cleanItem.indexOf(cleanSearch + ' ') === 0) return true
+  if (cleanSearch.length <= 4) return false
+  if (titleSimilarity(searchTitle, itemTitle) >= 0.8) return true
+
+  return false
 }
 
 function searchSite(title, year) {
@@ -47,13 +89,16 @@ function searchSite(title, year) {
 
       while ((articleMatch = articleRegex.exec(html)) !== null) {
         var articleHtml = articleMatch[1]
-        var linkMatch = articleHtml.match(/href="(https:\/\/hdmovie2\.restaurant\/movies\/([^"\/]+)\/)"/)
+        var linkMatch = articleHtml.match(/href="((?:https:\/\/[^"\/]+)?\/movie\/([^"\/]+)\/)"/i)
         if (!linkMatch) continue
         if (linkMatch[1].includes('/feed/')) continue
         var altMatch = articleHtml.match(/alt="([^"]+)"/)
         if (!altMatch) continue
 
         var itemUrl = linkMatch[1]
+        if (itemUrl.indexOf('http') !== 0) {
+          itemUrl = BASE + itemUrl
+        }
         var slug = linkMatch[2]
         var itemTitle = altMatch[1].trim()
         var yearMatch = itemTitle.match(/\((\d{4})\)/)
@@ -96,8 +141,70 @@ function searchSite(title, year) {
       if (candidates.length > 0) {
         console.log('[HDMovie2] Best: ' + candidates[0].title + ' (' + candidates[0].year + ')')
       }
+      candidates = candidates.filter(function(item) {
+        return looksRelevantResult(title, item.title)
+      })
+      if (candidates.length === 0) {
+        console.log('[HDMovie2] No relevant title match after filtering')
+      }
       return candidates
     })
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#038;/g, '&')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function extractInlinePlayerUrls(html) {
+  var urls = [];
+  var seen = {};
+  var patterns = [
+    /https:\/\/hdm2\.ink\/play\?v=[A-Za-z0-9_-]+/gi,
+    /https:\/\/molop\.art\/watch\?v=[A-Za-z0-9_-]+/gi
+  ];
+
+  patterns.forEach(function(pattern) {
+    var matches = html.match(pattern) || [];
+    matches.forEach(function(url) {
+      var cleaned = decodeHtmlEntities(url);
+      if (!seen[cleaned]) {
+        seen[cleaned] = true;
+        urls.push(cleaned);
+      }
+    });
+  });
+
+  return urls;
+}
+
+function tryPlayerUrls(urls, index) {
+  if (!Array.isArray(urls) || index >= urls.length) {
+    return Promise.resolve(null);
+  }
+
+  var playerUrl = urls[index];
+  if (playerUrl.indexOf('https://hdm2.ink/play?v=') === 0) {
+    return getHdm2Stream(playerUrl).then(function(stream) {
+      return stream || tryPlayerUrls(urls, index + 1);
+    }).catch(function() {
+      return tryPlayerUrls(urls, index + 1);
+    });
+  }
+
+  if (playerUrl.indexOf('https://molop.art/watch?v=') === 0) {
+    return getMolopStream(playerUrl).then(function(stream) {
+      return stream || tryPlayerUrls(urls, index + 1);
+    }).catch(function() {
+      return tryPlayerUrls(urls, index + 1);
+    });
+  }
+
+  return tryPlayerUrls(urls, index + 1);
 }
 
 function getHdm2Stream(playerUrl) {
@@ -217,6 +324,22 @@ function tryGetStream(postId, movieUrl) {
 function getStreamFromMoviePage(movieUrl) {
   return httpGet(movieUrl, { 'Referer': BASE + '/' })
     .then(function(html) {
+      var inlinePlayers = extractInlinePlayerUrls(html)
+      if (inlinePlayers.length > 0) {
+        console.log('[HDMovie2] Inline players: ' + inlinePlayers.join(', '))
+        return tryPlayerUrls(inlinePlayers, 0).then(function(stream) {
+          if (stream) return stream
+          var postIdMatch = html.match(/postid-(\d+)/)
+          if (!postIdMatch) {
+            console.log('[HDMovie2] No post ID')
+            return null
+          }
+          var postId = postIdMatch[1]
+          console.log('[HDMovie2] Post ID: ' + postId)
+          return tryGetStream(postId, movieUrl)
+        })
+      }
+
       var postIdMatch = html.match(/postid-(\d+)/)
       if (!postIdMatch) {
         console.log('[HDMovie2] No post ID')
@@ -237,8 +360,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     console.log('[HDMovie2] Start: ' + tmdbId + ' ' + mediaType)
 
-    fetch(tmdbUrl)
-      .then(function(r) { return r.json() })
+    fetchTmdbJson(tmdbUrl, 2)
       .then(function(data) {
         var title = data.title || data.name
         if (!title) throw new Error('No title')

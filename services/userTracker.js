@@ -270,11 +270,19 @@ export class UserTrackerService {
 
   async initialize() {
     await mkdir(path.dirname(USERS_FILE), { recursive: true });
+    this.applyConfiguredBaselineFloor();
 
+    setTimeout(() => {
+      this.loadPersistedStateInBackground().catch((error) => {
+        logger.warn('user tracker background state load failed', { error });
+      });
+    }, 0).unref?.();
+  }
+
+  async loadPersistedStateInBackground() {
     const payload = await this.readPersistedState();
 
     if (!payload) {
-      this.applyConfiguredBaselineFloor();
       return;
     }
 

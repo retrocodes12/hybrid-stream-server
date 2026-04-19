@@ -47,7 +47,11 @@ export class CacheManager {
     ]);
 
     await this.removePartialFiles();
-    await this.pruneCache();
+    setTimeout(() => {
+      this.pruneCache().catch((error) => {
+        logger.warn('cache prune after startup failed', { error });
+      });
+    }, 0).unref?.();
   }
 
   getHttpCacheKey(targetUrl) {
