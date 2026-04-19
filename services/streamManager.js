@@ -1924,7 +1924,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 34,
+      version: 37,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -1939,6 +1939,21 @@ export class StreamManager {
   getStremioResultCachePath(cacheKey) {
     const fileName = `${createHash('sha1').update(cacheKey).digest('hex')}.json`;
     return path.join(this.stremioResultCacheDir, fileName);
+  }
+
+  sendStremioStreamsResponse(res, streams) {
+    const normalizedStreams = Array.isArray(streams) ? streams : [];
+
+    if (normalizedStreams.length === 0) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=60');
+    }
+
+    res.setHeader('X-NebulaStreams-Stream-Count', String(normalizedStreams.length));
+    res.json({
+      streams: normalizedStreams
+    });
   }
 
   toCacheLookupResult(cacheKey, entry) {
@@ -2315,12 +2330,12 @@ export class StreamManager {
           mediaType: parsed.mediaType,
           error
         });
-        res.json({ streams: [] });
+        this.sendStremioStreamsResponse(res, []);
         return;
       }
 
       if (!tmdbId) {
-        res.json({ streams: [] });
+        this.sendStremioStreamsResponse(res, []);
         return;
       }
 
@@ -2355,9 +2370,7 @@ export class StreamManager {
       const cachedResult = await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
 
       if (cachedResult?.state === 'fresh') {
-        res.json({
-          streams: cachedResult.streams
-        });
+        this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
       }
 
@@ -2381,9 +2394,7 @@ export class StreamManager {
         });
 
         res.setHeader('X-NebulaStreams-Mode', 'configured-degraded');
-        res.json({
-          streams: degradedStreams
-        });
+        this.sendStremioStreamsResponse(res, degradedStreams);
         return;
       }
 
@@ -2401,17 +2412,13 @@ export class StreamManager {
       if (cachedResult?.state === 'stale') {
         this.scheduleStremioBackgroundRefresh(buildInput);
         res.setHeader('X-NebulaStreams-Cache', 'stale');
-        res.json({
-          streams: cachedResult.streams
-        });
+        this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
       }
 
       const stremioStreams = await this.getOrBuildStremioStreams(buildInput);
 
-      res.json({
-        streams: stremioStreams
-      });
+      this.sendStremioStreamsResponse(res, stremioStreams);
     } catch (error) {
       next(error);
     }

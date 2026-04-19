@@ -1,14 +1,154 @@
 "use strict";
 
 // src/uhdmovies/index.js
-var DOMAIN = "https://uhdmovies.rip";
+var https = require("node:https");
+var dns = require("node:dns");
+var dnsPromises = require("node:dns").promises;
+var axios = require("axios");
+var DOMAIN = (process.env.UHDMOVIES_BASE_URL || "https://uhdmovies.ink").replace(/\/+$/, "");
 var TMDB_API = "https://api.themoviedb.org/3";
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+var PUBLIC_RESOLVER = new dnsPromises.Resolver();
+var UHD_DNS_BYPASS_HOSTS = {
+  "uhdmovies.ink": true,
+  "www.uhdmovies.ink": true,
+  "uhdmovies.rip": true,
+  "www.uhdmovies.rip": true
+};
+var DNS_CACHE_TTL_MS = 30 * 60 * 1000;
+var TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+var TMDB_RETRY_DELAYS_MS = [250, 750, 1500];
+var SITEMAP_CACHE_TTL_MS = 30 * 60 * 1000;
+var MAX_POST_SITEMAP_PAGES = 12;
+var dnsCache = new Map();
+var tmdbCache = new Map();
+var sitemapCache = {
+  entries: null,
+  expiresAt: 0
+};
+PUBLIC_RESOLVER.setServers(["1.1.1.1", "8.8.8.8"]);
 function getBaseUrl(url) {
   if (!url) return DOMAIN;
   var match = url.match(/^(https?:\/\/[^\/]+)/);
   return match ? match[1] : DOMAIN;
+}
+function isDnsBypassHost(hostname) {
+  return !!UHD_DNS_BYPASS_HOSTS[String(hostname || "").toLowerCase()];
+}
+function resolveDnsBypassAddress(hostname) {
+  hostname = String(hostname || "").toLowerCase();
+  var cached = dnsCache.get(hostname);
+  if (cached && Date.now() - cached.ts < DNS_CACHE_TTL_MS) {
+    return Promise.resolve(cached.ip);
+  }
+  return PUBLIC_RESOLVER.resolve4(hostname).then(function(addresses) {
+    if (!addresses || !addresses.length) throw new Error("No A record for " + hostname);
+    dnsCache.set(hostname, { ip: addresses[0], ts: Date.now() });
+    return addresses[0];
+  }).catch(function() {
+    return new Promise(function(resolve, reject) {
+      dns.lookup(hostname, { family: 4 }, function(err, address) {
+        if (err) return reject(err);
+        dnsCache.set(hostname, { ip: address, ts: Date.now() });
+        resolve(address);
+      });
+    });
+  });
+}
+function createResponse(statusCode, headersMap, body) {
+  return {
+    status: statusCode,
+    ok: statusCode >= 200 && statusCode < 300,
+    headers: {
+      get: function(name) {
+        return headersMap[String(name || "").toLowerCase()] || null;
+      }
+    },
+    text: function() {
+      return Promise.resolve(body);
+    },
+    json: function() {
+      return Promise.resolve(JSON.parse(body));
+    }
+  };
+}
+function sleep(delayMs) {
+  return new Promise(function(resolve) {
+    var timer = setTimeout(resolve, delayMs);
+    if (timer && typeof timer.unref === "function") timer.unref();
+  });
+}
+function providerFetch(url, options, redirectCount) {
+  options = options || {};
+  redirectCount = redirectCount || 0;
+  var targetUrl;
+  try {
+    targetUrl = new URL(url);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  if (!isDnsBypassHost(targetUrl.hostname)) {
+    return fetch(url, options);
+  }
+  return resolveDnsBypassAddress(targetUrl.hostname).then(function(address) {
+    return new Promise(function(resolve, reject) {
+      var headers = Object.assign({}, options.headers || {});
+      if (!headers.Host) headers.Host = targetUrl.host;
+      var req = https.request({
+        protocol: targetUrl.protocol,
+        hostname: targetUrl.hostname,
+        servername: targetUrl.hostname,
+        host: targetUrl.hostname,
+        port: targetUrl.port || 443,
+        path: targetUrl.pathname + targetUrl.search,
+        method: options.method || "GET",
+        headers,
+        lookup: function(hostname, lookupOptions, callback) {
+          if (typeof lookupOptions === "function") {
+            callback = lookupOptions;
+            lookupOptions = {};
+          }
+          if (hostname === targetUrl.hostname) {
+            if (lookupOptions && lookupOptions.all) {
+              return callback(null, [{ address: address, family: 4 }]);
+            }
+            return callback(null, address, 4);
+          }
+          dns.lookup(hostname, lookupOptions, callback);
+        }
+      }, function(res) {
+        var chunks = [];
+        res.on("data", function(chunk) {
+          chunks.push(chunk);
+        });
+        res.on("end", function() {
+          var body = Buffer.concat(chunks).toString("utf8");
+          var headersMap = {};
+          Object.keys(res.headers || {}).forEach(function(key) {
+            var value = res.headers[key];
+            headersMap[key.toLowerCase()] = Array.isArray(value) ? value.join(", ") : String(value || "");
+          });
+          if (res.statusCode >= 300 && res.statusCode < 400 && headersMap.location && redirectCount < 5 && options.redirect !== "manual") {
+            var redirectUrl = new URL(headersMap.location, targetUrl.toString()).toString();
+            var nextOptions = Object.assign({}, options);
+            if (res.statusCode === 303 || ((res.statusCode === 301 || res.statusCode === 302) && String(options.method || "GET").toUpperCase() !== "GET")) {
+              nextOptions.method = "GET";
+              delete nextOptions.body;
+            }
+            return resolve(providerFetch(redirectUrl, nextOptions, redirectCount + 1));
+          }
+          resolve(createResponse(res.statusCode || 500, headersMap, body));
+        });
+      });
+      req.on("error", reject);
+      req.setTimeout(15000, function() {
+        req.destroy(new Error("Request timeout"));
+      });
+      if (options.body) req.write(options.body);
+      req.end();
+    });
+  });
 }
 function fixUrl(url, domain) {
   if (!url) return "";
@@ -168,36 +308,100 @@ function cleanTitle(title) {
   }
   return parts.slice(-3).join(".");
 }
+function normalizeSearchText(value) {
+  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function tokenizeSearchText(value) {
+  return normalizeSearchText(value).split(" ").filter(function(token) {
+    return token.length > 1;
+  });
+}
+function deriveTitleFromUhdUrl(url) {
+  try {
+    var pathname = new URL(url).pathname.replace(/\/+$/, "");
+    var slug = pathname.split("/").pop() || "";
+    slug = decodeURIComponent(slug).replace(/^download-/i, "").replace(/-/g, " ").trim();
+    return slug;
+  } catch (_err) {
+    return "";
+  }
+}
+function scoreSitemapEntry(entry, title, year) {
+  var titleText = normalizeSearchText(title);
+  var entryText = normalizeSearchText(entry.title || entry.rawTitle || "");
+  if (!titleText || !entryText) return 0;
+  var titleTokens = tokenizeSearchText(title);
+  var entryTokens = new Set(tokenizeSearchText(entry.title || entry.rawTitle || ""));
+  var matchingTokens = 0;
+  for (var i = 0; i < titleTokens.length; i++) {
+    if (entryTokens.has(titleTokens[i])) matchingTokens++;
+  }
+  var tokenScore = titleTokens.length ? matchingTokens / titleTokens.length : 0;
+  var containsScore = entryText.indexOf(titleText) !== -1 || titleText.indexOf(entryText) !== -1 ? 1 : 0;
+  var yearScore = year && String(entry.rawTitle || "").indexOf(String(year)) !== -1 ? 0.5 : 0;
+  return tokenScore * 10 + containsScore * 4 + yearScore;
+}
 function fetchText(url, extraHeaders) {
   var headers = Object.assign({ "User-Agent": USER_AGENT }, extraHeaders || {});
-  return fetch(url, { headers, redirect: "follow" }).then(function(res) {
+  return providerFetch(url, { headers, redirect: "follow" }).then(function(res) {
     return res.text();
   });
 }
 function fetchJson(url) {
-  return fetch(url, { headers: { "User-Agent": USER_AGENT } }).then(function(res) {
+  return providerFetch(url, { headers: { "User-Agent": USER_AGENT } }).then(function(res) {
     return res.json();
   });
 }
 function getTmdbDetails(tmdbId, mediaType) {
   var isSeries = mediaType === "series" || mediaType === "tv";
   var endpoint = isSeries ? "tv" : "movie";
-  var url = TMDB_API + "/" + endpoint + "/" + tmdbId + "?api_key=" + TMDB_API_KEY;
-  console.log("[UHDMovies] TMDB: " + url);
-  return fetchJson(url).then(function(data) {
-    if (isSeries) {
-      return {
-        title: data.name,
-        year: data.first_air_date ? data.first_air_date.slice(0, 4) : null
-      };
+  var cacheKey = endpoint + ":" + tmdbId;
+  var cached = tmdbCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.value);
+  }
+  console.log("[UHDMovies] TMDB: " + TMDB_API + "/" + endpoint + "/" + tmdbId + "?api_key=***");
+  return Promise.resolve().then(function() {
+    var attempt = 0;
+    var lastError = null;
+    function runAttempt() {
+      return axios.get(TMDB_API + "/" + endpoint + "/" + tmdbId, {
+        params: { api_key: TMDB_API_KEY },
+        timeout: 12e3,
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Connection": "close"
+        },
+        validateStatus: function(status) {
+          return status >= 200 && status < 300;
+        }
+      }).then(function(response) {
+        var data = response.data || {};
+        var result = isSeries ? {
+          title: data.name,
+          year: data.first_air_date ? data.first_air_date.slice(0, 4) : null
+        } : {
+          title: data.title,
+          year: data.release_date ? data.release_date.slice(0, 4) : null
+        };
+        tmdbCache.set(cacheKey, {
+          value: result,
+          expiresAt: Date.now() + TMDB_CACHE_TTL_MS
+        });
+        return result;
+      }).catch(function(error) {
+        lastError = error;
+        if (attempt >= TMDB_RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+        var delayMs = TMDB_RETRY_DELAYS_MS[attempt++];
+        return sleep(delayMs).then(runAttempt);
+      });
     }
-    return {
-      title: data.title,
-      year: data.release_date ? data.release_date.slice(0, 4) : null
-    };
-  }).catch(function(err) {
-    console.error("[UHDMovies] TMDB error: " + err.message);
-    return null;
+    return runAttempt().catch(function(err) {
+      console.error("[UHDMovies] TMDB error: " + ((err == null ? void 0 : err.message) || (lastError == null ? void 0 : lastError.message) || "unknown error"));
+      return null;
+    });
   });
 }
 function searchByTitle(title, year) {
@@ -205,10 +409,12 @@ function searchByTitle(title, year) {
   var url = DOMAIN + "/?s=" + query;
   console.log("[UHDMovies] Search: " + url);
   return fetchText(url).then(function(html) {
-    return parseSearchResults(html);
+    var results = parseSearchResults(html);
+    if (results.length) return results;
+    return searchSitemaps(title, year);
   }).catch(function(err) {
     console.error("[UHDMovies] Search error: " + err.message);
-    return [];
+    return searchSitemaps(title, year);
   });
 }
 function parseSearchResults(html) {
@@ -231,6 +437,72 @@ function parseSearchResults(html) {
   console.log("[UHDMovies] Results: " + results.length);
   return results;
 }
+function loadSitemapEntries() {
+  if (sitemapCache.entries && sitemapCache.expiresAt > Date.now()) {
+    return Promise.resolve(sitemapCache.entries);
+  }
+  return Promise.resolve().then(function() {
+    var tasks = [];
+    for (var page = 1; page <= MAX_POST_SITEMAP_PAGES; page++) {
+      var sitemapPath = page === 1 ? "/post-sitemap.xml" : "/post-sitemap" + page + ".xml";
+      tasks.push(
+        fetchText(DOMAIN + sitemapPath).catch(function() {
+          return "";
+        })
+      );
+    }
+    return Promise.all(tasks);
+  }).then(function(bodies) {
+    var seen = {};
+    var entries = [];
+    bodies.forEach(function(body) {
+      if (!body || body.indexOf("<urlset") === -1) return;
+      var matches = body.match(/<loc>https:\/\/uhdmovies\.ink\/[^<]+<\/loc>/gi) || [];
+      matches.forEach(function(match) {
+        var url = match.replace(/^<loc>/i, "").replace(/<\/loc>$/i, "").trim();
+        if (!url || seen[url]) return;
+        seen[url] = true;
+        var rawTitle = deriveTitleFromUhdUrl(url);
+        entries.push({
+          url: url,
+          rawTitle: rawTitle,
+          title: rawTitle
+        });
+      });
+    });
+    sitemapCache = {
+      entries: entries,
+      expiresAt: Date.now() + SITEMAP_CACHE_TTL_MS
+    };
+    console.log("[UHDMovies] Sitemap entries: " + entries.length);
+    return entries;
+  }).catch(function(err) {
+    console.error("[UHDMovies] Sitemap load error: " + err.message);
+    return [];
+  });
+}
+function searchSitemaps(title, year) {
+  return loadSitemapEntries().then(function(entries) {
+    var scored = entries.map(function(entry) {
+      return {
+        entry: entry,
+        score: scoreSitemapEntry(entry, title, year)
+      };
+    }).filter(function(item) {
+      return item.score >= 6;
+    }).sort(function(a, b) {
+      return b.score - a.score;
+    }).slice(0, 8).map(function(item) {
+      return {
+        title: item.entry.title,
+        rawTitle: item.entry.rawTitle,
+        url: item.entry.url
+      };
+    });
+    console.log("[UHDMovies] Sitemap matches: " + scored.length);
+    return scored;
+  });
+}
 function bypassHrefli(url) {
   var host = getBaseUrl(url);
   console.log("[UHDMovies] bypassHrefli: " + url);
@@ -238,7 +510,7 @@ function bypassHrefli(url) {
     var formUrl = extractFormAction(html);
     var formData = extractFormInputs(html);
     if (!formUrl) return Promise.resolve(null);
-    return fetch(formUrl, {
+    return providerFetch(formUrl, {
       method: "POST",
       headers: {
         "User-Agent": USER_AGENT,
@@ -253,7 +525,7 @@ function bypassHrefli(url) {
     var formUrl = extractFormAction(html);
     var formData = extractFormInputs(html);
     if (!formUrl) return null;
-    return fetch(formUrl, {
+    return providerFetch(formUrl, {
       method: "POST",
       headers: {
         "User-Agent": USER_AGENT,
@@ -298,7 +570,7 @@ function extractVideoSeed(finallink) {
   var tokenParts = finallink.split("?url=");
   if (tokenParts.length < 2) return Promise.resolve(null);
   var token = tokenParts[1];
-  return fetch("https://" + host + "/api", {
+  return providerFetch("https://" + host + "/api", {
     method: "POST",
     headers: {
       "User-Agent": USER_AGENT,
@@ -324,7 +596,7 @@ function extractInstantLink(finallink) {
   var tokenParts = finallink.split("url=");
   if (tokenParts.length < 2) return Promise.resolve(null);
   var token = tokenParts[1];
-  return fetch("https://" + host + "/api", {
+  return providerFetch("https://" + host + "/api", {
     method: "POST",
     headers: {
       "User-Agent": USER_AGENT,
@@ -352,7 +624,7 @@ function extractResumeBot(url) {
     var token = tokenM[1];
     var path = pathM[1];
     var baseUrl = url.split("/download")[0];
-    return fetch(baseUrl + "/download?id=" + path, {
+    return providerFetch(baseUrl + "/download?id=" + path, {
       method: "POST",
       headers: {
         "User-Agent": USER_AGENT,

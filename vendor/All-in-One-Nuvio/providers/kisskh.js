@@ -1,9 +1,69 @@
 const cheerio = require('cheerio-without-node-native');
 
 // Konstanta dari file Adicinemax21Extractor.kt
-const MAIN_URL = "https://kisskh.ovh";
+const MAIN_URL = (process.env.KISSKH_BASE_URL || "https://kisskh.nl").replace(/\/+$/, "");
 // URL Google Script untuk generate key (PENTING)
 const KISSKH_API = "https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id=";
+const REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Accept": "application/json,text/plain,*/*"
+};
+
+function normalizeTitle(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/\b(19|20)\d{2}\b/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function scoreTitleMatch(targetTitle, candidateTitle) {
+    const target = normalizeTitle(targetTitle);
+    const candidate = normalizeTitle(candidateTitle);
+
+    if (!target || !candidate) return 0;
+    if (target === candidate) return 100;
+    if (candidate.includes(target) || target.includes(candidate)) return 90;
+
+    const targetWords = new Set(target.split(/\s+/).filter(Boolean));
+    const candidateWords = new Set(candidate.split(/\s+/).filter(Boolean));
+    const overlap = [...targetWords].filter((word) => candidateWords.has(word)).length;
+
+    if (!overlap) return 0;
+
+    return Math.round((overlap / Math.max(targetWords.size, candidateWords.size)) * 80);
+}
+
+function fetchJson(url, options = {}, retries = 2) {
+    const headers = Object.assign({}, REQUEST_HEADERS, options.headers || {});
+    const timeoutMs = options.timeoutMs || 12000;
+    const fetchOptions = Object.assign({}, options, { headers });
+    delete fetchOptions.timeoutMs;
+
+    const attempt = (remaining) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        return fetch(url, Object.assign({}, fetchOptions, { signal: controller.signal }))
+            .then((res) => {
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                return res.json();
+            })
+            .catch((err) => {
+                clearTimeout(timeoutId);
+                if (remaining <= 0) {
+                    throw err;
+                }
+                return new Promise((resolve) => setTimeout(resolve, (retries - remaining + 1) * 400))
+                    .then(() => attempt(remaining - 1));
+            });
+    };
+
+    return attempt(retries);
+}
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise((resolve, reject) => {
@@ -14,8 +74,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=b030404650f279792a8d3287232358e3`; // API Key umum dari source code Kotlin
 
-        fetch(tmdbUrl)
-            .then(res => res.json())
+        fetchJson(tmdbUrl)
             .then(tmdbData => {
                 const title = tmdbData.title || tmdbData.name || tmdbData.original_title;
                 const year = (tmdbData.release_date || tmdbData.first_air_date || "").substring(0, 4);
@@ -23,14 +82,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 // 1. Cari Drama di Kisskh
                 const searchUrl = `${MAIN_URL}/api/DramaList/Search?q=${encodeURIComponent(title)}&type=0`;
                 
-                return fetch(searchUrl)
-                    .then(res => res.json())
+                return fetchJson(searchUrl)
                     .then(searchList => {
                         // Logika pencarian mirip Kotlin: Cek exact match, lalu fuzzy match
-                        let matched = searchList.find(item => item.title.toLowerCase() === title.toLowerCase());
-                        
-                        if (!matched && searchList.length > 0) {
-                             matched = searchList[0]; // Fallback ke hasil pertama
+                        let matched = searchList.find(item => normalizeTitle(item.title) === normalizeTitle(title));
+
+                        if (!matched && Array.isArray(searchList) && searchList.length > 0) {
+                            matched = [...searchList]
+                                .map((item) => ({
+                                    item,
+                                    score: scoreTitleMatch(title, item && item.title)
+                                }))
+                                .sort((a, b) => b.score - a.score)[0]?.item || null;
                         }
 
                         if (!matched) throw new Error("Drama tidak ditemukan di Kisskh");
@@ -40,8 +103,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(dramaId => {
                 // 2. Ambil Detail Drama untuk dapat List Episode
-                return fetch(`${MAIN_URL}/api/DramaList/Drama/${dramaId}?isq=false`)
-                    .then(res => res.json())
+                return fetchJson(`${MAIN_URL}/api/DramaList/Drama/${dramaId}?isq=false`)
                     .then(detail => {
                         const episodes = detail.episodes;
                         if (!episodes || episodes.length === 0) throw new Error("Episode kosong");
@@ -66,16 +128,19 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 // Source: invokeKisskh di Kotlin
                 const keyUrl = `${KISSKH_API}${epsId}&version=2.8.10`;
                 
-                return fetch(keyUrl)
-                    .then(res => res.json())
+                return fetchJson(keyUrl)
                     .then(keyData => {
                         if (!keyData.key) throw new Error("Gagal mengambil kunci video");
                         
                         // 4. Ambil Source Video
                         const videoApi = `${MAIN_URL}/api/DramaList/Episode/${epsId}.png?err=false&ts=&time=&kkey=${keyData.key}`;
-                        return fetch(videoApi);
+                        return fetchJson(videoApi, {
+                            headers: {
+                                "Origin": MAIN_URL,
+                                "Referer": MAIN_URL + "/"
+                            }
+                        });
                     })
-                    .then(res => res.json())
                     .then(sources => {
                         const streams = [];
                         

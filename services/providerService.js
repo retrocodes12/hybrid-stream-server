@@ -29,7 +29,41 @@ const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = nul
 
   return crypto.createHash('sha1').update(uiToken).digest('hex');
 };
-const getProviderCacheVersion = (providerId) => providerId === 'rgshows' ? '24' : '23';
+const getProviderCacheVersion = (providerId) => {
+  if (providerId === 'rgshows') {
+    return '24';
+  }
+
+  if (providerId === 'moviesmod') {
+    return '25';
+  }
+
+  if (providerId === 'vixsrc') {
+    return '28';
+  }
+
+  if (providerId === 'hdhub4u') {
+    return '29';
+  }
+
+  if (providerId === 'kisskh') {
+    return '30';
+  }
+
+  if (providerId === 'latino-lamovie') {
+    return '32';
+  }
+
+  if (providerId === 'latino-cinecalidad') {
+    return '31';
+  }
+
+  if (providerId === 'uhdmovies') {
+    return '34';
+  }
+
+  return '23';
+};
 const prioritizePrivateTokenProviders = (providers, privateProviderSettings = null) => {
   const ordered = Array.isArray(providers) ? [...providers] : [];
   const hasFebboxUiCookie = Boolean(String(privateProviderSettings?.febboxUiCookie || '').trim());
@@ -90,12 +124,15 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'animekai',
   'animesalt',
   'cinestream',
-  'torrent-scraper'
+  'moviesmod',
+  'torrent-scraper',
+  'vixsrc'
 ]);
 const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub',
   '4khdhub_tv',
   'hdhub4u',
+  'uhdmovies',
   'flixindia',
   'tamilian',
   'streamflix',
@@ -112,7 +149,9 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub_tv': 25,
   cinestream: 20,
   hdhub4u: 25,
+  uhdmovies: 25,
   moviebox: 20,
+  moviesmod: 40,
   rgshows: 20,
   streamflix: 20,
   vidlink: 20,
@@ -132,10 +171,13 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_PRIORITY = [
   '4khdhub',
   '4khdhub_tv',
+  'uhdmovies',
   'hdhub4u',
   'vidlink',
   'cinestream',
   'moviebox',
+  'kisskh',
+  'onlykdrama',
   'rgshows',
   'streamflix',
   'netmirror',
@@ -175,10 +217,11 @@ const PROVIDER_PRIORITY = [
 ];
 const STREMIO_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
-const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy']);
+const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'rgshows']);
+const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'animesalt', 'moviebox']);
+const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian']);
+const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama', 'animekai']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
-  'anime-sama',
-  'animekai',
   'animesalt',
   'animeworld',
   'it-animeunity',
@@ -189,14 +232,14 @@ const ANIME_SPECIALIST_PROVIDERS = new Set([
   'kisskh'
 ]);
 const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const TMDB_METADATA_RETRY_DELAYS_MS = Object.freeze([250, 750]);
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
-    'anime-sama': 180,
-    animekai: 175,
-    animesalt: 170,
+    animeworld: 190,
+    animesalt: 180,
+    moviebox: 172,
     '4khdhub_tv': 168,
     '4khdhub': 166,
-    animeworld: 165,
     hdhub4u: 150,
     'it-animeunity': 120,
     'it-animeworld': 115,
@@ -204,16 +247,24 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     'arabic-witanime': 105,
     'arabic-animecloud': 100,
     'arabic-cineby': 95,
-    kisskh: 55
+    kisskh: 92,
+    'anime-sama': 40,
+    animekai: 35
+  }),
+  asian_drama: Object.freeze({
+    kisskh: 205,
+    onlykdrama: 70,
+    showbox: 45
   }),
   kdrama: Object.freeze({
+    kisskh: 190,
     onlykdrama: 180,
-    kisskh: 120,
     showbox: 40
   }),
   indian: Object.freeze({
     '4khdhub': 230,
     '4khdhub_tv': 225,
+    uhdmovies: 223,
     hdhub4u: 220,
     flixindia: 205,
     tamilian: 165,
@@ -248,10 +299,10 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   }),
   spanish: Object.freeze({
     'latino-lamovie': 195,
-    'latino-embed69': 190,
-    'latino-cinecalidad': 185,
-    'latino-xupalace': 180,
-    'latino-seriesmetro': 175,
+    'latino-cinecalidad': 190,
+    'latino-embed69': 45,
+    'latino-xupalace': 40,
+    'latino-seriesmetro': 35,
     lamovie: 170,
     purstream: 130
   }),
@@ -267,6 +318,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   '4khdhub': 165,
   '4khdhub_tv': 160,
   hdhub4u: 150,
+  uhdmovies: 145,
   vidlink: 120,
   cinestream: 118,
   videasy: 115,
@@ -305,6 +357,8 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   'arabic-kirmzi': 94
 });
 const INDIAN_LANGUAGES = new Set(['ta', 'te', 'hi', 'ml', 'kn']);
+const ASIAN_DRAMA_LANGUAGES = new Set(['ko', 'ja', 'zh', 'th']);
+const ASIAN_DRAMA_COUNTRIES = new Set(['KR', 'JP', 'CN', 'TW', 'TH', 'HK']);
 const ARABIC_COUNTRIES = new Set(['AE', 'BH', 'DZ', 'EG', 'IQ', 'JO', 'KW', 'LB', 'MA', 'OM', 'PS', 'QA', 'SA', 'SY', 'TN', 'YE']);
 const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'it-streamingcommunity': 'StreamingCommunity IT',
@@ -733,6 +787,47 @@ const mergeAndRankProviderStreams = (settledResults, providerOrder, contentProfi
     : mergedStreams;
 };
 
+const applyPerProviderSoftLimit = (streams, limit, perProviderSoftLimit = Infinity) => {
+  if (!Number.isFinite(limit)) {
+    return streams;
+  }
+
+  if (!Number.isFinite(perProviderSoftLimit) || perProviderSoftLimit < 1) {
+    return streams.slice(0, limit);
+  }
+
+  const selected = [];
+  const deferred = [];
+  const providerCounts = new Map();
+
+  for (const stream of streams) {
+    const providerId = String(stream.provider || '').trim().toLowerCase() || 'unknown';
+    const count = providerCounts.get(providerId) || 0;
+
+    if (count < perProviderSoftLimit) {
+      providerCounts.set(providerId, count + 1);
+      selected.push(stream);
+    } else {
+      deferred.push(stream);
+    }
+
+    if (selected.length >= limit) {
+      return selected;
+    }
+  }
+
+  for (const stream of deferred) {
+    selected.push(stream);
+    if (selected.length >= limit) {
+      break;
+    }
+  }
+
+  return selected;
+};
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
@@ -743,6 +838,7 @@ export class ProviderService {
     this.providerHealth = new Map();
     this.providerHostHealth = new Map();
     this.providerHostInflight = new Map();
+    this.providerRuntime = new Map();
     this.providerGlobalInflight = 0;
     this.tmdbMetadataCache = new Map();
     this.tmdbMetadataInFlight = new Map();
@@ -768,6 +864,7 @@ export class ProviderService {
     const now = Date.now();
     let coolingDownProviders = 0;
     let coolingDownHosts = 0;
+    const providerStatuses = this.getProviderStatusSnapshot(now);
 
     for (const state of this.providerHealth.values()) {
       if ((state.cooldownUntil || 0) > now) {
@@ -788,8 +885,80 @@ export class ProviderService {
       activeProviderExecutions: this.providerGlobalInflight,
       providerCacheDir: this.providerCacheDir,
       coolingDownProviders,
-      coolingDownHosts
+      coolingDownHosts,
+      providers: providerStatuses
     };
+  }
+
+  updateProviderRuntime(providerId, patch) {
+    const current = this.providerRuntime.get(providerId) || {
+      totalRequests: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+      consecutiveFailures: 0,
+      lastResultCount: null,
+      lastDurationMs: null,
+      lastStartedAt: null,
+      lastFinishedAt: null,
+      lastCacheHitAt: null,
+      lastError: null,
+      running: false
+    };
+
+    this.providerRuntime.set(providerId, {
+      ...current,
+      ...patch
+    });
+  }
+
+  getProviderStatusSnapshot(now = Date.now()) {
+    return this.getProviderOrder().map((providerId) => {
+      const provider = this.providers.get(providerId);
+      const hostKey = this.getProviderHostKey(providerId);
+      const runtime = this.providerRuntime.get(providerId) || {};
+      const health = this.providerHealth.get(providerId) || {};
+      const hostHealth = this.providerHostHealth.get(hostKey) || {};
+      const providerCooldownUntil = health.cooldownUntil || 0;
+      const hostCooldownUntil = hostHealth.cooldownUntil || 0;
+      const cooldownUntil = Math.max(providerCooldownUntil, hostCooldownUntil);
+      const activeRequests = this.providerHostInflight.get(hostKey) || 0;
+      let status = 'idle';
+
+      if (runtime.running) {
+        status = 'running';
+      } else if (cooldownUntil > now) {
+        status = 'cooldown';
+      } else if ((runtime.consecutiveFailures || 0) > 0) {
+        status = 'failing';
+      } else if (runtime.lastResultCount === 0) {
+        status = 'empty';
+      } else if (Number.isFinite(runtime.lastResultCount)) {
+        status = 'ok';
+      } else if (runtime.lastCacheHitAt) {
+        status = 'cache-hit';
+      }
+
+      return {
+        id: providerId,
+        label: provider?.label || toLabel(providerId),
+        hostKey,
+        status,
+        activeRequests,
+        failures: health.failures || 0,
+        hostFailures: hostHealth.failures || 0,
+        cooldownUntil: cooldownUntil > now ? cooldownUntil : 0,
+        lastStartedAt: runtime.lastStartedAt || null,
+        lastFinishedAt: runtime.lastFinishedAt || null,
+        lastCacheHitAt: runtime.lastCacheHitAt || null,
+        lastResultCount: Number.isFinite(runtime.lastResultCount) ? runtime.lastResultCount : null,
+        lastDurationMs: Number.isFinite(runtime.lastDurationMs) ? runtime.lastDurationMs : null,
+        lastError: runtime.lastError || null,
+        totalRequests: runtime.totalRequests || 0,
+        totalSuccesses: runtime.totalSuccesses || 0,
+        totalFailures: runtime.totalFailures || 0,
+        consecutiveFailures: runtime.consecutiveFailures || 0
+      };
+    });
   }
 
   handleMemoryPressure({ critical = false } = {}) {
@@ -862,7 +1031,13 @@ export class ProviderService {
       contentProfile
     );
     const hasExplicitProviders = Array.isArray(providers) && providers.length > 0;
-    const baseProviders = prioritizePrivateTokenProviders(orderedProviders, rest.privateProviderSettings);
+    const prioritizedProviders = prioritizePrivateTokenProviders(orderedProviders, rest.privateProviderSettings);
+    const baseProviders = !hasExplicitProviders && Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('anime')
+      ? [
+        ...prioritizedProviders.filter((providerId) => !BROKEN_ANIME_FAST_PROVIDERS.has(providerId)),
+        ...prioritizedProviders.filter((providerId) => BROKEN_ANIME_FAST_PROVIDERS.has(providerId))
+      ]
+      : prioritizedProviders;
     const initialProviderLimit = hasExplicitProviders
       ? Math.min(baseProviders.length, Math.max(config.STREMIO_FAST_PROVIDER_LIMIT, 12))
       : config.STREMIO_FAST_PROVIDER_LIMIT;
@@ -878,6 +1053,14 @@ export class ProviderService {
       for (const providerId of DEFAULT_DIVERSITY_FALLBACK_PROVIDERS) {
         if (baseProviders.includes(providerId) && !normalizedProviders.includes(providerId)) {
           normalizedProviders.push(providerId);
+        }
+      }
+
+      if (!contentProfile && rest.mediaType === 'tv') {
+        for (const providerId of UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS) {
+          if (baseProviders.includes(providerId) && !normalizedProviders.includes(providerId)) {
+            normalizedProviders.push(providerId);
+          }
         }
       }
     }
@@ -906,11 +1089,39 @@ export class ProviderService {
       let completed = 0;
       let resolved = false;
       let deadlineTimer;
+      let deadlineAt = startedAt + config.STREMIO_FAST_MAX_WAIT_MS;
+      let extendedForFallbackExploration = false;
+      let extendedForAnimeSpecialists = false;
       const expansionChunkSize = Math.max(3, Math.min(6, config.STREMIO_FAST_PROVIDER_CONCURRENCY * 2));
       let lastExpansionCompleted = -1;
-      const shouldHoldForAnimeSpecialists = Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('anime');
+      const animeLeadProviders = normalizedProviders.slice(0, Math.min(normalizedProviders.length, 4));
+      const animeLeadCount = animeLeadProviders.filter((providerId) => ANIME_SPECIALIST_PROVIDERS.has(providerId)).length;
+      const shouldHoldForAnimeSpecialists = (
+        Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('anime')
+      ) || (
+        !hasExplicitProviders &&
+        rest.mediaType === 'tv' &&
+        animeLeadCount >= 2
+      );
 
       let launchNext = () => {};
+      let armDeadlineTimer = () => {};
+      const getActiveFastConcurrency = () => {
+        const baseConcurrency = config.STREMIO_FAST_PROVIDER_CONCURRENCY;
+        if (
+          (
+            extendedForAnimeSpecialists ||
+            (
+              extendedForFallbackExploration &&
+              !hasExplicitProviders &&
+              !rest.streamOptions?.webReadyOnly
+            )
+          )
+        ) {
+          return Math.min(baseConcurrency + 2, 5);
+        }
+        return baseConcurrency;
+      };
 
       const finalize = (reason) => {
         if (resolved) {
@@ -925,12 +1136,15 @@ export class ProviderService {
           provider,
           count: Array.isArray(results[index]?.streams) ? results[index].streams.length : 0
         }));
-        const streams = mergeAndRankProviderStreams(
+        const rankedStreams = mergeAndRankProviderStreams(
           settledResults,
           queuedProviders,
           contentProfile,
           config.STREMIO_FAST_STREAM_LIMIT
         );
+        const streams = !hasExplicitProviders && !rest.streamOptions?.webReadyOnly
+          ? applyPerProviderSoftLimit(rankedStreams, config.STREMIO_FAST_STREAM_LIMIT, 4)
+          : rankedStreams;
 
         if (reason !== 'all-complete') {
           logger.info('fast provider search returned early', {
@@ -999,12 +1213,15 @@ export class ProviderService {
         }
 
         const settledResults = results.filter(Boolean);
-        const streams = mergeAndRankProviderStreams(
+        const rankedStreams = mergeAndRankProviderStreams(
           settledResults,
           queuedProviders,
           contentProfile,
           config.STREMIO_FAST_STREAM_LIMIT
         );
+        const streams = !hasExplicitProviders && !rest.streamOptions?.webReadyOnly
+          ? applyPerProviderSoftLimit(rankedStreams, config.STREMIO_FAST_STREAM_LIMIT, 4)
+          : rankedStreams;
         const expanded = maybeExpandProviderQueue(streams);
 
         if (expanded) {
@@ -1012,6 +1229,11 @@ export class ProviderService {
           return;
         }
 
+        const providersWithStreams = settledResults
+          .filter((result) => Array.isArray(result.streams) && result.streams.length > 0)
+          .map((result) => result.provider);
+        const providerDiversity = new Set(providersWithStreams).size;
+        const primaryFastProviderHit = providersWithStreams.some((providerId) => PRIMARY_FAST_PROVIDER_IDS.has(providerId));
         const allDone = completed >= queuedProviders.length || (nextIndex >= queuedProviders.length && running === 0);
         const animeSpecialistIndexes = shouldHoldForAnimeSpecialists
           ? queuedProviders
@@ -1019,10 +1241,18 @@ export class ProviderService {
             .filter((index) => index !== -1)
           : [];
         const animeSpecialistPending = animeSpecialistIndexes.some((index) => !results[index]);
+        const shouldHoldForDefaultFallbackExploration = !hasExplicitProviders
+          && !rest.streamOptions?.webReadyOnly
+          && !primaryFastProviderHit
+          && (
+            (streams.length > 0 && providerDiversity < 3) ||
+            (streams.length === 0 && completed > 0)
+          );
         const enoughStreams = streams.length >= earlyReturnTarget
           && completed >= minCompletedProviders
+          && !shouldHoldForDefaultFallbackExploration
           && (!shouldHoldForAnimeSpecialists || !animeSpecialistPending);
-        const deadlineReached = Date.now() - startedAt >= config.STREMIO_FAST_MAX_WAIT_MS;
+        const deadlineReached = Date.now() >= deadlineAt;
 
         if (allDone) {
           finalize('all-complete');
@@ -1031,6 +1261,51 @@ export class ProviderService {
 
         if (enoughStreams) {
           finalize('enough-streams');
+          return;
+        }
+
+        if (
+          deadlineReached &&
+          shouldHoldForAnimeSpecialists &&
+          animeSpecialistPending &&
+          !extendedForAnimeSpecialists &&
+          (running > 0 || nextIndex < queuedProviders.length || overflowProviders.length > 0)
+        ) {
+          extendedForAnimeSpecialists = true;
+          deadlineAt = Date.now() + 8000;
+          armDeadlineTimer();
+          launchNext();
+          logger.info('fast provider search extended for anime specialists', {
+            completedProviders: completed,
+            totalProviders: queuedProviders.length,
+            streamCount: streams.length,
+            animeLeadCount,
+            boostedConcurrency: getActiveFastConcurrency(),
+            tmdbId: rest.tmdbId,
+            mediaType: rest.mediaType
+          });
+          return;
+        }
+
+        if (
+          deadlineReached &&
+          shouldHoldForDefaultFallbackExploration &&
+          !extendedForFallbackExploration &&
+          (running > 0 || nextIndex < queuedProviders.length || overflowProviders.length > 0)
+        ) {
+          extendedForFallbackExploration = true;
+          deadlineAt = Date.now() + 8000;
+          armDeadlineTimer();
+          launchNext();
+          logger.info('fast provider search extended for default fallback exploration', {
+            completedProviders: completed,
+            totalProviders: queuedProviders.length,
+            streamCount: streams.length,
+            providerDiversity,
+            boostedConcurrency: getActiveFastConcurrency(),
+            tmdbId: rest.tmdbId,
+            mediaType: rest.mediaType
+          });
           return;
         }
 
@@ -1044,7 +1319,7 @@ export class ProviderService {
           return;
         }
 
-        while (running < config.STREMIO_FAST_PROVIDER_CONCURRENCY && nextIndex < queuedProviders.length) {
+        while (running < getActiveFastConcurrency() && nextIndex < queuedProviders.length) {
           const index = nextIndex;
           const provider = queuedProviders[index];
           nextIndex += 1;
@@ -1084,14 +1359,20 @@ export class ProviderService {
         maybeFinalize();
       };
 
-      deadlineTimer = setTimeout(() => {
-        maybeFinalize();
+      armDeadlineTimer = () => {
+        clearTimeout(deadlineTimer);
+        const waitMs = Math.max(1, deadlineAt - Date.now());
+        deadlineTimer = setTimeout(() => {
+          maybeFinalize();
 
-        if (!resolved) {
-          finalize('deadline');
-        }
-      }, config.STREMIO_FAST_MAX_WAIT_MS);
-      deadlineTimer.unref?.();
+          if (!resolved && Date.now() >= deadlineAt) {
+            finalize('deadline');
+          }
+        }, waitMs);
+        deadlineTimer.unref?.();
+      };
+
+      armDeadlineTimer();
 
       launchNext();
     });
@@ -1133,6 +1414,9 @@ export class ProviderService {
     const cached = await this.getCachedResult(cacheKey);
 
     if (cached) {
+      this.updateProviderRuntime(providerId, {
+        lastCacheHitAt: Date.now()
+      });
       logger.info('provider cache hit', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -1203,6 +1487,15 @@ export class ProviderService {
     normalizedEpisode,
     privateProviderSettings
   }) {
+    const startedAt = Date.now();
+    const existingRuntime = this.providerRuntime.get(providerId) || {};
+    this.updateProviderRuntime(providerId, {
+      running: true,
+      lastStartedAt: startedAt,
+      lastError: null,
+      totalRequests: (existingRuntime.totalRequests || 0) + 1
+    });
+
     try {
       logger.info('provider scrape started', {
         provider: providerId,
@@ -1242,6 +1535,16 @@ export class ProviderService {
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
       this.providerHealth.delete(providerId);
       this.providerHostHealth.delete(providerHostKey);
+      const successRuntime = this.providerRuntime.get(providerId) || {};
+      this.updateProviderRuntime(providerId, {
+        running: false,
+        lastFinishedAt: Date.now(),
+        lastDurationMs: Date.now() - startedAt,
+        lastResultCount: normalizedStreams.length,
+        lastError: null,
+        totalSuccesses: (successRuntime.totalSuccesses || 0) + 1,
+        consecutiveFailures: 0
+      });
       logger.info('provider scrape finished', {
         provider: providerId,
         hostKey: providerHostKey,
@@ -1255,6 +1558,16 @@ export class ProviderService {
       if (error?.statusCode === 504) {
         this.recordProviderFailure(providerId);
         this.recordProviderHostFailure(providerHostKey);
+        const timeoutRuntime = this.providerRuntime.get(providerId) || {};
+        this.updateProviderRuntime(providerId, {
+          running: false,
+          lastFinishedAt: Date.now(),
+          lastDurationMs: Date.now() - startedAt,
+          lastResultCount: 0,
+          lastError: error.message || 'Provider timed out',
+          totalFailures: (timeoutRuntime.totalFailures || 0) + 1,
+          consecutiveFailures: (timeoutRuntime.consecutiveFailures || 0) + 1
+        });
         logger.warn('provider scrape timed out', {
           provider: providerId,
           hostKey: providerHostKey,
@@ -1267,6 +1580,16 @@ export class ProviderService {
 
       this.recordProviderFailure(providerId);
       this.recordProviderHostFailure(providerHostKey);
+      const failureRuntime = this.providerRuntime.get(providerId) || {};
+      this.updateProviderRuntime(providerId, {
+        running: false,
+        lastFinishedAt: Date.now(),
+        lastDurationMs: Date.now() - startedAt,
+        lastResultCount: 0,
+        lastError: error?.message || 'Provider scrape failed',
+        totalFailures: (failureRuntime.totalFailures || 0) + 1,
+        consecutiveFailures: (failureRuntime.consecutiveFailures || 0) + 1
+      });
       logger.error('provider scrape failed', {
         provider: providerId,
         hostKey: providerHostKey,
@@ -1593,21 +1916,44 @@ export class ProviderService {
     }
 
     const request = (async () => {
-      const response = await fetch(`https://api.themoviedb.org/3/${normalizedMediaType}/${normalizedTmdbId}?api_key=${config.TMDB_API_KEY}`);
+      let lastError = null;
 
-      if (!response.ok) {
-        throw new Error(`TMDB metadata HTTP ${response.status}`);
+      for (let attempt = 0; attempt <= TMDB_METADATA_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+          const response = await fetch(`https://api.themoviedb.org/3/${normalizedMediaType}/${normalizedTmdbId}?api_key=${config.TMDB_API_KEY}`);
+
+          if (!response.ok) {
+            throw new Error(`TMDB metadata HTTP ${response.status}`);
+          }
+
+          const metadata = await response.json();
+
+          this.tmdbMetadataCache.set(cacheKey, {
+            value: metadata,
+            expiresAt: Date.now() + TMDB_METADATA_CACHE_TTL_MS
+          });
+          pruneMapByMaxEntries(this.tmdbMetadataCache, config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES);
+
+          return metadata;
+        } catch (error) {
+          lastError = error;
+
+          if (attempt < TMDB_METADATA_RETRY_DELAYS_MS.length) {
+            await delay(TMDB_METADATA_RETRY_DELAYS_MS[attempt]);
+          }
+        }
       }
 
-      const metadata = await response.json();
+      if (cached?.value) {
+        logger.warn('using stale tmdb metadata after fetch failure', {
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          error: lastError
+        });
+        return cached.value;
+      }
 
-      this.tmdbMetadataCache.set(cacheKey, {
-        value: metadata,
-        expiresAt: Date.now() + TMDB_METADATA_CACHE_TTL_MS
-      });
-      pruneMapByMaxEntries(this.tmdbMetadataCache, config.TMDB_METADATA_MEMORY_CACHE_MAX_ENTRIES);
-
-      return metadata;
+      throw lastError;
     })();
 
     this.tmdbMetadataInFlight.set(cacheKey, request);
@@ -1648,8 +1994,23 @@ export class ProviderService {
       tags.push('anime');
     }
 
-    if (!isAnime && (originalLanguage === 'ko' || originCountries.has('KR'))) {
+    if (
+      mediaType === 'tv' &&
+      !isAnime &&
+      (originalLanguage === 'ko' || originCountries.has('KR'))
+    ) {
       tags.push('kdrama');
+    }
+
+    if (
+      mediaType === 'tv' &&
+      !isAnime &&
+      (
+        ASIAN_DRAMA_LANGUAGES.has(originalLanguage) ||
+        [...originCountries].some((country) => ASIAN_DRAMA_COUNTRIES.has(country))
+      )
+    ) {
+      tags.push('asian_drama');
     }
 
     if (INDIAN_LANGUAGES.has(originalLanguage) || originCountries.has('IN')) {

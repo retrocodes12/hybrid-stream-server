@@ -147,7 +147,59 @@ function resolveUrl(url, baseUrl) {
     }
 }
 
-// Helper function to fetch stream URL from the current Vixsrc API
+function extractPageConfig(html) {
+    const tokenMatch = String(html || '').match(/['"]token['"]\s*:\s*['"](.*?)['"]/i);
+    const expiresMatch = String(html || '').match(/['"]expires['"]\s*:\s*['"](.*?)['"]/i);
+    const urlMatch = String(html || '').match(/url:\s*['"](.*?)['"]/i);
+
+    if (!tokenMatch || !expiresMatch || !urlMatch) {
+        return null;
+    }
+
+    return {
+        token: tokenMatch[1],
+        expires: expiresMatch[1],
+        url: urlMatch[1]
+    };
+}
+
+function buildPlaylistUrl(pageConfig) {
+    const baseUrl = new URL(pageConfig.url, BASE_URL);
+    const playlistUrl = new URL(`${baseUrl.origin}${baseUrl.pathname}.m3u8${baseUrl.search}`);
+    playlistUrl.searchParams.set('token', pageConfig.token);
+    playlistUrl.searchParams.set('expires', pageConfig.expires);
+    playlistUrl.searchParams.set('h', '1');
+    return playlistUrl.toString();
+}
+
+function parseHeightFromPlaylist(playlistText) {
+    let maxHeight = 0;
+    const regex = /RESOLUTION=\d+x(\d+)/gi;
+    let match;
+
+    while ((match = regex.exec(String(playlistText || ''))) !== null) {
+        const height = parseInt(match[1], 10);
+        if (!Number.isNaN(height) && height > maxHeight) {
+            maxHeight = height;
+        }
+    }
+
+    return maxHeight || null;
+}
+
+function parseLanguagesFromPlaylist(playlistText) {
+    const languages = new Set();
+    const regex = /LANGUAGE="([a-z]{2,3})"/gi;
+    let match;
+
+    while ((match = regex.exec(String(playlistText || ''))) !== null) {
+        languages.add(match[1].toLowerCase());
+    }
+
+    return Array.from(languages);
+}
+
+// Helper function to fetch stream URL from the current Vixsrc API/embed flow
 function extractStreamFromPage(url, contentType, contentId, seasonNum, episodeNum) {
     let apiUrl;
     let subtitleApiUrl;
@@ -165,17 +217,58 @@ function extractStreamFromPage(url, contentType, contentId, seasonNum, episodeNu
     return makeRequest(apiUrl)
     .then(response => response.json())
     .then(data => {
-        if (data && data.src) {
-            const masterPlaylistUrl = data.src.startsWith('http')
-                ? data.src
-                : `${BASE_URL}${data.src}`;
-
-            console.log(`[Vixsrc] API returned src: ${masterPlaylistUrl}`);
-            return { masterPlaylistUrl, subtitleApiUrl };
+        if (!data || !data.src) {
+            console.log('[Vixsrc] No src found in API response');
+            return null;
         }
 
-        console.log('[Vixsrc] No src found in API response');
-        return null;
+        const embedUrl = data.src.startsWith('http')
+            ? data.src
+            : `${BASE_URL}${data.src}`;
+
+        console.log(`[Vixsrc] API returned embed: ${embedUrl}`);
+        return makeRequest(embedUrl, {
+            headers: {
+                Referer: contentType === 'movie'
+                    ? `${BASE_URL}/movie/${contentId}`
+                    : `${BASE_URL}/tv/${contentId}/${seasonNum || 1}/${episodeNum || 1}`
+            }
+        })
+        .then(response => response.text())
+        .then(embedHtml => {
+            const pageConfig = extractPageConfig(embedHtml);
+
+            if (!pageConfig) {
+                console.log('[Vixsrc] Missing token/expires/url in embed response');
+                return null;
+            }
+
+            const masterPlaylistUrl = buildPlaylistUrl(pageConfig);
+
+            return makeRequest(masterPlaylistUrl, {
+                headers: {
+                    Referer: embedUrl
+                }
+            })
+            .then(response => response.text())
+            .then(playlistText => ({
+                masterPlaylistUrl,
+                subtitleApiUrl,
+                referer: embedUrl,
+                height: parseHeightFromPlaylist(playlistText),
+                languages: parseLanguagesFromPlaylist(playlistText)
+            }))
+            .catch(error => {
+                console.log(`[Vixsrc] Playlist validation failed: ${error.message}`);
+                return {
+                    masterPlaylistUrl,
+                    subtitleApiUrl,
+                    referer: embedUrl,
+                    height: null,
+                    languages: []
+                };
+            });
+        });
     });
 }
 
@@ -214,37 +307,36 @@ function getSubtitles(subtitleApiUrl) {
 // Main function to get streams - adapted for Nuvio provider format
 function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null) {
     console.log(`[Vixsrc] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
-    
-    return getTmdbInfo(tmdbId, mediaType)
-    .then(tmdbInfo => {
-        const { title, year } = tmdbInfo;
-        
-        // Extract stream from Vixsrc page
-        return extractStreamFromPage(null, mediaType, tmdbId, seasonNum, episodeNum);
-    })
+
+    // TMDB is not required for VixSrc playback. Avoid making it a hard dependency
+    // because transient TMDB fetch resets would otherwise hide working streams.
+    getTmdbInfo(tmdbId, mediaType).catch(error => {
+        console.log(`[Vixsrc] TMDB lookup skipped: ${error.message}`);
+        return null;
+    });
+
+    return extractStreamFromPage(null, mediaType, tmdbId, seasonNum, episodeNum)
     .then(streamData => {
         if (!streamData) {
             console.log('[Vixsrc] No stream data found');
             return [];
         }
 
-        const { masterPlaylistUrl, subtitleApiUrl } = streamData;
+        const { masterPlaylistUrl, subtitleApiUrl, referer, height, languages } = streamData;
 
-        // Return single master playlist with Auto quality
-        console.log('[Vixsrc] Returning master playlist with Auto quality...');
-        
-        // Get subtitles
+        console.log('[Vixsrc] Returning direct stream with Auto quality...');
+
         return getSubtitles(subtitleApiUrl)
-        .then(subtitles => {
-            // Return single stream with master playlist
+        .then(() => {
             const nuvioStreams = [{
                 name: "Vixsrc",
-                title: "Auto Quality Stream",
+                title: height ? `Auto Quality Stream\nVixSrc ${height}p` : "Auto Quality Stream",
                 url: masterPlaylistUrl,
-                quality: 'Auto',
+                quality: height ? `${height}p` : 'Auto',
+                languages: Array.isArray(languages) ? languages : [],
                 type: 'direct',
                 headers: {
-                    'Referer': BASE_URL,
+                    'Referer': referer || BASE_URL,
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
                 }
             }];

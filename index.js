@@ -107,6 +107,59 @@ const formatBytes = (bytes) => {
 };
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+const formatAdminTimestamp = (value) => {
+  if (!value) {
+    return 'never';
+  }
+
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) {
+    return 'never';
+  }
+
+  return new Date(timestamp).toLocaleString('en-IN', {
+    hour12: false,
+    timeZone: 'Asia/Kolkata'
+  });
+};
+const formatDurationMs = (value) => {
+  const duration = Number(value);
+  if (!Number.isFinite(duration)) {
+    return '-';
+  }
+
+  if (duration >= 1000) {
+    return `${(duration / 1000).toFixed(1)}s`;
+  }
+
+  return `${Math.round(duration)}ms`;
+};
+const renderProviderStatusRows = (providers = []) => providers.map((provider) => {
+  const status = String(provider.status || 'idle');
+  const statusClass = status.replace(/[^a-z0-9-]/giu, '');
+  const cooldown = provider.cooldownUntil
+    ? `${Math.max(0, Math.ceil((provider.cooldownUntil - Date.now()) / 1000))}s`
+    : '-';
+  const lastResult = provider.lastResultCount === null || provider.lastResultCount === undefined
+    ? '-'
+    : String(provider.lastResultCount);
+  const lastError = provider.lastError
+    ? `<span class="provider-error" title="${escapeHtml(provider.lastError)}">${escapeHtml(provider.lastError)}</span>`
+    : '<span class="muted-inline">-</span>';
+
+  return `
+          <tr>
+            <td><strong>${escapeHtml(provider.label || provider.id)}</strong><span class="provider-id">${escapeHtml(provider.id)}</span></td>
+            <td><span class="status-pill status-${escapeHtml(statusClass)}">${escapeHtml(status)}</span></td>
+            <td>${escapeHtml(String(provider.activeRequests || 0))}</td>
+            <td>${escapeHtml(lastResult)}</td>
+            <td>${escapeHtml(formatDurationMs(provider.lastDurationMs))}</td>
+            <td>${escapeHtml(String(provider.consecutiveFailures || 0))}</td>
+            <td>${escapeHtml(cooldown)}</td>
+            <td>${escapeHtml(formatAdminTimestamp(provider.lastFinishedAt || provider.lastCacheHitAt || provider.lastStartedAt))}</td>
+            <td>${lastError}</td>
+          </tr>`;
+}).join('');
 
 const getPublicBaseUrl = (req) => config.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -2403,6 +2456,87 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         gap: 14px;
         margin-top: 16px;
       }
+      .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        margin-top: 16px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: rgba(0,0,0,0.18);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 940px;
+      }
+      th, td {
+        padding: 11px 12px;
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        background: rgba(255,255,255,0.03);
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .provider-id {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 9px;
+        border: 1px solid var(--border);
+        color: var(--text);
+        background: rgba(255,255,255,0.06);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: capitalize;
+      }
+      .status-ok,
+      .status-cache-hit {
+        border-color: rgba(76, 217, 160, 0.35);
+        background: rgba(76, 217, 160, 0.12);
+        color: #aef4d7;
+      }
+      .status-running {
+        border-color: rgba(102, 182, 255, 0.42);
+        background: rgba(102, 182, 255, 0.14);
+        color: #bfe3ff;
+      }
+      .status-empty,
+      .status-idle {
+        border-color: rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.04);
+        color: var(--muted);
+      }
+      .status-failing,
+      .status-cooldown {
+        border-color: rgba(255, 123, 138, 0.45);
+        background: rgba(255, 123, 138, 0.14);
+        color: #ffc3cb;
+      }
+      .provider-error {
+        display: inline-block;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #ffc3cb;
+      }
+      .muted-inline {
+        color: var(--muted);
+      }
       code {
         display: inline-block;
         margin-top: 6px;
@@ -2505,7 +2639,29 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
           <div><div class="label">Memory Cache Entries</div><code>${escapeHtml(String(stats.providers.inMemoryCacheEntries))}</code></div>
           <div><div class="label">In-Flight Requests</div><code>${escapeHtml(String(stats.providers.inFlightRequests))}</code></div>
           <div><div class="label">Active Executions</div><code>${escapeHtml(String(stats.providers.activeProviderExecutions))}</code></div>
+          <div><div class="label">Providers Cooling Down</div><code>${escapeHtml(String(stats.providers.coolingDownProviders))}</code></div>
+          <div><div class="label">Hosts Cooling Down</div><code>${escapeHtml(String(stats.providers.coolingDownHosts))}</code></div>
           <div><div class="label">Provider Cache Dir</div><code>${escapeHtml(stats.providers.providerCacheDir)}</code></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Status</th>
+                <th>Active</th>
+                <th>Last Streams</th>
+                <th>Last Time</th>
+                <th>Failures</th>
+                <th>Cooldown</th>
+                <th>Last Seen</th>
+                <th>Last Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${renderProviderStatusRows(stats.providers.providers)}
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -3116,6 +3272,7 @@ const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
 
 const BOT_USER_AGENT_PATTERN = /\b(?:ahrefs|aiohttp|axios|baiduspider|bingbot|bot|bytespider|claudebot|crawler|curl|discordbot|facebookexternalhit|googlebot|gptbot|go-http-client|headless|httpx|insomnia|libwww-perl|node-fetch|petalbot|phantomjs|playwright|postmanruntime|puppeteer|python-requests|python-urllib|scraper|selenium|semrush|slackbot|spider|undici|wget|yandex)\b/iu;
 const BOT_STRICT_USER_AGENT_PATTERN = /(?:headless|phantomjs|playwright|puppeteer|selenium)/iu;
+const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|axios|curl|go-http-client|httpx|insomnia|libwww-perl|node-fetch|postmanruntime|python-requests|python-urllib|undici|wget)\b/iu;
 
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
@@ -3147,17 +3304,12 @@ const isAllowedBotProtectionClient = (userAgent) => {
     || normalized.includes('firefox/');
 };
 
-const isLikelyAddonPlaybackClient = (req, pathName, userAgent) => {
+const isLikelyAddonDataClient = (req, pathName, userAgent) => {
   if ((req.method || 'GET').toUpperCase() !== 'GET' || !isExpensiveBotProtectionPath(pathName)) {
     return false;
   }
 
   const normalizedUserAgent = String(userAgent || '').trim().toLowerCase();
-
-  if (normalizedUserAgent) {
-    return false;
-  }
-
   const accepts = String(req.headers.accept || '').toLowerCase();
   const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
   const wantsStructuredResponse = accepts.includes('application/json')
@@ -3169,7 +3321,11 @@ const isLikelyAddonPlaybackClient = (req, pathName, userAgent) => {
     || pathName.includes('/preview/')
     || pathName.endsWith('/manifest.json');
 
-  return wantsStructuredResponse && !isHtmlNavigation && isAddonDataPath && fetchDest !== 'document';
+  return wantsStructuredResponse
+    && !isHtmlNavigation
+    && isAddonDataPath
+    && fetchDest !== 'document'
+    && !normalizedUserAgent.includes('mozilla/5.0 (compatible;');
 };
 
 const sendBotProtectionResponse = (req, res, retryAfterSeconds) => {
@@ -3264,9 +3420,13 @@ const createBotProtection = () => {
     const userAgent = String(req.headers['user-agent'] || '').trim();
     const normalizedUserAgent = userAgent.toLowerCase();
     const trustedStremioClient = normalizedUserAgent.includes('stremio/');
-    const likelyAddonPlaybackClient = isLikelyAddonPlaybackClient(req, pathName, userAgent);
-    const suspiciousUserAgent = BOT_STRICT_USER_AGENT_PATTERN.test(userAgent)
+    const likelyAddonDataClient = isLikelyAddonDataClient(req, pathName, userAgent);
+    const strictSuspiciousUserAgent = BOT_STRICT_USER_AGENT_PATTERN.test(userAgent);
+    const suspiciousUserAgent = strictSuspiciousUserAgent
       || (BOT_USER_AGENT_PATTERN.test(userAgent) && !isAllowedBotProtectionClient(userAgent));
+    const softClientUserAgent = BOT_SOFT_CLIENT_USER_AGENT_PATTERN.test(userAgent);
+    const softAddonClient = likelyAddonDataClient && softClientUserAgent && !strictSuspiciousUserAgent;
+    const shouldTreatAsSuspicious = suspiciousUserAgent && !softAddonClient;
 
     if (trustedStremioClient && !suspiciousUserAgent) {
       next();
@@ -3290,6 +3450,18 @@ const createBotProtection = () => {
 
     if (state.blockedUntil > now) {
       const retryAfterSeconds = Math.max(1, Math.ceil((state.blockedUntil - now) / 1000));
+      if (likelyAddonDataClient && !strictSuspiciousUserAgent) {
+        logger.warn('bot protection rate limited request', {
+          reason: 'temporary-ip-throttle',
+          path: pathName,
+          ip,
+          retryAfterSeconds,
+          userAgent: userAgent.slice(0, 160)
+        });
+        sendBotThrottleResponse(req, res, Math.max(5, Math.min(30, retryAfterSeconds)));
+        return;
+      }
+
       logger.warn('bot protection blocked request', {
         reason: 'temporary-ip-block',
         path: pathName,
@@ -3305,23 +3477,23 @@ const createBotProtection = () => {
       state.expensiveCount += 1;
     }
 
-    if (suspiciousUserAgent) {
+    if (shouldTreatAsSuspicious) {
       state.suspiciousCount += 1;
     }
 
-    const expensiveRequestLimit = likelyAddonPlaybackClient
+    const expensiveRequestLimit = likelyAddonDataClient
       ? Math.max(config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT * 3, config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT + 18)
       : config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT;
     const overExpensiveLimit = state.expensiveCount > expensiveRequestLimit;
     const overSuspiciousLimit = state.suspiciousCount > config.BOT_PROTECTION_SUSPICIOUS_REQUEST_LIMIT;
-    const instantScraperBlock = suspiciousUserAgent && isExpensivePath;
+    const instantScraperBlock = shouldTreatAsSuspicious && isExpensivePath;
 
     if (!overExpensiveLimit && !overSuspiciousLimit && !instantScraperBlock) {
       next();
       return;
     }
 
-    if (overExpensiveLimit && likelyAddonPlaybackClient && !suspiciousUserAgent) {
+    if (overExpensiveLimit && likelyAddonDataClient && !strictSuspiciousUserAgent) {
       const retryAfterSeconds = Math.max(5, Math.min(30, Math.ceil((state.resetAt - now) / 1000)));
       logger.warn('bot protection rate limited request', {
         reason: 'expensive-request-throttle',

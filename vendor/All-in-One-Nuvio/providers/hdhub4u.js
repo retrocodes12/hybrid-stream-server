@@ -68,9 +68,15 @@ var import_cheerio_without_node_native2 = __toESM(require("cheerio-without-node-
 // src/hdhub4u/constants.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var MAIN_URL = "https://new3.hdhub4u.fo";
+var MAIN_URL = "https://new6.hdhub4u.fo";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 var DOMAIN_CACHE_TTL = 4 * 60 * 60 * 1e3;
+var FALLBACK_DOMAINS = [
+  "https://new6.hdhub4u.fo",
+  "https://new5.hdhub4u.fo",
+  "https://new4.hdhub4u.fo",
+  "https://new3.hdhub4u.fo"
+];
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
   "Cookie": "xla=s4t",
@@ -83,6 +89,48 @@ function updateMainUrl(url) {
 
 // src/hdhub4u/utils.js
 var domainCacheTimestamp = 0;
+var domainReachabilityCache = /* @__PURE__ */ new Map();
+function canReachDomain(url) {
+  return __async(this, null, function* () {
+    const cached = domainReachabilityCache.get(url);
+    const now = Date.now();
+    if (cached && now - cached.checkedAt < 10 * 60 * 1e3) {
+      return cached.ok;
+    }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8e3);
+      const response = yield fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        redirect: "manual",
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      const ok = response.status >= 200 && response.status < 500;
+      domainReachabilityCache.set(url, { ok, checkedAt: now });
+      return ok;
+    } catch (error) {
+      domainReachabilityCache.set(url, { ok: false, checkedAt: now });
+      return false;
+    }
+  });
+}
+function resolveWorkingDomain(preferredUrl) {
+  return __async(this, null, function* () {
+    const candidates = [
+      preferredUrl,
+      MAIN_URL,
+      ...FALLBACK_DOMAINS
+    ].filter(Boolean).filter((url, index, list) => list.indexOf(url) === index);
+    for (const candidate of candidates) {
+      if (yield canReachDomain(candidate)) {
+        return candidate;
+      }
+    }
+    return preferredUrl || MAIN_URL;
+  });
+}
 function formatBytes(bytes) {
   if (!bytes || bytes === 0)
     return "Unknown";
@@ -174,16 +222,22 @@ function fetchAndUpdateDomain() {
       if (response.ok) {
         const data = yield response.json();
         if (data && data.HDHUB4u) {
-          const newDomain = data.HDHUB4u;
+          const newDomain = yield resolveWorkingDomain(data.HDHUB4u);
           if (newDomain !== MAIN_URL) {
             console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${newDomain}`);
             updateMainUrl(newDomain);
-            domainCacheTimestamp = now;
           }
+          domainCacheTimestamp = now;
         }
       }
     } catch (error) {
       console.error(`[HDHub4u] Failed to fetch latest domains: ${error.message}`);
+      const fallbackDomain = yield resolveWorkingDomain(MAIN_URL);
+      if (fallbackDomain !== MAIN_URL) {
+        console.log(`[HDHub4u] Falling back from ${MAIN_URL} to ${fallbackDomain}`);
+        updateMainUrl(fallbackDomain);
+      }
+      domainCacheTimestamp = now;
     }
   });
 }
