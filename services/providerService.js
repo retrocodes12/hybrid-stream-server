@@ -62,6 +62,10 @@ const getProviderCacheVersion = (providerId) => {
     return '34';
   }
 
+  if (providerId === 'allyoucanwatch') {
+    return '35';
+  }
+
   return '23';
 };
 const prioritizePrivateTokenProviders = (providers, privateProviderSettings = null) => {
@@ -120,6 +124,7 @@ const LOCAL_PROVIDERS = Object.freeze({
 });
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set([
+  'allyoucanwatch',
   'anime-sama',
   'animekai',
   'animesalt',
@@ -131,6 +136,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
 const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub',
   '4khdhub_tv',
+  'allyoucanwatch',
   'hdhub4u',
   'uhdmovies',
   'flixindia',

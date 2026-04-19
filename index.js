@@ -3272,7 +3272,7 @@ const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
 
 const BOT_USER_AGENT_PATTERN = /\b(?:ahrefs|aiohttp|axios|baiduspider|bingbot|bot|bytespider|claudebot|crawler|curl|discordbot|facebookexternalhit|googlebot|gptbot|go-http-client|headless|httpx|insomnia|libwww-perl|node-fetch|petalbot|phantomjs|playwright|postmanruntime|puppeteer|python-requests|python-urllib|scraper|selenium|semrush|slackbot|spider|undici|wget|yandex)\b/iu;
 const BOT_STRICT_USER_AGENT_PATTERN = /(?:headless|phantomjs|playwright|puppeteer|selenium)/iu;
-const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|axios|curl|go-http-client|httpx|insomnia|libwww-perl|node-fetch|postmanruntime|python-requests|python-urllib|undici|wget)\b/iu;
+const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|aiostreams|axios|curl|go-http-client|httpx|insomnia|libwww-perl|node-fetch|okhttp|postmanruntime|python-requests|python-urllib|stremioshell|stremio-apple|strmr|undici|wget)\b/iu;
 
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
@@ -3297,6 +3297,13 @@ const isAllowedBotProtectionClient = (userAgent) => {
   const normalized = String(userAgent || '').toLowerCase();
 
   return normalized.includes('stremio')
+    || normalized.includes('stremioshell')
+    || normalized.includes('stremio-apple')
+    || normalized.includes('aiostreams')
+    || normalized.includes('okhttp/')
+    || normalized.includes('strmr/')
+    || normalized.includes('qtwebengine/')
+    || normalized.includes('tizen')
     || normalized.includes('mozilla/')
     || normalized.includes('applewebkit/')
     || normalized.includes('chrome/')
@@ -3312,14 +3319,26 @@ const isLikelyAddonDataClient = (req, pathName, userAgent) => {
   const normalizedUserAgent = String(userAgent || '').trim().toLowerCase();
   const accepts = String(req.headers.accept || '').toLowerCase();
   const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
-  const wantsStructuredResponse = accepts.includes('application/json')
-    || accepts.includes('text/plain')
-    || accepts.includes('*/*');
-  const isHtmlNavigation = accepts.includes('text/html') && !wantsStructuredResponse;
+  const knownPlaybackClient = normalizedUserAgent.includes('stremio')
+    || normalizedUserAgent.includes('stremioshell')
+    || normalizedUserAgent.includes('stremio-apple')
+    || normalizedUserAgent.includes('aiostreams')
+    || normalizedUserAgent.includes('okhttp/')
+    || normalizedUserAgent.includes('strmr/')
+    || normalizedUserAgent.includes('qtwebengine/')
+    || normalizedUserAgent.includes('webappmanager')
+    || normalizedUserAgent.includes('tizen')
+    || normalizedUserAgent.includes('web0s');
   const isAddonDataPath = pathName.endsWith('.json')
     || pathName.includes('/stream/')
     || pathName.includes('/preview/')
     || pathName.endsWith('/manifest.json');
+  const wantsStructuredResponse = accepts.includes('application/json')
+    || accepts.includes('text/plain')
+    || accepts.includes('*/*')
+    || (!accepts && isAddonDataPath)
+    || knownPlaybackClient;
+  const isHtmlNavigation = accepts.includes('text/html') && !wantsStructuredResponse;
 
   return wantsStructuredResponse
     && !isHtmlNavigation
@@ -3451,14 +3470,19 @@ const createBotProtection = () => {
     if (state.blockedUntil > now) {
       const retryAfterSeconds = Math.max(1, Math.ceil((state.blockedUntil - now) / 1000));
       if (likelyAddonDataClient && !strictSuspiciousUserAgent) {
+        const shortenedBlockedUntil = Math.min(state.blockedUntil, now + 30_000);
+        if (shortenedBlockedUntil !== state.blockedUntil) {
+          state.blockedUntil = shortenedBlockedUntil;
+        }
+
         logger.warn('bot protection rate limited request', {
           reason: 'temporary-ip-throttle',
           path: pathName,
           ip,
-          retryAfterSeconds,
+          retryAfterSeconds: Math.max(5, Math.min(30, Math.ceil((state.blockedUntil - now) / 1000))),
           userAgent: userAgent.slice(0, 160)
         });
-        sendBotThrottleResponse(req, res, Math.max(5, Math.min(30, retryAfterSeconds)));
+        sendBotThrottleResponse(req, res, Math.max(5, Math.min(30, Math.ceil((state.blockedUntil - now) / 1000))));
         return;
       }
 
@@ -3482,7 +3506,7 @@ const createBotProtection = () => {
     }
 
     const expensiveRequestLimit = likelyAddonDataClient
-      ? Math.max(config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT * 3, config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT + 18)
+      ? Math.max(config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT * 8, config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT + 60)
       : config.BOT_PROTECTION_EXPENSIVE_REQUEST_LIMIT;
     const overExpensiveLimit = state.expensiveCount > expensiveRequestLimit;
     const overSuspiciousLimit = state.suspiciousCount > config.BOT_PROTECTION_SUSPICIOUS_REQUEST_LIMIT;
@@ -3493,10 +3517,10 @@ const createBotProtection = () => {
       return;
     }
 
-    if (overExpensiveLimit && likelyAddonDataClient && !strictSuspiciousUserAgent) {
+    if (likelyAddonDataClient && !strictSuspiciousUserAgent && (overExpensiveLimit || overSuspiciousLimit)) {
       const retryAfterSeconds = Math.max(5, Math.min(30, Math.ceil((state.resetAt - now) / 1000)));
       logger.warn('bot protection rate limited request', {
-        reason: 'expensive-request-throttle',
+        reason: overSuspiciousLimit ? 'suspicious-client-throttle' : 'expensive-request-throttle',
         path: pathName,
         ip,
         expensiveCount: state.expensiveCount,

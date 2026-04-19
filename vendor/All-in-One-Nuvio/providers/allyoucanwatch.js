@@ -14,7 +14,8 @@ const DEFAULT_HEADERS = Object.freeze({
 const TAG = '[AllYouCanWatch]';
 
 function normalizeMediaType(mediaType) {
-  return mediaType === 'tv' ? 'series' : 'movie';
+  const normalized = String(mediaType || '').trim().toLowerCase();
+  return normalized === 'tv' || normalized === 'series' ? 'series' : 'movie';
 }
 
 function normalizeValue(value) {
