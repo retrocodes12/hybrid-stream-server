@@ -12,6 +12,8 @@ const DEFAULT_HEADERS = Object.freeze({
 });
 
 const TAG = '[AllYouCanWatch]';
+const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
+const TMDB_TITLE_CACHE = new Map();
 
 function normalizeMediaType(mediaType) {
   const normalized = String(mediaType || '').trim().toLowerCase();
@@ -108,6 +110,147 @@ function parseSubtitleLanguages(captions) {
   return languages;
 }
 
+function normalizeComparableTitle(value) {
+  return normalizeValue(value)
+    .replace(/\bS\d{1,2}E\d{1,3}\b/gi, ' ')
+    .replace(/\bSeason\s+\d+\b/gi, ' ')
+    .replace(/\bEpisode\s+\d+\b/gi, ' ')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function decodeHtmlEntities(value) {
+  return normalizeValue(value)
+    .replace(/&#(\d+);/g, (_, code) => {
+      const num = parseInt(code, 10);
+      return Number.isFinite(num) ? String.fromCharCode(num) : '';
+    })
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+function titleMatchesExpected(value, expectedTitles) {
+  const normalized = normalizeComparableTitle(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return expectedTitles.some((expected) =>
+    normalized === expected
+    || normalized.startsWith(`${expected} `)
+    || expected.startsWith(`${normalized} `)
+  );
+}
+
+async function getExpectedTitles(tmdbId, mediaType) {
+  const cacheKey = `${mediaType}:${tmdbId}`;
+  const cached = TMDB_TITLE_CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.titles;
+  }
+
+  const endpoint = mediaType === 'series' ? 'tv' : 'movie';
+  const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+        'Accept': 'application/json'
+      }
+    }, 8000);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const titles = [
+      normalizeComparableTitle(mediaType === 'series' ? data && data.name : data && data.title),
+      normalizeComparableTitle(mediaType === 'series' ? data && data.original_name : data && data.original_title)
+    ].filter(Boolean);
+
+    const uniqueTitles = Array.from(new Set(titles));
+    TMDB_TITLE_CACHE.set(cacheKey, {
+      titles: uniqueTitles,
+      expiresAt: Date.now() + (6 * 60 * 60 * 1000)
+    });
+    return uniqueTitles;
+  } catch (error) {
+    console.warn(`${TAG} TMDB title lookup failed for ${mediaType} ${tmdbId}: ${error.message}`);
+  }
+
+  try {
+    const endpoint = mediaType === 'series' ? 'tv' : 'movie';
+    const pageUrl = `https://www.themoviedb.org/${endpoint}/${tmdbId}`;
+    const response = await fetchWithTimeout(pageUrl, {
+      headers: {
+        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Referer': 'https://www.themoviedb.org/'
+      }
+    }, 8000);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const html = await response.text();
+    const titles = [];
+    const scriptMatches = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi) || [];
+    for (const scriptTag of scriptMatches) {
+      const match = scriptTag.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+      if (!match || !match[1]) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(decodeHtmlEntities(match[1]));
+        const parsedType = normalizeValue(parsed && parsed['@type']);
+        if (parsedType && parsedType !== 'TVSeries' && parsedType !== 'Movie') {
+          continue;
+        }
+        const title = normalizeComparableTitle(parsed && parsed.name);
+        const alt = normalizeComparableTitle(parsed && parsed.alternateName);
+        if (title) {
+          titles.push(title);
+        }
+        if (alt) {
+          titles.push(alt);
+        }
+      } catch (_) {}
+    }
+
+    if (titles.length === 0) {
+      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        titles.push(normalizeComparableTitle(
+          decodeHtmlEntities(titleMatch[1])
+            .replace(/\s+—\s+The Movie Database.*$/i, '')
+            .replace(/\s+\((?:TV Series|Movie)[^)]+\)\s*$/i, '')
+        ));
+      }
+    }
+
+    const uniqueTitles = Array.from(new Set(titles.filter(Boolean)));
+    if (uniqueTitles.length > 0) {
+      TMDB_TITLE_CACHE.set(cacheKey, {
+        titles: uniqueTitles,
+        expiresAt: Date.now() + (6 * 60 * 60 * 1000)
+      });
+      return uniqueTitles;
+    }
+  } catch (error) {
+    console.warn(`${TAG} TMDB page fallback failed for ${mediaType} ${tmdbId}: ${error.message}`);
+  }
+
+  return [];
+}
+
 function buildMovieStreams(baseUrl, payload) {
   const entries = Array.isArray(payload && payload.streams) ? payload.streams : [];
   const streams = [];
@@ -185,7 +328,7 @@ function dedupeStreams(streams) {
   return deduped;
 }
 
-async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode) {
+async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode, expectedTitles = []) {
   const playerUrl = buildPlayerUrl(baseUrl, tmdbId, mediaType, season, episode);
   const sseUrl = buildSseUrl(baseUrl, tmdbId, mediaType, season, episode);
   const response = await fetchWithTimeout(sseUrl, {
@@ -205,11 +348,39 @@ async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode) {
     return [];
   }
 
+  const titledEntries = [];
+  for (const payload of payloads) {
+    if (Array.isArray(payload && payload.streams)) {
+      for (const entry of payload.streams) {
+        const title = normalizeValue(entry && entry.title);
+        if (title) {
+          titledEntries.push(title);
+        }
+      }
+    }
+  }
+
+  const matchingTitledEntries = titledEntries.filter((title) => titleMatchesExpected(title, expectedTitles));
+  const hasMismatchedCatalog = expectedTitles.length > 0 && titledEntries.length > 0 && matchingTitledEntries.length === 0;
+  if (hasMismatchedCatalog) {
+    console.warn(`${TAG} rejected mismatched upstream payload for ${mediaType} ${tmdbId}: ${titledEntries.slice(0, 3).join(' | ')}`);
+    return [];
+  }
+
   const streams = [];
 
   for (const payload of payloads) {
     if (Array.isArray(payload && payload.streams)) {
-      streams.push(...buildMovieStreams(baseUrl, payload));
+      const filteredPayload = expectedTitles.length > 0
+        ? {
+          ...payload,
+          streams: payload.streams.filter((entry) => {
+            const title = normalizeValue(entry && entry.title);
+            return !title || titleMatchesExpected(title, expectedTitles);
+          })
+        }
+        : payload;
+      streams.push(...buildMovieStreams(baseUrl, filteredPayload));
       continue;
     }
 
@@ -224,10 +395,16 @@ async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode) {
 
 async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = null) {
   const normalizedMediaType = normalizeMediaType(mediaType);
+  const expectedTitles = await getExpectedTitles(tmdbId, normalizedMediaType);
+
+  if (expectedTitles.length === 0) {
+    console.warn(`${TAG} skipping ${normalizedMediaType} ${tmdbId}: could not verify expected title`);
+    return [];
+  }
 
   for (const baseUrl of BASE_URLS) {
     try {
-      const streams = await tryFetchStreams(baseUrl, tmdbId, normalizedMediaType, season, episode);
+      const streams = await tryFetchStreams(baseUrl, tmdbId, normalizedMediaType, season, episode, expectedTitles);
       if (streams.length > 0) {
         console.log(`${TAG} ${normalizedMediaType} ${tmdbId} -> ${streams.length} streams via ${baseUrl}`);
         return streams;

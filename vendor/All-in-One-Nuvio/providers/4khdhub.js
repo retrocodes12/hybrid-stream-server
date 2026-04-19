@@ -95,6 +95,19 @@ function fetchJson(url, extraHeaders) {
     });
 }
 
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&#(\d+);/g, function (_, code) {
+      var num = parseInt(code, 10);
+      return Number.isFinite(num) ? String.fromCharCode(num) : '';
+    })
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Levenshtein Distance
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +127,16 @@ function levenshtein(s, t) {
   return d[n][m];
 }
 
+function normaliseSearchTitle(value) {
+  return String(value || '')
+    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/\s+-\s+[A-Z0-9]{2,10}\b/g, ' ')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TMDB
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,12 +150,13 @@ function getTmdbDetails(tmdbId, type) {
   var url  = 'https://api.themoviedb.org/3/' + (isTv ? 'tv' : 'movie') + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=alternative_titles';
   console.log(PLUGIN_TAG + ' TMDB → ' + url);
 
-  return fetchJson(url).then(function (d) {
+  function buildApiResult(d) {
     if (!d) return null;
-    var title   = isTv ? d.name  : d.title;
+    var title = isTv ? d.name : d.title;
+    if (!title) return null;
     var originalTitle = isTv ? d.original_name : d.original_title;
     var dateStr = isTv ? d.first_air_date : d.release_date;
-    var year    = dateStr ? parseInt(dateStr.slice(0, 4)) : 0;
+    var year = dateStr ? parseInt(dateStr.slice(0, 4), 10) : 0;
     var alternativeTitles = [];
     if (d.alternative_titles && Array.isArray(d.alternative_titles.titles)) {
       alternativeTitles = d.alternative_titles.titles.slice().sort(function (left, right) {
@@ -140,9 +164,80 @@ function getTmdbDetails(tmdbId, type) {
         return score(left) - score(right);
       }).map(function (entry) { return entry && entry.title; }).filter(Boolean);
     }
-    var result  = { title: title || null, originalTitle: originalTitle || null, alternativeTitles: alternativeTitles, year: year, isTv: isTv };
-    if (title) metaCache.set(cacheKey, result);
+    return { title: title || null, originalTitle: originalTitle || null, alternativeTitles: alternativeTitles, year: year, isTv: isTv };
+  }
+
+  function parseTmdbPageFallback(html) {
+    if (!html) return null;
+    var alternativeTitles = [];
+    var title = null;
+    var originalTitle = null;
+    var year = 0;
+
+    var scriptMatches = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi) || [];
+    scriptMatches.some(function (scriptTag) {
+      var match = scriptTag.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+      if (!match || !match[1]) return false;
+      try {
+        var parsed = JSON.parse(decodeHtmlEntities(match[1]).trim());
+        var parsedType = String(parsed && parsed['@type'] || '');
+        if (parsedType && parsedType !== 'TVSeries' && parsedType !== 'Movie') return false;
+        title = parsed && parsed.name ? String(parsed.name).trim() : title;
+        originalTitle = parsed && parsed.alternateName ? String(parsed.alternateName).trim() : originalTitle;
+        var dateStr = parsed && (parsed.datePublished || parsed.startDate);
+        if (dateStr) {
+          var yearMatch = String(dateStr).match(/\b(19|20)\d{2}\b/);
+          if (yearMatch) year = parseInt(yearMatch[0], 10);
+        }
+        return Boolean(title);
+      } catch (_) {
+        return false;
+      }
+    });
+
+    var titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+    if (!title && titleMatch && titleMatch[1]) {
+      title = decodeHtmlEntities(titleMatch[1])
+        .replace(/\s+—\s+The Movie Database.*$/i, '')
+        .replace(/\s+\((?:TV Series|Movie)[^)]+\)\s*$/i, '')
+        .trim();
+    }
+    if (!year && titleMatch && titleMatch[1]) {
+      var yearMatch2 = decodeHtmlEntities(titleMatch[1]).match(/\b(19|20)\d{2}\b/);
+      if (yearMatch2) year = parseInt(yearMatch2[0], 10);
+    }
+
+    if (!title) return null;
+
+    var result = {
+      title: title,
+      originalTitle: originalTitle || null,
+      alternativeTitles: alternativeTitles,
+      year: year || 0,
+      isTv: isTv
+    };
+    metaCache.set(cacheKey, result);
+    console.log(PLUGIN_TAG + ' TMDB page fallback → "' + title + '" (' + (year || 'N/A') + ')');
     return result;
+  }
+
+  function tryApi(attempt) {
+    return fetchJson(url).then(function (d) {
+      var result = buildApiResult(d);
+      if (result && result.title) {
+        metaCache.set(cacheKey, result);
+        return result;
+      }
+      if (attempt >= 1) return null;
+      return tryApi(attempt + 1);
+    });
+  }
+
+  return tryApi(0).then(function (result) {
+    if (result && result.title) return result;
+    var pageUrl = 'https://www.themoviedb.org/' + (isTv ? 'tv' : 'movie') + '/' + tmdbId;
+    console.log(PLUGIN_TAG + ' TMDB page fallback → ' + pageUrl);
+    return fetchText(pageUrl, { 'Referer': 'https://www.themoviedb.org/' }).then(parseTmdbPageFallback);
   });
 }
 
@@ -625,7 +720,12 @@ function findPageUrl(title, year, isSeries) {
         if (!href || !cardTitle) return;
         if (!href.startsWith('http')) href = BASE_URL + (href.startsWith('/') ? '' : '/') + href;
 
-        var dist = levenshtein(cardTitle.toLowerCase(), title.toLowerCase());
+        var normalizedCardTitle = normaliseSearchTitle(cardTitle);
+        var normalizedTargetTitle = normaliseSearchTitle(title);
+        var prefixMatch = normalizedCardTitle === normalizedTargetTitle
+          || normalizedCardTitle.indexOf(normalizedTargetTitle + ' ') === 0
+          || normalizedTargetTitle.indexOf(normalizedCardTitle + ' ') === 0;
+        var dist = prefixMatch ? 0 : levenshtein(normalizedCardTitle, normalizedTargetTitle);
         candidates.push({ href: href, title: cardTitle, year: cardYear, dist: dist });
       });
 

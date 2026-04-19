@@ -83,6 +83,12 @@ function fetchText(_0) {
     }
   });
 }
+function decodeHtmlEntities(value) {
+  return String(value || "").replace(/&#(\d+);/g, (_, code) => {
+    const num = parseInt(code, 10);
+    return Number.isFinite(num) ? String.fromCharCode(num) : "";
+  }).replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
 
 // src/4khdhub/tmdb.js
 function getTmdbDetails(tmdbId, type) {
@@ -91,34 +97,94 @@ function getTmdbDetails(tmdbId, type) {
     const endpoint = isSeries ? "tv" : "movie";
     const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=alternative_titles`;
     console.log(`[4KHDHub] Fetching TMDB details from: ${url}`);
-    try {
-      const response = yield fetch(url);
-      const data = yield response.json();
-      if (isSeries) {
-        return {
-          title: data.name,
-          originalTitle: data.original_name || null,
-          alternativeTitles: (data.alternative_titles && Array.isArray(data.alternative_titles.titles) ? data.alternative_titles.titles.slice().sort((left, right) => {
-            const score = (entry) => entry && entry.iso_3166_1 === "IN" ? 0 : entry && entry.iso_3166_1 === "US" ? 1 : 2;
-            return score(left) - score(right);
-          }).map((entry) => entry && entry.title).filter(Boolean) : []),
-          year: data.first_air_date ? parseInt(data.first_air_date.split("-")[0]) : 0
-        };
-      } else {
-        return {
-          title: data.title,
-          originalTitle: data.original_title || null,
-          alternativeTitles: (data.alternative_titles && Array.isArray(data.alternative_titles.titles) ? data.alternative_titles.titles.slice().sort((left, right) => {
-            const score = (entry) => entry && entry.iso_3166_1 === "IN" ? 0 : entry && entry.iso_3166_1 === "US" ? 1 : 2;
-            return score(left) - score(right);
-          }).map((entry) => entry && entry.title).filter(Boolean) : []),
-          year: data.release_date ? parseInt(data.release_date.split("-")[0]) : 0
-        };
+    const buildApiResult = (data) => {
+      if (!data)
+        return null;
+      const title = isSeries ? data.name : data.title;
+      if (!title)
+        return null;
+      return {
+        title,
+        originalTitle: isSeries ? data.original_name || null : data.original_title || null,
+        alternativeTitles: data.alternative_titles && Array.isArray(data.alternative_titles.titles) ? data.alternative_titles.titles.slice().sort((left, right) => {
+          const score = (entry) => entry && entry.iso_3166_1 === "IN" ? 0 : entry && entry.iso_3166_1 === "US" ? 1 : 2;
+          return score(left) - score(right);
+        }).map((entry) => entry && entry.title).filter(Boolean) : [],
+        year: isSeries ? data.first_air_date ? parseInt(data.first_air_date.split("-")[0]) : 0 : data.release_date ? parseInt(data.release_date.split("-")[0]) : 0
+      };
+    };
+    const parseTmdbPageFallback = (html) => {
+      if (!html)
+        return null;
+      let title = null;
+      let originalTitle = null;
+      let year = 0;
+      const scriptMatches = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi) || [];
+      scriptMatches.some((scriptTag) => {
+        const match = scriptTag.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+        if (!match || !match[1])
+          return false;
+        try {
+          const parsed = JSON.parse(decodeHtmlEntities(match[1]).trim());
+          const parsedType = String(parsed && parsed["@type"] || "");
+          if (parsedType && parsedType !== "TVSeries" && parsedType !== "Movie")
+            return false;
+          title = parsed && parsed.name ? String(parsed.name).trim() : title;
+          originalTitle = parsed && parsed.alternateName ? String(parsed.alternateName).trim() : originalTitle;
+          const dateStr = parsed && (parsed.datePublished || parsed.startDate);
+          if (dateStr) {
+            const yearMatch = String(dateStr).match(/\b(19|20)\d{2}\b/);
+            if (yearMatch)
+              year = parseInt(yearMatch[0], 10);
+          }
+          return !!title;
+        } catch (_error) {
+          return false;
+        }
+      });
+      const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+      if (!title && titleMatch && titleMatch[1]) {
+        title = decodeHtmlEntities(titleMatch[1]).replace(/\s+—\s+The Movie Database.*$/i, "").replace(/\s+\((?:TV Series|Movie)[^)]+\)\s*$/i, "").trim();
       }
-    } catch (error) {
-      console.log(`[4KHDHub] TMDB request failed: ${error.message}`);
-      return null;
+      if (!year && titleMatch && titleMatch[1]) {
+        const yearMatch = decodeHtmlEntities(titleMatch[1]).match(/\b(19|20)\d{2}\b/);
+        if (yearMatch)
+          year = parseInt(yearMatch[0], 10);
+      }
+      return title ? {
+        title,
+        originalTitle: originalTitle || null,
+        alternativeTitles: [],
+        year: year || 0
+      } : null;
+    };
+    const tryApi = (attempt = 0) => __async(this, null, function* () {
+      try {
+        const response = yield fetch(url);
+        const data = yield response.json();
+        const result = buildApiResult(data);
+        if (result && result.title)
+          return result;
+      } catch (error) {
+        console.log(`[4KHDHub] TMDB request failed: ${error.message}`);
+      }
+      if (attempt >= 1)
+        return null;
+      return yield tryApi(attempt + 1);
+    });
+    const apiResult = yield tryApi();
+    if (apiResult && apiResult.title)
+      return apiResult;
+    const pageUrl = `https://www.themoviedb.org/${endpoint}/${tmdbId}`;
+    console.log(`[4KHDHub] TMDB page fallback: ${pageUrl}`);
+    const html = yield fetchText(pageUrl, {
+      Referer: "https://www.themoviedb.org/"
+    });
+    const fallbackResult = parseTmdbPageFallback(html);
+    if (fallbackResult && fallbackResult.title) {
+      console.log(`[4KHDHub] TMDB page fallback resolved: ${fallbackResult.title} (${fallbackResult.year || "N/A"})`);
     }
+    return fallbackResult;
   });
 }
 function normalizeTitleCandidate(value) {
@@ -186,6 +252,9 @@ function levenshteinDistance(s, t) {
   }
   return d[n][m];
 }
+function normalizeSearchTitle(value) {
+  return String(value || "").replace(/\[[^\]]*]/g, " ").replace(/\s+-\s+[A-Z0-9]{2,10}\b/g, " ").replace(/[^a-z0-9]+/gi, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
 function parseBytes(val) {
   if (typeof val === "number")
     return val;
@@ -248,7 +317,10 @@ function fetchPageUrl(name, year, isSeries) {
       return yearMatch;
     }).filter((_, el) => {
       const movieCardTitle = $(el).find(".movie-card-title").text().replace(/\[.*?]/g, "").trim();
-      const distance = levenshteinDistance(movieCardTitle.toLowerCase(), name.toLowerCase());
+      const normalizedMovieCardTitle = normalizeSearchTitle(movieCardTitle);
+      const normalizedName = normalizeSearchTitle(name);
+      const prefixMatch = normalizedMovieCardTitle === normalizedName || normalizedMovieCardTitle.indexOf(normalizedName + " ") === 0 || normalizedName.indexOf(normalizedMovieCardTitle + " ") === 0;
+      const distance = prefixMatch ? 0 : levenshteinDistance(normalizedMovieCardTitle, normalizedName);
       const match = distance < 5;
       console.log(`[4KHDHub] Checking: "${movieCardTitle}" (Dist: ${distance}) vs "${name}"`);
       return match;

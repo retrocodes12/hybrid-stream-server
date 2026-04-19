@@ -30,6 +30,10 @@ const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = nul
   return crypto.createHash('sha1').update(uiToken).digest('hex');
 };
 const getProviderCacheVersion = (providerId) => {
+  if (providerId === '4khdhub' || providerId === '4khdhub_tv') {
+    return '36';
+  }
+
   if (providerId === 'rgshows') {
     return '24';
   }
@@ -63,7 +67,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'allyoucanwatch') {
-    return '35';
+    return '39';
   }
 
   return '23';
@@ -125,6 +129,8 @@ const LOCAL_PROVIDERS = Object.freeze({
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
 const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'allyoucanwatch',
+  '4khdhub',
+  '4khdhub_tv',
   'anime-sama',
   'animekai',
   'animesalt',
@@ -147,13 +153,14 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
 ]);
 const PRIORITY_COOLDOWN_HOSTS = new Set(['4khdhub', 'hdhub4u']);
 const PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
+  allyoucanwatch: 1,
   '4khdhub': 2,
   hdhub4u: 2
 });
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 25,
   '4khdhub_tv': 25,
-  allyoucanwatch: 20,
+  allyoucanwatch: 30,
   cinestream: 20,
   hdhub4u: 25,
   uhdmovies: 25,
@@ -175,6 +182,8 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'arabic-animecloud': 30,
   'arabic-cineby': 25
 });
+const getProviderTimeoutSeconds = (providerId) =>
+  PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
 const PROVIDER_PRIORITY = [
   '4khdhub',
   '4khdhub_tv',
@@ -1089,6 +1098,15 @@ export class ProviderService {
       config.STREMIO_FAST_MIN_COMPLETED_PROVIDERS
     );
     const startedAt = Date.now();
+    const explicitProviderWaitMs = hasExplicitProviders
+      ? Math.min(
+        30_000,
+        Math.max(
+          config.STREMIO_FAST_MAX_WAIT_MS,
+          ...normalizedProviders.map((providerId) => (getProviderTimeoutSeconds(providerId) * 1000) + 2_000)
+        )
+      )
+      : config.STREMIO_FAST_MAX_WAIT_MS;
 
     return await new Promise((resolve) => {
       const results = [];
@@ -1097,9 +1115,10 @@ export class ProviderService {
       let completed = 0;
       let resolved = false;
       let deadlineTimer;
-      let deadlineAt = startedAt + config.STREMIO_FAST_MAX_WAIT_MS;
+      let deadlineAt = startedAt + explicitProviderWaitMs;
       let extendedForFallbackExploration = false;
       let extendedForAnimeSpecialists = false;
+      let extendedForSlowStart = false;
       const expansionChunkSize = Math.max(3, Math.min(6, config.STREMIO_FAST_PROVIDER_CONCURRENCY * 2));
       let lastExpansionCompleted = -1;
       const animeLeadProviders = normalizedProviders.slice(0, Math.min(normalizedProviders.length, 4));
@@ -1269,6 +1288,27 @@ export class ProviderService {
 
         if (enoughStreams) {
           finalize('enough-streams');
+          return;
+        }
+
+        if (
+          deadlineReached &&
+          !extendedForSlowStart &&
+          completed === 0 &&
+          running > 0
+        ) {
+          extendedForSlowStart = true;
+          deadlineAt = Date.now() + (hasExplicitProviders ? 8_000 : 4_000);
+          armDeadlineTimer();
+          logger.info('fast provider search extended for slow-start providers', {
+            completedProviders: completed,
+            runningProviders: running,
+            totalProviders: queuedProviders.length,
+            explicitProviders: hasExplicitProviders,
+            boostedWaitMs: hasExplicitProviders ? 8_000 : 4_000,
+            tmdbId: rest.tmdbId,
+            mediaType: rest.mediaType
+          });
           return;
         }
 
