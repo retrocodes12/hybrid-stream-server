@@ -813,6 +813,54 @@ const normalizeCustomProxyUrl = (value) => {
   }
 };
 
+const matchesProxyPattern = (hostname, pattern) => {
+  const normalizedHost = String(hostname || '').trim().toLowerCase();
+  const normalizedPattern = String(pattern || '').trim().toLowerCase();
+
+  if (!normalizedHost || !normalizedPattern) {
+    return false;
+  }
+
+  if (normalizedPattern === '*') {
+    return true;
+  }
+
+  if (normalizedPattern.startsWith('*.')) {
+    const suffix = normalizedPattern.slice(1);
+    return normalizedHost.endsWith(suffix);
+  }
+
+  if (!normalizedPattern.includes('*')) {
+    return normalizedHost === normalizedPattern;
+  }
+
+  const escapedPattern = normalizedPattern
+    .replace(/[.+?^${}()|[\]\\]/gu, '\\$&')
+    .replace(/\*/gu, '.*');
+  const regex = new RegExp(`^${escapedPattern}$`, 'u');
+  return regex.test(normalizedHost);
+};
+
+const getConfiguredProxyUrlForStream = (stream, customProxyUrl = null) => {
+  const normalizedCustomProxyUrl = normalizeCustomProxyUrl(customProxyUrl);
+
+  if (normalizedCustomProxyUrl) {
+    return normalizedCustomProxyUrl;
+  }
+
+  if (!stream?.url || stream.transport !== 'http' || !Array.isArray(config.PROXY_CONFIG) || config.PROXY_CONFIG.length === 0) {
+    return null;
+  }
+
+  try {
+    const hostname = new URL(stream.url).hostname.toLowerCase();
+    const matchedRule = config.PROXY_CONFIG.find((rule) => matchesProxyPattern(hostname, rule.pattern));
+    return matchedRule?.proxyUrl || null;
+  } catch {
+    return null;
+  }
+};
+
 const normalizePrivateProviderSettings = (value) => ({
   febboxUiCookie: normalizePrivateCookie(value?.febboxUiCookie),
   showboxOssGroup: normalizePrivateCookie(value?.showboxOssGroup)
@@ -831,7 +879,7 @@ const getPrivateProviderSettingsHash = (privateProviderSettings) => {
 };
 
 const buildCustomProxyStreamUrl = (stream, customProxyUrl) => {
-  const normalizedProxyUrl = normalizeCustomProxyUrl(customProxyUrl);
+  const normalizedProxyUrl = getConfiguredProxyUrlForStream(stream, customProxyUrl);
 
   if (!normalizedProxyUrl || !stream || !stream.url || stream.transport !== 'http') {
     return null;
@@ -1342,6 +1390,30 @@ const formatStremioCardTitle = (stream) => {
   return lines.join('\n');
 };
 
+const formatStremioCardFacts = (stream) => {
+  const normalizedQuality = normalizeQualityKey(stream.quality);
+  const qualityLabel = normalizedQuality === '2160p'
+    ? '4K'
+    : normalizedQuality === 'unknown'
+      ? String(stream.quality || '').trim().toUpperCase() || null
+      : normalizedQuality.toUpperCase();
+  const visualTags = getVisualTags(stream);
+  const encodeTags = getEncodeTags(stream);
+  const audioTags = getAudioTags(stream);
+  const size = getStreamSizeLabel(stream);
+  const parts = [
+    qualityLabel,
+    ...visualTags.slice(0, 2),
+    ...encodeTags.slice(0, 2),
+    ...audioTags.slice(0, 2),
+    getLanguageLabel(stream),
+    size,
+    getSourceLabel(stream)
+  ].filter(Boolean);
+
+  return [...new Set(parts)].join(' • ');
+};
+
 const extractFilenameFromUrl = (streamUrl) => {
   try {
     const parsedUrl = new URL(String(streamUrl || '').trim());
@@ -1378,9 +1450,14 @@ const getTorrentSources = (magnet) => {
 const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_STREAM_OPTIONS) => {
   const streamQuality = stream.quality || 'Unknown';
   const providerLabel = stream.provider ? toTitleCaseLabel(stream.provider) : 'Default';
+  const factsLine = formatStremioCardFacts(stream);
+  const detailedTitle = formatStremioCardTitle(stream);
   const base = {
-    name: `NebulaStreams ${streamQuality} | ${providerLabel}`,
-    title: formatStremioCardTitle(stream),
+    name: factsLine
+      ? `NebulaStreams ${streamQuality} | ${providerLabel}\n${factsLine}`
+      : `NebulaStreams ${streamQuality} | ${providerLabel}`,
+    title: detailedTitle,
+    description: factsLine || detailedTitle,
     behaviorHints: {
       bingeGroup: parsedRequest.mediaType === 'series'
         ? `${parsedRequest.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
@@ -1969,7 +2046,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 42,
+      version: 44,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2307,7 +2384,7 @@ export class StreamManager {
         addonId: config.STREMIO_ADDON_ID,
         addonName: config.STREMIO_ADDON_NAME,
         configurable: true,
-        description: 'Fast multi-provider HTTP stream addon for movies and series'
+        description: config.CONFIGURATION_DESCRIPTION
       };
     }
 

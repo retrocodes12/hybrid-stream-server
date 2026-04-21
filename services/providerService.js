@@ -135,6 +135,7 @@ const LOCAL_PROVIDERS = Object.freeze({
   }
 });
 const IGNORED_PROVIDER_IDS = new Set(['test', 'test2']);
+const DISABLED_PROVIDER_IDS = new Set(config.DISABLED_SOURCES || []);
 const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'allyoucanwatch',
   '4khdhub',
@@ -142,6 +143,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'anime-sama',
   'animekai',
   'animesalt',
+  'brazucaplay',
   'cinestream',
   'fmovies',
   'hdmovie2',
@@ -172,6 +174,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 25,
   '4khdhub_tv': 25,
   allyoucanwatch: 30,
+  brazucaplay: 20,
   cinestream: 20,
   fmovies: 20,
   hdhub4u: 25,
@@ -253,6 +256,7 @@ const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'anim
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama', 'animekai']);
 const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies']);
+const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
   'animesalt',
   'animeworld',
@@ -433,7 +437,7 @@ const discoverProviders = () => {
   for (const fileName of providerFiles) {
     const providerId = path.basename(fileName, '.js').toLowerCase();
 
-    if (IGNORED_PROVIDER_IDS.has(providerId)) {
+    if (IGNORED_PROVIDER_IDS.has(providerId) || DISABLED_PROVIDER_IDS.has(providerId)) {
       continue;
     }
 
@@ -445,6 +449,10 @@ const discoverProviders = () => {
   }
 
   for (const provider of Object.values(LOCAL_PROVIDERS)) {
+    if (DISABLED_PROVIDER_IDS.has(provider.id)) {
+      continue;
+    }
+
     discovered.set(provider.id, provider);
   }
 
@@ -973,6 +981,8 @@ export class ProviderService {
         status = 'cooldown';
       } else if ((runtime.consecutiveFailures || 0) > 0) {
         status = 'failing';
+      } else if (runtime.lastResultCount === 0 && (runtime.totalSuccesses || 0) > 0) {
+        status = 'intermittent';
       } else if (runtime.lastResultCount === 0) {
         status = 'empty';
       } else if (Number.isFinite(runtime.lastResultCount)) {
@@ -1514,6 +1524,23 @@ export class ProviderService {
     const cooldownState = this.providerHealth.get(providerId);
 
     if (cooldownState?.cooldownUntil && cooldownState.cooldownUntil > Date.now()) {
+      const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
+
+      if (staleFallback?.length) {
+        logger.warn('provider served stale fallback during cooldown', {
+          provider: providerId,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          resultCount: staleFallback.length
+        });
+        this.updateProviderRuntime(providerId, {
+          lastCacheHitAt: Date.now(),
+          lastResultCount: staleFallback.length,
+          lastError: 'Served stale fallback during cooldown'
+        });
+        return staleFallback;
+      }
+
       logger.warn('provider skipped due to cooldown', {
         provider: providerId,
         tmdbId: normalizedTmdbId,
@@ -1526,6 +1553,24 @@ export class ProviderService {
     const hostCooldownState = this.providerHostHealth.get(providerHostKey);
 
     if (hostCooldownState?.cooldownUntil && hostCooldownState.cooldownUntil > Date.now()) {
+      const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
+
+      if (staleFallback?.length) {
+        logger.warn('provider served stale fallback during host cooldown', {
+          provider: providerId,
+          hostKey: providerHostKey,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          resultCount: staleFallback.length
+        });
+        this.updateProviderRuntime(providerId, {
+          lastCacheHitAt: Date.now(),
+          lastResultCount: staleFallback.length,
+          lastError: 'Served stale fallback during host cooldown'
+        });
+        return staleFallback;
+      }
+
       logger.warn('provider skipped due to host cooldown', {
         provider: providerId,
         hostKey: providerHostKey,
@@ -1618,6 +1663,32 @@ export class ProviderService {
       }
 
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
+
+      if (normalizedStreams.length === 0 && STALE_IF_ERROR_PROVIDERS.has(providerId)) {
+        const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
+
+        if (staleFallback?.length) {
+          const staleRuntime = this.providerRuntime.get(providerId) || {};
+          this.updateProviderRuntime(providerId, {
+            running: false,
+            lastFinishedAt: Date.now(),
+            lastDurationMs: Date.now() - startedAt,
+            lastResultCount: staleFallback.length,
+            lastError: 'Served stale fallback after empty result',
+            totalSuccesses: (staleRuntime.totalSuccesses || 0) + 1,
+            consecutiveFailures: 0
+          });
+          logger.warn('provider served stale fallback after empty result', {
+            provider: providerId,
+            hostKey: providerHostKey,
+            tmdbId: normalizedTmdbId,
+            mediaType: normalizedMediaType,
+            resultCount: staleFallback.length
+          });
+          return staleFallback;
+        }
+      }
+
       this.providerHealth.delete(providerId);
       this.providerHostHealth.delete(providerHostKey);
       const successRuntime = this.providerRuntime.get(providerId) || {};
@@ -1659,6 +1730,28 @@ export class ProviderService {
           tmdbId: normalizedTmdbId,
           mediaType: normalizedMediaType
         });
+
+        const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
+
+        if (staleFallback?.length) {
+          logger.warn('provider served stale fallback after timeout', {
+            provider: providerId,
+            hostKey: providerHostKey,
+            tmdbId: normalizedTmdbId,
+            mediaType: normalizedMediaType,
+            resultCount: staleFallback.length
+          });
+          this.updateProviderRuntime(providerId, {
+            running: false,
+            lastFinishedAt: Date.now(),
+            lastDurationMs: Date.now() - startedAt,
+            lastResultCount: staleFallback.length,
+            lastError: 'Served stale fallback after timeout'
+          });
+          await this.deleteCachedResult(cacheKey);
+          return staleFallback;
+        }
+
         await this.deleteCachedResult(cacheKey);
         return [];
       }
@@ -1682,6 +1775,28 @@ export class ProviderService {
         mediaType: normalizedMediaType,
         error
       });
+
+      const staleFallback = await this.getStaleFallbackResult(cacheKey, providerId);
+
+      if (staleFallback?.length) {
+        logger.warn('provider served stale fallback after failure', {
+          provider: providerId,
+          hostKey: providerHostKey,
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          resultCount: staleFallback.length
+        });
+        this.updateProviderRuntime(providerId, {
+          running: false,
+          lastFinishedAt: Date.now(),
+          lastDurationMs: Date.now() - startedAt,
+          lastResultCount: staleFallback.length,
+          lastError: 'Served stale fallback after failure'
+        });
+        await this.deleteCachedResult(cacheKey);
+        return staleFallback;
+      }
+
       await this.deleteCachedResult(cacheKey);
       return [];
     }
@@ -1882,6 +1997,46 @@ export class ProviderService {
     }
   }
 
+  async getStaleFallbackResult(cacheKey, providerId = null) {
+    if (!providerId || !STALE_IF_ERROR_PROVIDERS.has(providerId)) {
+      return null;
+    }
+
+    const cachePath = this.getStaleFallbackCacheFilePath(cacheKey);
+
+    try {
+      const payload = JSON.parse(await readFile(cachePath, 'utf8'));
+      const serializedStreams = typeof payload?.serializedStreams === 'string'
+        ? payload.serializedStreams
+        : Array.isArray(payload?.streams)
+          ? serializeStreams(payload.streams)
+          : '';
+      const hydratedStreams = deserializeStreams(serializedStreams);
+
+      if (!payload || payload.expiresAt <= Date.now() || hydratedStreams.length === 0) {
+        await rm(cachePath, { force: true });
+        return null;
+      }
+
+      logger.info('provider stale fallback cache hit', {
+        provider: providerId,
+        cacheKey: this.hashCacheKey(cacheKey),
+        resultCount: hydratedStreams.length
+      });
+      return hydratedStreams;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        logger.warn('provider stale fallback cache read failed', {
+          provider: providerId,
+          cacheKey: this.hashCacheKey(cacheKey),
+          error
+        });
+      }
+
+      return null;
+    }
+  }
+
   async setCachedResult(cacheKey, streams, providerId = null) {
     if (streams.length === 0 && providerId && NO_EMPTY_CACHE_PROVIDERS.has(providerId)) {
       this.resultCache.delete(cacheKey);
@@ -1916,6 +2071,21 @@ export class ProviderService {
         cacheKey: this.hashCacheKey(cacheKey),
         error
       });
+    }
+
+    if (providerId && STALE_IF_ERROR_PROVIDERS.has(providerId) && streams.length > 0) {
+      try {
+        await writeFile(this.getStaleFallbackCacheFilePath(cacheKey), JSON.stringify({
+          expiresAt: Date.now() + (config.PROVIDER_CACHE_TTL_SECONDS * 4 * 1000),
+          serializedStreams
+        }));
+      } catch (error) {
+        logger.warn('provider stale fallback cache write failed', {
+          provider: providerId,
+          cacheKey: this.hashCacheKey(cacheKey),
+          error
+        });
+      }
     }
   }
 
@@ -2214,6 +2384,10 @@ export class ProviderService {
 
   getCacheFilePath(cacheKey) {
     return path.join(this.providerCacheDir, `${this.hashCacheKey(cacheKey)}.json`);
+  }
+
+  getStaleFallbackCacheFilePath(cacheKey) {
+    return path.join(this.providerCacheDir, `${this.hashCacheKey(cacheKey)}.stale.json`);
   }
 
   hashCacheKey(cacheKey) {

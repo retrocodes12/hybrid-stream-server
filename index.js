@@ -175,7 +175,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
     config.DONATION_CRYPTO_ADDRESS ||
     config.DONATION_PRIMARY_URL ||
     config.DONATION_SECONDARY_URL ||
-    config.DONATION_UPI_ID ||
     nowPaymentsWidgetUrl
   );
 
@@ -1071,6 +1070,343 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           flex-direction: column;
         }
       }
+
+      /* Sootio-inspired configure flow:
+         - centered single control surface
+         - compact top navigation instead of heavy side rail
+         - softer, form-first cards
+         This keeps NebulaStreams branding and structure intact. */
+      body {
+        background:
+          radial-gradient(circle at 20% 0%, rgba(80, 146, 255, 0.16), transparent 28%),
+          radial-gradient(circle at 80% 0%, rgba(62, 222, 180, 0.12), transparent 24%),
+          linear-gradient(180deg, #09111c 0%, #0a1422 55%, #0b1626 100%);
+        font: 15px/1.6 "Open Sans", "Segoe UI", "Helvetica Neue", sans-serif;
+      }
+
+      main {
+        width: min(980px, calc(100vw - 28px));
+        padding: 20px 0 32px;
+      }
+
+      .app-shell {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        min-height: 0;
+      }
+
+      .sidebar {
+        position: static;
+        min-height: 0;
+        padding: 16px 18px;
+        border-radius: 22px;
+        background:
+          linear-gradient(180deg, rgba(8, 17, 29, 0.92), rgba(9, 20, 34, 0.9));
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 20px 54px rgba(0, 0, 0, 0.24);
+      }
+
+      .brand {
+        justify-content: flex-start;
+        padding: 2px 0 4px;
+      }
+
+      .brand-mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 18px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.24);
+      }
+
+      .brand-copy {
+        text-align: left;
+      }
+
+      .brand-copy h1 {
+        font-size: 24px;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-copy p {
+        font-size: 13px;
+        color: #9eb0ca;
+      }
+
+      .sidebar-nav {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 10px;
+        margin-top: 12px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        scrollbar-width: thin;
+      }
+
+      .nav-item {
+        flex: 0 0 auto;
+        min-width: 132px;
+        min-height: 52px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.028);
+        border: 1px solid rgba(255,255,255,0.055);
+      }
+
+      .nav-item:hover {
+        background: rgba(255,255,255,0.05);
+        border-color: rgba(100, 255, 218, 0.14);
+      }
+
+      .nav-item.is-active {
+        background: linear-gradient(135deg, rgba(85, 161, 255, 0.18), rgba(72, 209, 174, 0.14));
+        border-color: rgba(100, 255, 218, 0.2);
+      }
+
+      .nav-index {
+        width: 24px;
+        height: 24px;
+        font-size: 11px;
+        background: rgba(255,255,255,0.08);
+      }
+
+      .sidebar-footer {
+        display: none;
+      }
+
+      .workspace {
+        padding: 14px;
+        border-radius: 22px;
+        background:
+          linear-gradient(180deg, rgba(10, 23, 38, 0.92), rgba(9, 18, 30, 0.9));
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 24px 72px rgba(0, 0, 0, 0.28);
+      }
+
+      .hero {
+        padding: 18px 18px 16px;
+        border-radius: 18px;
+        background:
+          linear-gradient(180deg, rgba(13, 28, 45, 0.9), rgba(10, 20, 33, 0.86));
+        box-shadow: none;
+      }
+
+      .hero-tag {
+        background: rgba(100, 255, 218, 0.08);
+        border-color: rgba(100, 255, 218, 0.16);
+        color: #c7fff1;
+      }
+
+      .hero h2 {
+        margin-top: 14px;
+        font-size: clamp(28px, 5vw, 38px);
+        letter-spacing: -0.03em;
+      }
+
+      .hero p {
+        font-size: 14px;
+        max-width: 620px;
+      }
+
+      .hero-meta {
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .hero-chip {
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+      }
+
+      .content-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .settings-card {
+        border-radius: 18px;
+        background: rgba(255,255,255,0.028);
+        box-shadow: none;
+      }
+
+      .settings-card-inner {
+        padding: 16px;
+      }
+
+      .card-badge {
+        padding: 7px 12px;
+        border-radius: 0 0 14px 0;
+      }
+
+      .settings-card-header {
+        padding-bottom: 14px;
+      }
+
+      .card-title {
+        font-size: 18px;
+        letter-spacing: -0.01em;
+      }
+
+      .card-description {
+        margin-top: 6px;
+        font-size: 13px;
+        color: #99abc4;
+      }
+
+      .overview-grid,
+      .two-column {
+        gap: 14px;
+      }
+
+      .manifest-box,
+      .meta-card,
+      .summary-strip,
+      .preset-status,
+      .support-card,
+      .preview-result,
+      .note-item,
+      .disclaimer,
+      .quality-row,
+      .provider-option,
+      .choice-card,
+      .preset-card,
+      .stat-card,
+      .reason-row,
+      .sample-row,
+      .diagnostic-example {
+        background: rgba(255,255,255,0.03);
+        border-color: rgba(255,255,255,0.065);
+      }
+
+      .provider-grid {
+        max-height: 420px;
+      }
+
+      section[id] {
+        scroll-margin-top: 18px;
+      }
+
+      #overview-section { order: 1; }
+      #presets-section { order: 2; }
+      #providers-section { order: 3; }
+      .two-column { order: 4; }
+      #preview-section { order: 5; }
+      #notes-section { order: 6; }
+      #support-section { order: 7; }
+
+      .provider-option {
+        transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+      }
+
+      .provider-option:hover {
+        border-color: rgba(100, 255, 218, 0.16);
+        background: rgba(255,255,255,0.045);
+        transform: translateY(-1px);
+      }
+
+      .field {
+        margin-top: 16px;
+      }
+
+      .field-label {
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #d7e4ff;
+      }
+
+      .field-input {
+        padding: 13px 14px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.025);
+      }
+
+      .field-help {
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .actions {
+        gap: 10px;
+      }
+
+      .primary-button,
+      .donate-toggle {
+        background: linear-gradient(135deg, #6fe6c3, #5a95ff);
+        color: #07111a;
+        font-weight: 700;
+      }
+
+      .secondary-button,
+      .mini-button,
+      .support-link {
+        background: rgba(255,255,255,0.04);
+      }
+
+      .mini-button {
+        padding: 9px 13px;
+      }
+
+      #overview-section {
+        position: static;
+      }
+
+      @media (max-width: 920px) {
+        main {
+          width: min(100vw, calc(100vw - 18px));
+        }
+
+        .workspace {
+          padding: 14px;
+          border-radius: 22px;
+        }
+      }
+
+      @media (max-width: 640px) {
+        body {
+          font-size: 14px;
+        }
+
+        main {
+          width: calc(100vw - 12px);
+          padding-top: 10px;
+        }
+
+        .sidebar,
+        .workspace {
+          padding: 14px;
+          border-radius: 18px;
+        }
+
+        .brand {
+          justify-content: flex-start;
+        }
+
+        .brand-copy h1 {
+          font-size: 21px;
+        }
+
+        .hero,
+        .settings-card-inner {
+          padding: 16px;
+        }
+
+        .hero-meta {
+          display: none;
+        }
+
+        .sidebar-nav {
+          gap: 8px;
+        }
+
+        .nav-item {
+          min-width: 118px;
+          min-height: 48px;
+          padding: 10px 12px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1088,14 +1424,14 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           </div>
 
           <nav class="sidebar-nav">
-            <button type="button" class="nav-item is-active" data-section-target="support-section"><span>Support</span><span class="nav-index">01</span></button>
-            <button type="button" class="nav-item" data-section-target="overview-section"><span>Overview</span><span class="nav-index">02</span></button>
-            <button type="button" class="nav-item" data-section-target="presets-section"><span>Presets</span><span class="nav-index">03</span></button>
-            <button type="button" class="nav-item" data-section-target="providers-section"><span>Providers</span><span class="nav-index">04</span></button>
-            <button type="button" class="nav-item" data-section-target="sorting-section"><span>Sorting</span><span class="nav-index">05</span></button>
-            <button type="button" class="nav-item" data-section-target="filters-section"><span>Filters</span><span class="nav-index">06</span></button>
-            <button type="button" class="nav-item" data-section-target="preview-section"><span>Preview</span><span class="nav-index">07</span></button>
-            <button type="button" class="nav-item" data-section-target="notes-section"><span>Notes</span><span class="nav-index">08</span></button>
+            <button type="button" class="nav-item is-active" data-section-target="overview-section"><span>Install</span><span class="nav-index">01</span></button>
+            <button type="button" class="nav-item" data-section-target="presets-section"><span>Presets</span><span class="nav-index">02</span></button>
+            <button type="button" class="nav-item" data-section-target="providers-section"><span>Providers</span><span class="nav-index">03</span></button>
+            <button type="button" class="nav-item" data-section-target="sorting-section"><span>Quality</span><span class="nav-index">04</span></button>
+            <button type="button" class="nav-item" data-section-target="filters-section"><span>Filters</span><span class="nav-index">05</span></button>
+            <button type="button" class="nav-item" data-section-target="preview-section"><span>Preview</span><span class="nav-index">06</span></button>
+            <button type="button" class="nav-item" data-section-target="notes-section"><span>Notes</span><span class="nav-index">07</span></button>
+            <button type="button" class="nav-item" data-section-target="support-section"><span>Support</span><span class="nav-index">08</span></button>
           </nav>
 
           <div class="sidebar-footer">
@@ -1107,12 +1443,12 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         <section class="workspace">
           <section class="hero">
             <div class="hero-tag">NebulaStreams Config</div>
-            <h2>Build the install exactly the way you want it.</h2>
-            <p>Pick providers, tune ranking, remove noisy mirrors, and test the result before installing it in Stremio.</p>
+            <h2>Set it up fast and install it clean.</h2>
+            <p>Choose providers, set quality order, apply a few practical filters, and install the manifest.</p>
             <div class="hero-meta">
-              <div class="hero-chip">Multi-provider install</div>
-              <div class="hero-chip">Live preview diagnostics</div>
-              <div class="hero-chip">Audio and host filtering</div>
+              <div class="hero-chip">Install-first flow</div>
+              <div class="hero-chip">Live manifest</div>
+              <div class="hero-chip">Quick preview</div>
             </div>
           </section>
 
@@ -1135,7 +1471,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                       <div class="support-actions">
                         <button type="button" class="donate-toggle" id="donate-toggle">Support</button>
                         ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">Support on Ko-fi</a>` : ''}
-                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Use UPI Instead</a>
+                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">More ways to support</a>
                       </div>
                     </div>
                   ` : `
@@ -2514,6 +2850,11 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
         background: rgba(102, 182, 255, 0.14);
         color: #bfe3ff;
       }
+      .status-intermittent {
+        border-color: rgba(255, 201, 92, 0.38);
+        background: rgba(255, 201, 92, 0.12);
+        color: #ffe4a3;
+      }
       .status-empty,
       .status-idle {
         border-color: rgba(255,255,255,0.10);
@@ -2779,7 +3120,6 @@ const renderAdminLoginPage = ({ errorMessage = '' } = {}) => `<!doctype html>
 </html>`;
 
 const renderDonatePage = ({ baseUrl }) => {
-  const upiId = config.DONATION_UPI_ID || '';
   const donationPrimaryUrl = String(config.DONATION_PRIMARY_URL || '').trim();
   const primarySection = donationPrimaryUrl
     ? `
@@ -2787,18 +3127,6 @@ const renderDonatePage = ({ baseUrl }) => {
         <div class="support-label">Ko-fi</div>
         <div class="support-value">Support the project with Ko-fi.</div>
         <a class="copy-button" href="${escapeHtml(donationPrimaryUrl)}" target="_blank" rel="noopener">Open Ko-fi</a>
-      </div>
-    `
-    : '';
-  const upiSection = config.DONATION_UPI_ID
-    ? `
-      <div class="support-card">
-        <div class="support-label">UPI</div>
-        <div class="support-value">Pay with any supported UPI app.</div>
-        <div class="copy-actions">
-          <a class="copy-button" id="open-upi" href="#">Open UPI App</a>
-          <button type="button" class="copy-button" id="copy-upi">Copy UPI ID</button>
-        </div>
       </div>
     `
     : '';
@@ -3003,7 +3331,7 @@ const renderDonatePage = ({ baseUrl }) => {
           <div class="blurb">
             <p>If NebulaStreams is useful to you, your support helps cover hosting, testing, and new provider work. Every contribution keeps the project more reliable.</p>
           </div>
-          ${primarySection || upiSection ? `<div class="support-grid">${primarySection}${upiSection}</div>` : ''}
+          ${primarySection ? `<div class="support-grid">${primarySection}</div>` : ''}
 
           <div class="flash" id="flash" aria-live="polite"></div>
           <p class="footer-note">Main site: <a href="${escapeHtml(baseUrl)}" target="_blank" rel="noopener">${escapeHtml(baseUrl)}</a></p>
@@ -3012,7 +3340,6 @@ const renderDonatePage = ({ baseUrl }) => {
     </main>
     <script>
       const flash = document.getElementById('flash');
-      const upiId = ${JSON.stringify(upiId)};
       const copyText = async (value, successMessage) => {
         try {
           if (navigator.clipboard?.writeText) {
@@ -3036,15 +3363,6 @@ const renderDonatePage = ({ baseUrl }) => {
         }
       };
 
-      const copyUpiButton = document.getElementById('copy-upi');
-      const openUpi = document.getElementById('open-upi');
-
-      if (copyUpiButton && upiId) {
-        copyUpiButton.addEventListener('click', () => {
-          void copyText(upiId, 'UPI ID copied.');
-        });
-      }
-
       const copyCryptoButton = document.getElementById('copy-crypto');
       const cryptoValue = document.getElementById('crypto-value');
       const qrImage = document.getElementById('crypto-qr');
@@ -3059,15 +3377,6 @@ const renderDonatePage = ({ baseUrl }) => {
         const qrPayload = encodeURIComponent('https://link.trustwallet.com/send?asset=c195_tTR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t&address=' + cryptoValue.textContent.trim());
         qrImage.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=' + qrPayload;
       }
-
-      if (openUpi) {
-        if (upiId) {
-          openUpi.href = 'upi://pay?pa=' + encodeURIComponent(upiId);
-        } else {
-          openUpi.style.display = 'none';
-        }
-      }
-
     </script>
   </body>
 </html>`;

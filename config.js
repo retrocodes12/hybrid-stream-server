@@ -48,6 +48,59 @@ const toBoolean = (value, fallback) => {
   return fallback;
 };
 
+const toStringList = (value) => {
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .filter((entry, index, values) => values.indexOf(entry) === index);
+};
+
+const toProxyRuleList = (value) => {
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separatorIndex = entry.indexOf(':');
+
+      if (separatorIndex <= 0) {
+        return null;
+      }
+
+      const pattern = entry.slice(0, separatorIndex).trim().toLowerCase();
+      const proxyUrl = entry.slice(separatorIndex + 1).trim();
+
+      if (!pattern || !proxyUrl) {
+        return null;
+      }
+
+      try {
+        const parsedProxyUrl = new URL(proxyUrl);
+
+        if (!['http:', 'https:'].includes(parsedProxyUrl.protocol)) {
+          return null;
+        }
+
+        return {
+          pattern,
+          proxyUrl: parsedProxyUrl.toString()
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+};
+
 export const config = Object.freeze({
   PORT: toPositiveInteger(process.env.PORT, 3000),
   CACHE_DIR: path.resolve(process.cwd(), process.env.CACHE_DIR || './cache'),
@@ -58,10 +111,12 @@ export const config = Object.freeze({
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'sohil@123',
   STREMIO_ADDON_ID: process.env.STREMIO_ADDON_ID || 'community.nebulastreams',
   STREMIO_ADDON_NAME: process.env.STREMIO_ADDON_NAME || 'NebulaStreams',
+  CONFIGURATION_DESCRIPTION: String(process.env.CONFIGURATION_DESCRIPTION || 'Fast multi-provider HTTP stream addon for movies and series').trim() || 'Fast multi-provider HTTP stream addon for movies and series',
+  DISABLED_SOURCES: toStringList(process.env.DISABLED_SOURCES || process.env.DISABLED_PROVIDERS || ''),
+  PROXY_CONFIG: toProxyRuleList(process.env.PROXY_CONFIG || ''),
   DONATION_PRIMARY_URL: process.env.DONATION_PRIMARY_URL || 'https://ko-fi.com/redx115775',
   DONATION_SECONDARY_URL: process.env.DONATION_SECONDARY_URL || '',
   DONATION_NOWPAYMENTS_WIDGET_URL: process.env.DONATION_NOWPAYMENTS_WIDGET_URL || 'https://nowpayments.io/embeds/donation-widget?api_key=3acd79dd-66e2-48c4-9a7a-8938cb9a7a12',
-  DONATION_UPI_ID: process.env.DONATION_UPI_ID || 'sohilsuresh2@okhdfcbank',
   DONATION_CRYPTO_LABEL: process.env.DONATION_CRYPTO_LABEL || 'USDT (TRC20)',
   DONATION_CRYPTO_ADDRESS: process.env.DONATION_CRYPTO_ADDRESS || 'TF1WTj7BZVdU64rtMHsKwKrbqVXWtSynoD',
   TMDB_API_KEY: process.env.TMDB_API_KEY || '439c478a771f35c05022f9feabcca01c',

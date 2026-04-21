@@ -9,6 +9,9 @@ const HEADERS = {
   'Connection': 'keep-alive'
 };
 
+const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_RETRIES = 3;
+
 const API = 'https://enc-dec.app/api';
 const TMDB_API_KEY = 'd131017ccc6e5462a81c9304d21476de';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
@@ -29,20 +32,64 @@ const SERVERS = {
   }
 };
 
-function requestRaw(method, urlString, options) {
-  return fetch(urlString, {
-    method: method,
-    headers: (options && options.headers) || {},
-    body: (options && options.body) || undefined
-  }).then(function(response) {
-    return response.text().then(function(body) {
-      if (response.ok) {
-        return { status: response.status, headers: response.headers, body: body };
-      } else {
-        throw new Error('HTTP ' + response.status + ': ' + body);
-      }
-    });
+function delay(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
   });
+}
+
+function shouldRetryRequest(error, status) {
+  if (status === 429 || status >= 500) {
+    return true;
+  }
+
+  if (!error) {
+    return false;
+  }
+
+  var message = String(error.message || error);
+  return /fetch failed|timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Connection reset/i.test(message);
+}
+
+function requestRaw(method, urlString, options) {
+  var attempt = 0;
+
+  function run() {
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    return fetch(urlString, {
+      method: method,
+      headers: (options && options.headers) || {},
+      body: (options && options.body) || undefined,
+      signal: controller.signal
+    }).then(function(response) {
+      clearTimeout(timeoutId);
+      return response.text().then(function(body) {
+        if (response.ok) {
+          return { status: response.status, headers: response.headers, body: body };
+        }
+
+        if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(null, response.status)) {
+          attempt += 1;
+          return delay(250 * attempt).then(run);
+        }
+
+        throw new Error('HTTP ' + response.status + ': ' + body);
+      });
+    }).catch(function(error) {
+      clearTimeout(timeoutId);
+      if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(error, 0)) {
+        attempt += 1;
+        return delay(250 * attempt).then(run);
+      }
+      throw error;
+    });
+  }
+
+  return run();
 }
 
 function getText(url) {
