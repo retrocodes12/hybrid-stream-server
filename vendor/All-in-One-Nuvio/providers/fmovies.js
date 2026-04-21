@@ -7,6 +7,9 @@ const REQUEST_HEADERS = {
   Connection: 'keep-alive'
 };
 
+const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_RETRIES = 3;
+
 const PLAYBACK_HEADERS = {
   'User-Agent': REQUEST_HEADERS['User-Agent'],
   Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*',
@@ -31,35 +34,81 @@ const SERVERS = [
   }
 ];
 
+function delay(ms) {
+  return new Promise(function(resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+function shouldRetryRequest(error, status) {
+  if (status === 429 || status >= 500) {
+    return true;
+  }
+
+  if (!error) {
+    return false;
+  }
+
+  var message = String(error.message || error);
+  return /fetch failed|timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Connection reset/i.test(message);
+}
+
+function requestWithRetry(url, options, parser) {
+  var attempt = 0;
+
+  function run() {
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    return fetch(url, Object.assign({}, options, { signal: controller.signal }))
+      .then(function(response) {
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(null, response.status)) {
+            attempt += 1;
+            return delay(250 * attempt).then(run);
+          }
+          throw new Error('HTTP ' + response.status + ' for ' + url);
+        }
+
+        return parser(response);
+      })
+      .catch(function(error) {
+        clearTimeout(timeoutId);
+        if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(error, 0)) {
+          attempt += 1;
+          return delay(250 * attempt).then(run);
+        }
+        throw error;
+      });
+  }
+
+  return run();
+}
+
 function getJson(url) {
-  return fetch(url, { headers: REQUEST_HEADERS }).then(function(response) {
-    if (!response.ok) {
-      throw new Error('HTTP ' + response.status + ' for ' + url);
-    }
+  return requestWithRetry(url, { headers: REQUEST_HEADERS }, function(response) {
     return response.json();
   });
 }
 
 function getText(url) {
-  return fetch(url, { headers: REQUEST_HEADERS }).then(function(response) {
-    if (!response.ok) {
-      throw new Error('HTTP ' + response.status + ' for ' + url);
-    }
+  return requestWithRetry(url, { headers: REQUEST_HEADERS }, function(response) {
     return response.text();
   });
 }
 
 function postJson(url, payload) {
-  return fetch(url, {
+  return requestWithRetry(url, {
     method: 'POST',
     headers: Object.assign({}, REQUEST_HEADERS, {
       'Content-Type': 'application/json'
     }),
     body: JSON.stringify(payload)
-  }).then(function(response) {
-    if (!response.ok) {
-      throw new Error('HTTP ' + response.status + ' for ' + url);
-    }
+  }, function(response) {
     return response.json();
   });
 }
