@@ -298,9 +298,16 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
   let bestScore = 0;
   const titleCandidates = getTitleCandidates(mediaInfo);
   for (const result of searchResults) {
+    if (mediaInfo.imdbId && result.imdbId && result.imdbId !== mediaInfo.imdbId) {
+      console.log(`[HDHub4u] Skipping IMDb mismatch: "${result.title}" (${result.imdbId}) vs ${mediaInfo.imdbId}`);
+      continue;
+    }
     let score = titleCandidates.reduce((maxScore, titleCandidate) => {
       return Math.max(maxScore, calculateTitleSimilarity(titleCandidate, result.title));
     }, 0);
+    if (mediaInfo.imdbId && result.imdbId && result.imdbId === mediaInfo.imdbId) {
+      score += 1.2;
+    }
     if (mediaInfo.year && result.year) {
       const yearDiff = Math.abs(mediaInfo.year - result.year);
       if (yearDiff === 0)
@@ -350,12 +357,31 @@ function getTMDBDetails(tmdbId, mediaType) {
     var _a;
     const endpoint = mediaType === "tv" ? "tv" : "movie";
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,alternative_titles`;
-    const response = yield fetch(url, {
-      method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-    });
-    if (!response.ok)
-      throw new Error(`TMDB API error: ${response.status}`);
+    let response = null;
+    let lastError = null;
+    for (const retryDelay of [0, 250, 750]) {
+      if (retryDelay > 0) {
+        yield new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
+      try {
+        response = yield fetch(url, {
+          method: "GET",
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+        });
+        if (response.ok) {
+          break;
+        }
+        if (response.status < 500 && response.status !== 429) {
+          throw new Error(`TMDB API error: ${response.status}`);
+        }
+        lastError = new Error(`TMDB API error: ${response.status}`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!response || !response.ok) {
+      throw lastError || new Error("TMDB API error");
+    }
     const data = yield response.json();
     const title = mediaType === "tv" ? data.name : data.title;
     const originalTitle = mediaType === "tv" ? data.original_name : data.original_title;
@@ -685,15 +711,90 @@ function search(query) {
         title,
         url,
         poster: doc.post_thumbnail,
-        year
+        year,
+        imdbId: doc.imdb_id || null
       };
     });
+  });
+}
+function matchesSeasonLabel(title, season) {
+  if (!title || !season)
+    return true;
+  const titleLower = title.toLowerCase();
+  const seasonPatterns = [
+    `season ${season}`,
+    `season ${String(season).padStart(2, "0")}`,
+    `s${season}`,
+    `s${String(season).padStart(2, "0")}`
+  ];
+  return seasonPatterns.some((pattern) => titleLower.includes(pattern));
+}
+function searchByImdbId(imdbId, mediaType, season) {
+  return __async(this, null, function* () {
+    if (!imdbId)
+      return [];
+    const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?query_by=imdb_id&q=${encodeURIComponent(imdbId)}`;
+    try {
+      const response = yield fetch(searchUrl, {
+        headers: __spreadProps(__spreadValues({}, HEADERS), {
+          Accept: "application/json"
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = yield response.json();
+      if (!data || !Array.isArray(data.hits)) {
+        return [];
+      }
+      return data.hits.map((hit) => {
+        const doc = hit.document || {};
+        const title = doc.post_title || "";
+        const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
+        const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+        let url = doc.permalink;
+        if (url && url.startsWith("/")) {
+          url = `${MAIN_URL}${url}`;
+        }
+        return {
+          title,
+          url,
+          poster: doc.post_thumbnail,
+          year,
+          imdbId: doc.imdb_id || null
+        };
+      }).filter((result) => {
+        if (!result.url || result.imdbId !== imdbId) {
+          return false;
+        }
+        if (mediaType !== "tv" || !season) {
+          return true;
+        }
+        return matchesSeasonLabel(result.title, season);
+      });
+    } catch (error) {
+      console.error(`[HDHub4u] IMDb indexed search failed for ${imdbId}: ${error.message}`);
+      return [];
+    }
   });
 }
 function searchMediaCandidates(mediaInfo, mediaType, season) {
   return __async(this, null, function* () {
     const seenUrls = /* @__PURE__ */ new Set();
     const mergedResults = [];
+    if (mediaInfo.imdbId) {
+      const imdbResults = yield searchByImdbId(mediaInfo.imdbId, mediaType, season);
+      if (imdbResults.length > 0) {
+        console.log(`[HDHub4u] IMDb indexed search found ${imdbResults.length} candidate(s) for ${mediaInfo.imdbId}`);
+      }
+      for (const result of imdbResults) {
+        const key = result.url || result.title;
+        if (!key || seenUrls.has(key))
+          continue;
+        seenUrls.add(key);
+        mergedResults.push(result);
+      }
+    }
     const titleCandidates = getTitleCandidates(mediaInfo).slice(0, 6);
     for (const titleCandidate of titleCandidates) {
       const searchQuery = mediaType === "tv" && season ? `${titleCandidate} Season ${season}` : titleCandidate;

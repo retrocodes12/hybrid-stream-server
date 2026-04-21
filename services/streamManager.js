@@ -170,6 +170,8 @@ const PRIVATE_PROVIDER_COOKIE_MAX_LENGTH = 4096;
 
 const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
+const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
+const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
 
 const CONFIGURED_PROFILE_LABELS = Object.freeze({
   wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
@@ -203,6 +205,84 @@ const delay = (ms) => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
 });
+
+const normalizeProviderLabel = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const extractProviderLabelFromStremioStream = (stream) => {
+  const firstLine = String(stream?.name || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean) || '';
+  const match = firstLine.match(/\|\s*([^\n|]+)\s*$/u);
+  return normalizeProviderLabel(match?.[1] || '');
+};
+
+const extractQualityScoreFromStremioStream = (stream) => {
+  const firstLine = String(stream?.name || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean) || '';
+  const match = firstLine.match(/NebulaStreams\s+([^|]+?)\s*\|/iu);
+  const qualityText = String(match?.[1] || '').trim().toLowerCase();
+
+  if (qualityText.includes('4k')) {
+    return 2160;
+  }
+
+  const qualityMatch = qualityText.match(/(\d{3,4})/);
+  if (qualityMatch?.[1]) {
+    return Number.parseInt(qualityMatch[1], 10);
+  }
+
+  return 0;
+};
+
+const getLastGoodStreamSetScore = (streams) => {
+  if (!Array.isArray(streams) || streams.length === 0) {
+    return 0;
+  }
+
+  const providers = streams
+    .map((stream) => extractProviderLabelFromStremioStream(stream))
+    .filter(Boolean);
+  const uniqueProviders = new Set(providers);
+  const bestQualityScore = Math.max(
+    0,
+    ...streams.map((stream) => extractQualityScoreFromStremioStream(stream))
+  );
+  const primaryHits = providers.filter((providerId) => LAST_GOOD_PRIMARY_PROVIDERS.has(providerId)).length;
+  const secondaryHits = providers.filter((providerId) => LAST_GOOD_SECONDARY_PROVIDERS.has(providerId)).length;
+
+  return (primaryHits * 10000) + (secondaryHits * 3000) + (uniqueProviders.size * 500) + bestQualityScore + streams.length;
+};
+
+const shouldPersistLastGoodStreamSet = (streams) => {
+  if (!Array.isArray(streams) || streams.length === 0) {
+    return false;
+  }
+
+  const providers = streams
+    .map((stream) => extractProviderLabelFromStremioStream(stream))
+    .filter(Boolean);
+  const uniqueProviders = new Set(providers);
+  const hasPrimary = providers.some((providerId) => LAST_GOOD_PRIMARY_PROVIDERS.has(providerId));
+  const hasSecondary = providers.some((providerId) => LAST_GOOD_SECONDARY_PROVIDERS.has(providerId));
+  const bestQualityScore = Math.max(
+    0,
+    ...streams.map((stream) => extractQualityScoreFromStremioStream(stream))
+  );
+
+  if (hasPrimary) {
+    return true;
+  }
+
+  return hasSecondary || uniqueProviders.size >= 2 || bestQualityScore >= 1080;
+};
 
 const normalizeStremioResultCacheEntry = (payload) => {
   if (!payload || (typeof payload.serializedStreams !== 'string' && !Array.isArray(payload.streams))) {
@@ -958,6 +1038,27 @@ const diversifyStreamsByProvider = (streams, { leadingCount = 5, softLimit = 6 }
   }
 
   return output.concat(deferred);
+};
+
+const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) => {
+  if (!Array.isArray(streams) || streams.length === 0) {
+    return { leadingCount: 5, softLimit: 6 };
+  }
+
+  if (Array.isArray(requestedProviders) && requestedProviders.length > 0) {
+    return { leadingCount: 5, softLimit: 6 };
+  }
+
+  const fallbackProviderSet = new Set(['vidsrc', 'vixsrc', 'cinestream', 'vidlink', 'moviebox']);
+  const hasFallbackProviders = streams.some((stream) =>
+    fallbackProviderSet.has(String(stream.provider || '').trim().toLowerCase())
+  );
+
+  if (hasFallbackProviders) {
+    return { leadingCount: 3, softLimit: 2 };
+  }
+
+  return { leadingCount: 5, softLimit: 6 };
 };
 
 const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
@@ -2046,7 +2147,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 44,
+      version: 46,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2060,6 +2161,11 @@ export class StreamManager {
 
   getStremioResultCachePath(cacheKey) {
     const fileName = `${createHash('sha1').update(cacheKey).digest('hex')}.json`;
+    return path.join(this.stremioResultCacheDir, fileName);
+  }
+
+  getStremioLastGoodCachePath(cacheKey) {
+    const fileName = `${createHash('sha1').update(cacheKey).digest('hex')}.lastgood.json`;
     return path.join(this.stremioResultCacheDir, fileName);
   }
 
@@ -2160,6 +2266,31 @@ export class StreamManager {
     }
   }
 
+  async getLastGoodStremioStreams(cacheKey) {
+    await this.ensureStremioResultCacheDir();
+
+    try {
+      const payload = JSON.parse(await readFile(this.getStremioLastGoodCachePath(cacheKey), 'utf8'));
+      const entry = normalizeStremioResultCacheEntry(payload);
+      const result = this.toCacheLookupResult(cacheKey, entry);
+
+      if (!result) {
+        await rm(this.getStremioLastGoodCachePath(cacheKey), { force: true });
+        return null;
+      }
+
+      return result.streams;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        logger.warn('stremio last-good cache read failed', {
+          error
+        });
+      }
+
+      return null;
+    }
+  }
+
   async setCachedStremioStreams(cacheKey, streams, { weak = false } = {}) {
     const now = Date.now();
     const freshTtlSeconds = streams.length === 0
@@ -2195,6 +2326,24 @@ export class StreamManager {
       logger.warn('stremio result cache write failed', {
         error
       });
+    }
+
+    if (shouldPersistLastGoodStreamSet(streams)) {
+      const lastGoodEntry = {
+        expiresAt: now + (config.STREMIO_LAST_GOOD_TTL_SECONDS * 1000),
+        staleExpiresAt: now + (config.STREMIO_LAST_GOOD_TTL_SECONDS * 1000),
+        weak: false,
+        approxBytes: getSerializedApproxBytes(serializedStreams),
+        serializedStreams
+      };
+
+      try {
+        await writeFile(this.getStremioLastGoodCachePath(cacheKey), JSON.stringify(lastGoodEntry));
+      } catch (error) {
+        logger.warn('stremio last-good cache write failed', {
+          error
+        });
+      }
     }
   }
 
@@ -2493,6 +2642,9 @@ export class StreamManager {
       const cachedResult = bypassStremioResultCache
         ? null
         : await this.getCachedStremioStreams(resultCacheKey, { allowStale: true });
+      const lastGoodStreams = bypassStremioResultCache
+        ? null
+        : await this.getLastGoodStremioStreams(resultCacheKey);
 
       if (cachedResult?.state === 'fresh') {
         this.sendStremioStreamsResponse(res, cachedResult.streams);
@@ -2559,7 +2711,45 @@ export class StreamManager {
         return;
       }
 
-      const stremioStreams = await this.getOrBuildStremioStreams(buildInput);
+      let stremioStreams;
+
+      try {
+        stremioStreams = await this.getOrBuildStremioStreams(buildInput);
+      } catch (error) {
+        if (lastGoodStreams?.length) {
+          logger.warn('serving last-good stremio streams after rebuild failure', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            resultCount: lastGoodStreams.length,
+            error
+          });
+          await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
+          res.setHeader('X-NebulaStreams-Cache', 'last-good-error');
+          this.sendStremioStreamsResponse(res, lastGoodStreams);
+          return;
+        }
+
+        throw error;
+      }
+
+      if ((!Array.isArray(stremioStreams) || stremioStreams.length === 0) && lastGoodStreams?.length) {
+        const freshScore = getLastGoodStreamSetScore(stremioStreams);
+        const lastGoodScore = getLastGoodStreamSetScore(lastGoodStreams);
+
+        if (lastGoodScore > freshScore) {
+          logger.warn('serving last-good stremio streams after empty rebuild result', {
+            tmdbId,
+            mediaType: parsed.mediaType,
+            resultCount: lastGoodStreams.length,
+            lastGoodScore,
+            freshScore
+          });
+          await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
+          res.setHeader('X-NebulaStreams-Cache', 'last-good-empty');
+          this.sendStremioStreamsResponse(res, lastGoodStreams);
+          return;
+        }
+      }
 
       this.sendStremioStreamsResponse(res, stremioStreams);
     } catch (error) {
@@ -2768,8 +2958,12 @@ export class StreamManager {
       (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
       (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
     );
+    const postDedupeStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
     const dedupedStreams = diversifyStreamsByProvider(
-      applyConfiguredDedupe(configuredStreams, streamOptions).streams
+      postDedupeStreams,
+      getStreamDiversityOptions(postDedupeStreams, {
+        requestedProviders
+      })
     );
     const useWeakCache = shouldUseWeakResultCache(dedupedStreams);
     const stremioStreams = dedupedStreams
