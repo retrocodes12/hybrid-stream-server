@@ -1593,6 +1593,8 @@ export class StreamManager {
   enableLoadShedding({ durationMs, reason }) {
     this.loadSheddingUntil = Math.max(this.loadSheddingUntil, Date.now() + durationMs);
     this.loadSheddingReason = reason || 'memory-pressure';
+    this.stremioBackgroundRefreshQueue = [];
+    this.stremioBackgroundRefreshes.clear();
   }
 
   isLoadShedding() {
@@ -1656,6 +1658,8 @@ export class StreamManager {
     if (critical) {
       this.stremioResultCache.clear();
       this.hubCloudCache.clear();
+      this.stremioBackgroundRefreshQueue = [];
+      this.stremioBackgroundRefreshes.clear();
       return;
     }
 
@@ -1663,6 +1667,43 @@ export class StreamManager {
     pruneMapByApproxBytes(this.stremioResultCache, Math.max(512 * 1024, Math.floor((config.STREMIO_RESULT_MEMORY_CACHE_MAX_MB * 1024 * 1024) / 4)));
     pruneMapByMaxEntries(this.hubCloudCache, Math.max(20, Math.floor(config.HUBCLOUD_MEMORY_CACHE_MAX_ENTRIES / 4)));
     pruneMapByApproxBytes(this.hubCloudCache, Math.max(128 * 1024, Math.floor((config.HUBCLOUD_MEMORY_CACHE_MAX_MB * 1024 * 1024) / 4)));
+    if (this.stremioBackgroundRefreshQueue.length > 0) {
+      const keep = Math.max(0, Math.floor(config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX / 4));
+      if (this.stremioBackgroundRefreshQueue.length > keep) {
+        this.stremioBackgroundRefreshQueue = this.stremioBackgroundRefreshQueue.slice(0, keep);
+      }
+    }
+  }
+
+  getProviderLiveLoad() {
+    if (!this.providerService || typeof this.providerService.getLiveLoad !== 'function') {
+      return {
+        inFlightRequests: 0,
+        activeProviderExecutions: 0
+      };
+    }
+
+    return this.providerService.getLiveLoad();
+  }
+
+  shouldSkipBackgroundRefresh() {
+    if (this.isLoadShedding()) {
+      return true;
+    }
+
+    const providerLoad = this.getProviderLiveLoad();
+    return this.stremioResultInFlight.size >= config.STREMIO_BACKGROUND_REFRESH_MAX_INFLIGHT_SEARCHES
+      || providerLoad.activeProviderExecutions >= config.STREMIO_BACKGROUND_REFRESH_MAX_PROVIDER_EXECUTIONS;
+  }
+
+  shouldSkipPopularPrewarm() {
+    if (this.isLoadShedding()) {
+      return true;
+    }
+
+    const providerLoad = this.getProviderLiveLoad();
+    return this.stremioResultInFlight.size >= config.POPULAR_STREAM_PREWARM_MAX_INFLIGHT_SEARCHES
+      || providerLoad.activeProviderExecutions >= config.POPULAR_STREAM_PREWARM_MAX_PROVIDER_EXECUTIONS;
   }
 
   startPopularStreamPrewarm() {
@@ -1685,7 +1726,7 @@ export class StreamManager {
   }
 
   async prewarmPopularStreams() {
-    if (this.popularStreamPrewarmRunning || this.isLoadShedding()) {
+    if (this.popularStreamPrewarmRunning || this.shouldSkipPopularPrewarm()) {
       return;
     }
 
@@ -1705,7 +1746,7 @@ export class StreamManager {
 
     try {
       for (const search of popularSearches) {
-        if (this.isLoadShedding()) {
+        if (this.shouldSkipPopularPrewarm()) {
           break;
         }
 
@@ -2451,6 +2492,10 @@ export class StreamManager {
 
   scheduleStremioBackgroundRefresh(input) {
     if (config.STREMIO_BACKGROUND_REFRESH_CONCURRENCY <= 0 || config.STREMIO_BACKGROUND_REFRESH_QUEUE_MAX <= 0) {
+      return;
+    }
+
+    if (this.shouldSkipBackgroundRefresh()) {
       return;
     }
 

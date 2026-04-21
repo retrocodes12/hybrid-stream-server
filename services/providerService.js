@@ -143,6 +143,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'animekai',
   'animesalt',
   'cinestream',
+  'fmovies',
   'hdmovie2',
   'kisskh',
   'moviesmod',
@@ -172,6 +173,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub_tv': 25,
   allyoucanwatch: 30,
   cinestream: 20,
+  fmovies: 20,
   hdhub4u: 25,
   uhdmovies: 25,
   moviebox: 20,
@@ -209,6 +211,7 @@ const PROVIDER_PRIORITY = [
   'streamflix',
   'netmirror',
   'videasy',
+  'fmovies',
   'tamilian',
   'streamflix_eng',
   'moviesmod',
@@ -244,11 +247,12 @@ const PROVIDER_PRIORITY = [
 ];
 const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch']);
-const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'vidlink', 'cinestream']);
-const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'rgshows']);
+const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream']);
+const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'animesalt', 'moviebox']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama', 'animekai']);
+const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
   'animesalt',
   'animeworld',
@@ -919,6 +923,13 @@ export class ProviderService {
       coolingDownProviders,
       coolingDownHosts,
       providers: providerStatuses
+    };
+  }
+
+  getLiveLoad() {
+    return {
+      inFlightRequests: this.inFlight.size,
+      activeProviderExecutions: this.providerGlobalInflight
     };
   }
 
@@ -1689,10 +1700,12 @@ export class ProviderService {
       timeoutId.unref?.();
     });
 
-    const providerPromise = providerAbortSignalStorage.run(
-      abortController.signal,
-      () => this.invokeProvider(providerConfig, providerId, params)
-    );
+    const providerPromise = SIGNAL_INCOMPATIBLE_PROVIDERS.has(providerId)
+      ? this.invokeProvider(providerConfig, providerId, params)
+      : providerAbortSignalStorage.run(
+        abortController.signal,
+        () => this.invokeProvider(providerConfig, providerId, params)
+      );
 
     return Promise.race([
       providerPromise,
