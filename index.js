@@ -265,7 +265,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       .brand-mark img {
         width: 100%;
         height: 100%;
-        object-fit: cover;
+        object-fit: contain;
+        padding: 6px;
+        box-sizing: border-box;
       }
 
       .brand-copy h1 {
@@ -1415,7 +1417,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         <aside class="sidebar">
           <div class="brand">
             <div class="brand-mark">
-              <img src="${escapeHtml(baseUrl)}/assets/nebulastreams-icon.jpg" alt="NebulaStreams">
+              <img src="${escapeHtml(baseUrl)}/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg" alt="NebulaStreams">
             </div>
             <div class="brand-copy">
               <h1>NebulaStreams</h1>
@@ -3205,7 +3207,9 @@ const renderDonatePage = ({ baseUrl }) => {
       .logo-wrap img {
         width: 62px;
         height: 62px;
-        object-fit: cover;
+        object-fit: contain;
+        padding: 6px;
+        box-sizing: border-box;
         border-radius: 18px;
       }
       h1 {
@@ -3323,7 +3327,7 @@ const renderDonatePage = ({ baseUrl }) => {
       <section class="shell">
         <div class="content">
           <div class="logo-wrap">
-            <img src="${escapeHtml(baseUrl)}/assets/nebulastreams-icon.jpg" alt="NebulaStreams">
+            <img src="${escapeHtml(baseUrl)}/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg" alt="NebulaStreams">
           </div>
           <h1>Support NebulaStreams</h1>
           <p class="subtitle">Help keep the self-hosted streaming backend online, maintained, and improving over time.</p>

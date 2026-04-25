@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/nebulastreams-logo.jpeg" alt="NebulaStreams logo" width="220" />
+<img src="./assets/WhatsApp Image 2026-04-25 at 12.16.53 AM.jpeg" alt="NebulaStreams logo" width="220" />
 
 # 📺 NebulaStreams
 
