@@ -63,6 +63,50 @@ const getProviderCacheVersion = (providerId) => {
     return '24';
   }
 
+  if (providerId === 'animepahe') {
+    return '24';
+  }
+
+  if (providerId === 'dahmermovies-4k') {
+    return '24';
+  }
+
+  if (providerId === 'multivid') {
+    return '24';
+  }
+
+  if (providerId === 'nakios') {
+    return '24';
+  }
+
+  if (providerId === 'playimdb') {
+    return '24';
+  }
+
+  if (providerId === 'playimdb_v2') {
+    return '24';
+  }
+
+  if (providerId === 'toflix') {
+    return '24';
+  }
+
+  if (providerId === 'vidzee') {
+    return '24';
+  }
+
+  if (providerId === 'frembed') {
+    return '24';
+  }
+
+  if (providerId === 'einschalten') {
+    return '24';
+  }
+
+  if (providerId === 'filmpalast') {
+    return '24';
+  }
+
   if (providerId === 'hdhub4u') {
     return '30';
   }
@@ -299,6 +343,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub_tv',
   'anime-sama',
   'animekai',
+  'animepahe',
   'animesalt',
   'brazucaplay',
   'cinestream',
@@ -306,6 +351,15 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'hdmovie2',
   'kisskh',
   'moviesmod',
+  'multivid',
+  'nakios',
+  'playimdb',
+  'playimdb_v2',
+  'toflix',
+  'vidzee',
+  'frembed',
+  'einschalten',
+  'filmpalast',
   'torrent-scraper',
   'vidsrc',
   'vixsrc'
@@ -332,15 +386,26 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 25,
   '4khdhub_tv': 25,
   allyoucanwatch: 30,
+  animepahe: 25,
   brazucaplay: 20,
   cinestream: 20,
+  'dahmermovies-4k': 25,
   fmovies: 20,
   hdhub4u: 25,
   uhdmovies: 25,
   moviebox: 20,
   moviesmod: 40,
+  multivid: 20,
+  nakios: 25,
+  vidzee: 20,
+  frembed: 25,
+  einschalten: 20,
+  filmpalast: 25,
+  playimdb: 20,
+  playimdb_v2: 20,
   rgshows: 20,
   streamflix: 20,
+  toflix: 25,
   vidsrc: 20,
   vidlink: 20,
   videasy: 20,
@@ -373,17 +438,28 @@ const PROVIDER_PRIORITY = [
   'streamflix',
   'netmirror',
   'videasy',
+  'multivid',
+  'playimdb',
+  'playimdb_v2',
   'vidsrc',
   'fmovies',
   'tamilian',
   'streamflix_eng',
   'moviesmod',
   'hdmovie2',
+  'dahmermovies-4k',
   'movix',
   'flixindia',
   'isaidub',
   'allwish',
   'allmovieland',
+  'animepahe',
+  'nakios',
+  'toflix',
+  'vidzee',
+  'frembed',
+  'einschalten',
+  'filmpalast',
   'vidmody-tr',
   'turkish-m3u',
   'rectv-tr',
@@ -410,8 +486,8 @@ const PROVIDER_PRIORITY = [
 ];
 const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch']);
-const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc']);
-const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'vidsrc', 'vixsrc']);
+const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'multivid', 'playimdb', 'vidsrc', 'vixsrc']);
+const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'vidsrc', 'vixsrc']);
 const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream']);
 const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'vidsrc', 'vixsrc', 'cinestream', 'vidlink', 'moviebox']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'animesalt', 'moviebox']);
@@ -420,6 +496,7 @@ const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama', 'animekai']);
 const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies']);
 const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'vidsrc']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
+  'animepahe',
   'animesalt',
   'animeworld',
   'it-animeunity',
@@ -434,6 +511,7 @@ const TMDB_METADATA_RETRY_DELAYS_MS = Object.freeze([250, 750]);
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
     animeworld: 190,
+    animepahe: 185,
     animesalt: 180,
     moviebox: 172,
     '4khdhub_tv': 168,
@@ -495,6 +573,15 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   portuguese: Object.freeze({
     brazucaplay: 180
   }),
+  french: Object.freeze({
+    nakios: 195,
+    toflix: 190,
+    frembed: 180
+  }),
+  german: Object.freeze({
+    einschalten: 195,
+    filmpalast: 190
+  }),
   spanish: Object.freeze({
     'latino-lamovie': 195,
     'latino-cinecalidad': 190,
@@ -552,7 +639,18 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   'arabic-cineby': 104,
   'arabic-witanime': 100,
   'arabic-animecloud': 98,
-  'arabic-kirmzi': 94
+  'arabic-kirmzi': 94,
+  animepahe: 96,
+  'dahmermovies-4k': 92,
+  multivid: 110,
+  nakios: 104,
+  playimdb: 108,
+  playimdb_v2: 106,
+  toflix: 102,
+  vidzee: 108,
+  frembed: 100,
+  einschalten: 98,
+  filmpalast: 96
 });
 const INDIAN_LANGUAGES = new Set(['ta', 'te', 'hi', 'ml', 'kn']);
 const ASIAN_DRAMA_LANGUAGES = new Set(['ko', 'ja', 'zh', 'th']);
@@ -576,7 +674,18 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'arabic-kirmzi': 'Kirmzi',
   'arabic-witanime': 'WitAnime',
   'arabic-animecloud': 'AnimeCloud Arabic',
-  'arabic-cineby': 'Cineby Arabic'
+  'arabic-cineby': 'Cineby Arabic',
+  animepahe: 'AnimePahe',
+  'dahmermovies-4k': 'DahmerMovies 4K',
+  multivid: 'MultiVid',
+  nakios: 'Nakios',
+  playimdb: 'PlayIMDb',
+  playimdb_v2: 'PlayIMDb V2',
+  toflix: 'ToFlix',
+  vidzee: 'VidZee',
+  frembed: 'Frembed',
+  einschalten: 'Einschalten',
+  filmpalast: 'Filmpalast'
 });
 
 const toLabel = (providerId) =>
@@ -2605,6 +2714,14 @@ export class ProviderService {
 
     if (originalLanguage === 'pt' || originCountries.has('BR') || originCountries.has('PT')) {
       tags.push('portuguese');
+    }
+
+    if (originalLanguage === 'fr' || originCountries.has('FR')) {
+      tags.push('french');
+    }
+
+    if (originalLanguage === 'de' || originCountries.has('DE') || originCountries.has('AT')) {
+      tags.push('german');
     }
 
     if (originalLanguage === 'es') {

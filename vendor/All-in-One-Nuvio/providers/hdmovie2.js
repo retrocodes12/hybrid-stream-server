@@ -1,9 +1,9 @@
 // HDMovie2 Provider for Nuvio
 // Bollywood + Hollywood Hindi Dubbed + Web Series
-// NO async/await! Only .then() chains!
+// Updated with .equipment domain and HLS stream fixes
 
 var TMDB_KEY = 'd80ba92bc7cefe3359668d30d06f3305'
-var BASE = (process.env.HDMOVIE2_BASE_URL || 'https://newhdmovie2.vip').replace(/\/+$/, '')
+var BASE = 'https://hdmovie2.equipment' // Updated Domain 🌐
 var CDN = 'https://hdm2.ink'
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
 
@@ -30,53 +30,11 @@ function httpPost(url, body, headers) {
   })
 }
 
-function fetchTmdbJson(url, retries) {
-  return fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' } })
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status)
-      return r.json()
-    })
-    .catch(function(err) {
-      if (retries <= 0) throw err
-      return new Promise(function(resolve) {
-        setTimeout(resolve, 400)
-      }).then(function() {
-        return fetchTmdbJson(url, retries - 1)
-      })
-    })
-}
-
 function cleanTitle(title) {
   return title.toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-function titleSimilarity(target, candidate) {
-  var targetWords = cleanTitle(target).split(' ').filter(Boolean)
-  var candidateWords = cleanTitle(candidate).split(' ').filter(Boolean)
-  if (!targetWords.length || !candidateWords.length) return 0
-
-  var overlap = 0
-  for (var i = 0; i < targetWords.length; i++) {
-    if (candidateWords.indexOf(targetWords[i]) !== -1) overlap++
-  }
-
-  return overlap / Math.max(targetWords.length, candidateWords.length)
-}
-
-function looksRelevantResult(searchTitle, itemTitle) {
-  var cleanSearch = cleanTitle(searchTitle)
-  var cleanItem = cleanTitle(itemTitle)
-
-  if (!cleanSearch || !cleanItem) return false
-  if (cleanItem === cleanSearch) return true
-  if (cleanItem.indexOf(cleanSearch + ' ') === 0) return true
-  if (cleanSearch.length <= 4) return false
-  if (titleSimilarity(searchTitle, itemTitle) >= 0.8) return true
-
-  return false
 }
 
 function searchSite(title, year) {
@@ -89,16 +47,14 @@ function searchSite(title, year) {
 
       while ((articleMatch = articleRegex.exec(html)) !== null) {
         var articleHtml = articleMatch[1]
-        var linkMatch = articleHtml.match(/href="((?:https:\/\/[^"\/]+)?\/movie\/([^"\/]+)\/)"/i)
+        // Updated Regex to match .equipment domain 🛠️
+        var linkMatch = articleHtml.match(/href="(https:\/\/hdmovie2\.equipment\/movies\/([^"\/]+)\/)"/)
         if (!linkMatch) continue
         if (linkMatch[1].includes('/feed/')) continue
         var altMatch = articleHtml.match(/alt="([^"]+)"/)
         if (!altMatch) continue
 
         var itemUrl = linkMatch[1]
-        if (itemUrl.indexOf('http') !== 0) {
-          itemUrl = BASE + itemUrl
-        }
         var slug = linkMatch[2]
         var itemTitle = altMatch[1].trim()
         var yearMatch = itemTitle.match(/\((\d{4})\)/)
@@ -141,70 +97,8 @@ function searchSite(title, year) {
       if (candidates.length > 0) {
         console.log('[HDMovie2] Best: ' + candidates[0].title + ' (' + candidates[0].year + ')')
       }
-      candidates = candidates.filter(function(item) {
-        return looksRelevantResult(title, item.title)
-      })
-      if (candidates.length === 0) {
-        console.log('[HDMovie2] No relevant title match after filtering')
-      }
       return candidates
     })
-}
-
-function decodeHtmlEntities(value) {
-  return String(value || '')
-    .replace(/&quot;/g, '"')
-    .replace(/&#038;/g, '&')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
-}
-
-function extractInlinePlayerUrls(html) {
-  var urls = [];
-  var seen = {};
-  var patterns = [
-    /https:\/\/hdm2\.ink\/play\?v=[A-Za-z0-9_-]+/gi,
-    /https:\/\/molop\.art\/watch\?v=[A-Za-z0-9_-]+/gi
-  ];
-
-  patterns.forEach(function(pattern) {
-    var matches = html.match(pattern) || [];
-    matches.forEach(function(url) {
-      var cleaned = decodeHtmlEntities(url);
-      if (!seen[cleaned]) {
-        seen[cleaned] = true;
-        urls.push(cleaned);
-      }
-    });
-  });
-
-  return urls;
-}
-
-function tryPlayerUrls(urls, index) {
-  if (!Array.isArray(urls) || index >= urls.length) {
-    return Promise.resolve(null);
-  }
-
-  var playerUrl = urls[index];
-  if (playerUrl.indexOf('https://hdm2.ink/play?v=') === 0) {
-    return getHdm2Stream(playerUrl).then(function(stream) {
-      return stream || tryPlayerUrls(urls, index + 1);
-    }).catch(function() {
-      return tryPlayerUrls(urls, index + 1);
-    });
-  }
-
-  if (playerUrl.indexOf('https://molop.art/watch?v=') === 0) {
-    return getMolopStream(playerUrl).then(function(stream) {
-      return stream || tryPlayerUrls(urls, index + 1);
-    }).catch(function() {
-      return tryPlayerUrls(urls, index + 1);
-    });
-  }
-
-  return tryPlayerUrls(urls, index + 1);
 }
 
 function getHdm2Stream(playerUrl) {
@@ -219,9 +113,16 @@ function getHdm2Stream(playerUrl) {
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
+      
+      // Fix: Force .m3u8 extension for ExoPlayer 📺
+      var finalUrl = CDN + streamPath;
+      if (!finalUrl.includes('.m3u8')) {
+        finalUrl += '#index.m3u8';
+      }
+
       console.log('[HDMovie2] hdm2 stream found!')
       return {
-        url: CDN + streamPath,
+        url: finalUrl,
         headers: { 'Referer': CDN + '/', 'Origin': CDN, 'User-Agent': UA }
       }
     })
@@ -230,14 +131,12 @@ function getHdm2Stream(playerUrl) {
 function getMolopStream(playerUrl) {
   return httpGet(playerUrl, { 'Referer': BASE + '/' })
     .then(function(html) {
-      // Hash is 3rd param in: sniff("videoId","1","HASH",...)
       var sniffMatch = html.match(/sniff\s*\(\s*["'][^"']+["']\s*,\s*["'][^"']+["']\s*,\s*["']([a-f0-9]+)["']/)
       if (!sniffMatch) {
         console.log('[HDMovie2] No sniff hash in molop page')
         return null
       }
-      var hash = sniffMatch[1]
-      // Use .m3u8 extension so ExoPlayer recognizes it properly
+      var hash = sniffMatch[SniffMatch.length - 1]
       var m3u8Url = 'https://molop.art/m3u8/1/' + hash + '/master.m3u8?s=1&cache=1'
       console.log('[HDMovie2] molop hash: ' + hash)
       return {
@@ -279,7 +178,6 @@ function tryGetStream(postId, movieUrl) {
       var cleaned = embedUrl.replace(/\\\//g, '/')
       console.log('[HDMovie2] Server ' + nume + ': ' + cleaned.substring(0, 80))
 
-      // hdm2.ink player
       var hdm2Match = cleaned.match(/src="(https:\/\/hdm2\.ink\/play\?v=[^"]+)"/)
       if (hdm2Match) {
         return getHdm2Stream(hdm2Match[1]).then(function(s) {
@@ -288,7 +186,6 @@ function tryGetStream(postId, movieUrl) {
         })
       }
 
-      // molop.art player
       var molopMatch = cleaned.match(/src="(https:\/\/molop\.art\/watch\?v=[^"]+)"/)
       if (molopMatch) {
         return getMolopStream(molopMatch[1]).then(function(s) {
@@ -297,13 +194,11 @@ function tryGetStream(postId, movieUrl) {
         })
       }
 
-      // Skip AbyssCDN
       if (cleaned.includes('prvs.top')) {
         console.log('[HDMovie2] Skipping AbyssCDN')
         nume++; return tryNume()
       }
 
-      // Skip ok.ru
       if (cleaned.includes('ok.ru')) {
         console.log('[HDMovie2] Skipping ok.ru')
         nume++; return tryNume()
@@ -324,22 +219,6 @@ function tryGetStream(postId, movieUrl) {
 function getStreamFromMoviePage(movieUrl) {
   return httpGet(movieUrl, { 'Referer': BASE + '/' })
     .then(function(html) {
-      var inlinePlayers = extractInlinePlayerUrls(html)
-      if (inlinePlayers.length > 0) {
-        console.log('[HDMovie2] Inline players: ' + inlinePlayers.join(', '))
-        return tryPlayerUrls(inlinePlayers, 0).then(function(stream) {
-          if (stream) return stream
-          var postIdMatch = html.match(/postid-(\d+)/)
-          if (!postIdMatch) {
-            console.log('[HDMovie2] No post ID')
-            return null
-          }
-          var postId = postIdMatch[1]
-          console.log('[HDMovie2] Post ID: ' + postId)
-          return tryGetStream(postId, movieUrl)
-        })
-      }
-
       var postIdMatch = html.match(/postid-(\d+)/)
       if (!postIdMatch) {
         console.log('[HDMovie2] No post ID')
@@ -360,7 +239,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     console.log('[HDMovie2] Start: ' + tmdbId + ' ' + mediaType)
 
-    fetchTmdbJson(tmdbUrl, 2)
+    fetch(tmdbUrl)
+      .then(function(r) { return r.json() })
       .then(function(data) {
         var title = data.title || data.name
         if (!title) throw new Error('No title')

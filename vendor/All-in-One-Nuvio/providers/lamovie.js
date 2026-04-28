@@ -216,7 +216,6 @@ function resolveHlswish(embedUrl) {
   });
 }
 function resolveVimeos(embedUrl) {
-  var maxAttempts = 5;
   var originMatch = embedUrl.match(/^(https?:\/\/[^/]+)/);
   var origin = originMatch ? originMatch[1] : "https://vimeos.net";
   var playHeaders = { "User-Agent": DEFAULT_HEADERS["User-Agent"], "Referer": origin + "/", "Origin": origin };
@@ -235,11 +234,6 @@ function resolveVimeos(embedUrl) {
     return m ? m[1] : null;
   }
   function attempt(n) {
-    if (n > maxAttempts) {
-      console.log("[Vimeos] Max attempts reached, skipping");
-      return Promise.resolve(null);
-    }
-
     return get(embedUrl, fetchOpts).then(function(data) {
       var masterUrl = extractFileUrl(data);
       if (!masterUrl) {
@@ -254,9 +248,6 @@ function resolveVimeos(embedUrl) {
       return attempt(n + 1);
     }).catch(function(err) {
       console.log("[Vimeos] Error intento " + n + ": " + err.message);
-      if (err && /timed out|aborted/i.test(String(err.message || ""))) {
-        return null;
-      }
       return attempt(n + 1);
     });
   }

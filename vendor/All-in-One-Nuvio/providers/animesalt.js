@@ -5,7 +5,6 @@ var TMDB_KEY = 'd80ba92bc7cefe3359668d30d06f3305'
 var BASE = 'https://animesalt.ac'
 var CDN = 'https://as-cdn21.top'
 var UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36'
-var TMDB_RETRY_DELAYS = [300, 900]
 
 function httpGet(url, headers) {
   return fetch(url, {
@@ -28,23 +27,6 @@ function httpPost(url, body, headers) {
     if (!r.ok) throw new Error('HTTP ' + r.status)
     return r.json()
   })
-}
-
-function fetchJsonWithRetry(url, headers) {
-  var attempt = 0
-  function run() {
-    return fetch(url, {
-      headers: Object.assign({ 'User-Agent': UA }, headers || {})
-    }).then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status)
-      return r.json()
-    }).catch(function(err) {
-      if (attempt >= TMDB_RETRY_DELAYS.length) throw err
-      var wait = TMDB_RETRY_DELAYS[attempt++]
-      return new Promise(function(resolve) { setTimeout(resolve, wait) }).then(run)
-    })
-  }
-  return run()
 }
 
 function cleanTitle(title) {
@@ -201,7 +183,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
     console.log('[AnimeSalt] Start: ' + tmdbId + ' ' + mediaType + ' S' + season + 'E' + episode)
 
-    fetchJsonWithRetry(tmdbUrl)
+    fetch(tmdbUrl)
+      .then(function(r) { return r.json() })
       .then(function(data) {
         var title = data.title || data.name
         if (!title) throw new Error('No title')

@@ -162,25 +162,6 @@ export function normalizeTitle(title) {
   return title.toLowerCase().replace(/\b(the|a|an)\b/g, "").replace(/[:\-_]/g, " ").replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim();
 }
 
-export function getTitleCandidates(mediaInfo) {
-  const seen = new Set();
-  const values = [mediaInfo.title, mediaInfo.originalTitle, ...(mediaInfo.alternativeTitles || [])];
-  const candidates = [];
-
-  for (const value of values) {
-    const candidate = String(value || "").replace(/\s+/g, " ").trim();
-    if (!candidate || candidate.length < 4) continue;
-    if (!/^[\x20-\x7E]+$/.test(candidate)) continue;
-
-    const key = candidate.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    candidates.push(candidate);
-  }
-
-  return candidates.length ? candidates : [mediaInfo.title];
-}
-
 export function calculateTitleSimilarity(title1, title2) {
   const norm1 = normalizeTitle(title1);
   const norm2 = normalizeTitle(title2);
@@ -205,11 +186,8 @@ export function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) 
   if (!searchResults || searchResults.length === 0) return null;
   let bestMatch = null;
   let bestScore = 0;
-  const titleCandidates = getTitleCandidates(mediaInfo);
   for (const result of searchResults) {
-    let score = titleCandidates.reduce((maxScore, titleCandidate) => {
-      return Math.max(maxScore, calculateTitleSimilarity(titleCandidate, result.title));
-    }, 0);
+    let score = calculateTitleSimilarity(mediaInfo.title, result.title);
     if (mediaInfo.year && result.year) {
       const yearDiff = Math.abs(mediaInfo.year - result.year);
       if (yearDiff === 0) score += 0.2;
@@ -252,7 +230,7 @@ export function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) 
 
 export async function getTMDBDetails(tmdbId, mediaType) {
   const endpoint = mediaType === "tv" ? "tv" : "movie";
-  const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids,alternative_titles`;
+  const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
   const response = await fetch(url, {
     method: "GET",
     headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
@@ -260,16 +238,7 @@ export async function getTMDBDetails(tmdbId, mediaType) {
   if (!response.ok) throw new Error(`TMDB API error: ${response.status}`);
   const data = await response.json();
   const title = mediaType === "tv" ? data.name : data.title;
-  const originalTitle = mediaType === "tv" ? data.original_name : data.original_title;
   const releaseDate = mediaType === "tv" ? data.first_air_date : data.release_date;
   const year = releaseDate ? parseInt(releaseDate.split("-")[0]) : null;
-  const alternativeTitles = (data.alternative_titles?.titles || [])
-    .slice()
-    .sort((left, right) => {
-      const score = (entry) => entry?.iso_3166_1 === "IN" ? 0 : entry?.iso_3166_1 === "US" ? 1 : 2;
-      return score(left) - score(right);
-    })
-    .map(entry => entry?.title)
-    .filter(Boolean);
-  return { title, originalTitle, alternativeTitles, year, imdbId: data.external_ids?.imdb_id || null };
+  return { title, year, imdbId: data.external_ids?.imdb_id || null };
 }

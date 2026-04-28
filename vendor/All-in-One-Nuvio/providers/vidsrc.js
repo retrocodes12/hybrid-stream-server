@@ -1,344 +1,165 @@
-const TMDB_API_KEY = 'd131017ccc6e5462a81c9304d21476de';
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
-const EMBED_DOMAINS = ['https://vidsrc-embed.ru', 'https://vsembed.ru'];
-const REQUEST_TIMEOUT_MS = 10000;
-const REQUEST_RETRIES = 3;
-const REQUEST_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.9',
-  Connection: 'keep-alive'
-};
-const PLAYBACK_HOST_REPLACEMENT = 'cloudnestra.com';
+const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
+const TMDB_BASE = 'https://api.themoviedb.org/3';
+const PROVIDER_ID = 'alas-vidsrc';
 
-function delay(ms) {
-  return new Promise(function(resolve) {
-    setTimeout(resolve, ms);
-  });
-}
-
-function parseRetryDelayMs(headers, attempt) {
-  var retryAfter = headers && typeof headers.get === 'function' ? headers.get('retry-after') : '';
-  var seconds = parseInt(retryAfter, 10);
-
-  if (!Number.isNaN(seconds) && seconds > 0) {
-    return Math.min(seconds * 1000, 5000);
-  }
-
-  return 300 * attempt;
-}
-
-function shouldRetryRequest(error, status) {
-  if (status === 429 || status >= 500) {
-    return true;
-  }
-
-  if (!error) {
-    return false;
-  }
-
-  return /fetch failed|timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Connection reset|aborted/i
-    .test(String(error.message || error));
-}
-
-function request(url, options, parser) {
-  var attempt = 0;
-
-  function run() {
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() {
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
-    var requestOptions = Object.assign({}, options || {});
-    requestOptions.signal = controller.signal;
-    requestOptions.headers = Object.assign({}, REQUEST_HEADERS, requestOptions.headers || {});
-
-    return fetch(url, requestOptions)
-      .then(function(response) {
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(null, response.status)) {
-            attempt += 1;
-            return delay(parseRetryDelayMs(response.headers, attempt)).then(run);
-          }
-
-          throw new Error('HTTP ' + response.status + ' for ' + url);
-        }
-
-        return parser(response);
-      })
-      .catch(function(error) {
-        clearTimeout(timeoutId);
-
-        if (attempt + 1 < REQUEST_RETRIES && shouldRetryRequest(error, 0)) {
-          attempt += 1;
-          return delay(250 * attempt).then(run);
-        }
-
-        throw error;
-      });
-  }
-
-  return run();
-}
-
-function getJson(url, options) {
-  return request(url, options, function(response) {
-    return response.json();
-  });
-}
-
-function getText(url, options) {
-  return request(url, options, function(response) {
-    return response.text();
-  });
-}
-
-function fetchMediaDetails(tmdbId, mediaType) {
-  var normalizedType = mediaType === 'tv' || mediaType === 'series' ? 'tv' : 'movie';
-  var url = TMDB_BASE_URL + '/' + normalizedType + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&append_to_response=external_ids';
-
-  return getJson(url).then(function(data) {
-    var imdbId = '';
-
-    if (normalizedType === 'tv' && data.external_ids && data.external_ids.imdb_id) {
-      imdbId = data.external_ids.imdb_id;
-    } else if (data.imdb_id) {
-      imdbId = data.imdb_id;
-    } else if (data.external_ids && data.external_ids.imdb_id) {
-      imdbId = data.external_ids.imdb_id;
+async function safeFetch(url, options = {}) {
+  if (typeof fetchv2 === 'function') {
+    const headers = options.headers || {};
+    const method = options.method || 'GET';
+    const body = options.body || null;
+    try {
+      return await fetchv2(url, headers, method, body, true, options.encoding || 'utf-8');
+    } catch {
     }
-
-    if (!imdbId) {
-      throw new Error('Missing IMDb id for TMDB ' + tmdbId);
-    }
-
-    return {
-      tmdbId: String(data.id || tmdbId),
-      imdbId: imdbId,
-      mediaType: normalizedType,
-      title: normalizedType === 'tv' ? data.name : data.title,
-      year: normalizedType === 'tv'
-        ? String(data.first_air_date || '').slice(0, 4)
-        : String(data.release_date || '').slice(0, 4)
-    };
-  });
+  }
+  return fetch(url, options);
 }
 
-function buildEmbedUrl(baseUrl, media, season, episode) {
-  if (media.mediaType === 'tv') {
-    return baseUrl + '/embed/tv/' + media.imdbId + '/' + (season || 1) + '-' + (episode || 1);
+function inferQualityScore(text) {
+  const value = String(text || '').toLowerCase();
+  if (value.includes('2160') || value.includes('4k')) return 2160;
+  if (value.includes('1440')) return 1440;
+  if (value.includes('1080')) return 1080;
+  if (value.includes('720')) return 720;
+  if (value.includes('480')) return 480;
+  if (value.includes('360')) return 360;
+  return 0;
+}
+
+function toQualityLabel(score) {
+  if (score >= 2160) return '2160p';
+  if (score >= 1440) return '1440p';
+  if (score >= 1080) return '1080p';
+  return 'Auto';
+}
+
+function maxResolutionFromM3u8Text(text) {
+  const input = String(text || '');
+  let maxY = 0;
+  const re = /RESOLUTION=\s*\d+\s*x\s*(\d+)/gi;
+  let m;
+  // eslint-disable-next-line no-cond-assign
+  while ((m = re.exec(input)) !== null) {
+    const y = Number(m[1]);
+    if (Number.isFinite(y) && y > maxY) maxY = y;
+  }
+  return maxY;
+}
+
+async function detectPlaylistMaxQuality(url, headers) {
+  try {
+    const res = await safeFetch(url, { headers: headers || {} });
+    const text = res && res.ok ? await res.text() : '';
+    return maxResolutionFromM3u8Text(text);
+  } catch {
+    return 0;
+  }
+}
+
+function tmdbFetch(path) {
+  return safeFetch(`${TMDB_BASE}${path}?api_key=${TMDB_API_KEY}`)
+    .then(r => (r && r.ok ? r.json() : null))
+    .catch(() => null);
+}
+
+async function getImdbId(tmdbId, mediaType) {
+  const type = mediaType === 'tv' ? 'tv' : 'movie';
+  if (type === 'movie') {
+    const movie = await tmdbFetch(`/movie/${tmdbId}`);
+    return movie && movie.imdb_id ? movie.imdb_id : null;
   }
 
-  return baseUrl + '/embed/movie/' + media.imdbId;
+  const tv = await tmdbFetch(`/tv/${tmdbId}`);
+  if (!tv) return null;
+  const ext = await tmdbFetch(`/tv/${tmdbId}/external_ids`);
+  return ext && ext.imdb_id ? ext.imdb_id : null;
 }
 
-function stripHtmlComments(html) {
-  return String(html || '').replace(/<!--/g, '').replace(/-->/g, '');
-}
+async function resolveCloudnestraStreams(imdbId, mediaType, seasonNum, episodeNum) {
+  const headersCloud = {
+    Referer: 'https://cloudnestra.com/',
+    Origin: 'https://cloudnestra.com',
+    'User-Agent': 'Mozilla/5.0'
+  };
 
-function extractIframeUrl(html) {
-  var match = stripHtmlComments(html).match(/id=["']player_iframe["'][^>]+src=["']([^"']+)["']/i);
+  const embedUrl = mediaType === 'tv'
+    ? `https://vsrc.su/embed/tv?imdb=${encodeURIComponent(imdbId)}&season=${Number(seasonNum || 1)}&episode=${Number(episodeNum || 1)}`
+    : `https://vsrc.su/embed/${encodeURIComponent(imdbId)}`;
 
-  if (!match || !match[1]) {
-    return '';
-  }
+  const embedRes = await safeFetch(embedUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  const embedHtml = embedRes && embedRes.ok ? await embedRes.text() : '';
+  const iframeSrc = (embedHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
+  if (!iframeSrc) return [];
 
-  return match[1].replace(/^\/\//, 'https://');
-}
-
-function extractCloudStreamHash(html) {
-  var match = stripHtmlComments(html).match(/class=["']server["'][^>]+data-hash=["']([^"']+)["'][^>]*>\s*CloudStream Pro\s*</i)
-    || stripHtmlComments(html).match(/data-hash=["']([^"']+)["'][^>]*>\s*CloudStream Pro\s*</i);
-
-  return match ? match[1] : '';
-}
-
-function extractPlayerPath(html) {
-  var match = String(html || '').match(/src:\s*'([^']+)'/i)
-    || String(html || '').match(/src:\s*"([^"]+)"/i);
-
-  return match ? match[1] : '';
-}
-
-function extractTitle(html) {
-  var match = String(html || '').match(/<title>([^<]+)<\/title>/i);
-  return match ? match[1].trim() : 'VidSrc';
-}
-
-function extractFileBundle(html) {
-  var match = String(html || '').match(/file:\s*"([\s\S]*?)"\s*,\s*cuid:/i);
-  return match ? match[1].trim() : '';
-}
-
-function resolveCandidateUrls(fileBundle) {
-  var unique = new Set();
-
-  String(fileBundle || '')
-    .split(/\s+or\s+/i)
-    .map(function(url) {
-      return String(url || '').trim();
-    })
-    .filter(function(url) {
-      return url.startsWith('https://') && url.includes('/master.m3u8');
-    })
-    .forEach(function(url) {
-      unique.add(url.replace(/\{v\d\}/g, PLAYBACK_HOST_REPLACEMENT));
-    });
-
-  return Array.from(unique);
-}
-
-function parseMaxHeight(playlistText) {
-  var match;
-  var maxHeight = 0;
-  var regex = /RESOLUTION=\d+x(\d+)/gi;
-
-  while ((match = regex.exec(String(playlistText || ''))) !== null) {
-    maxHeight = Math.max(maxHeight, parseInt(match[1], 10) || 0);
-  }
-
-  return maxHeight || null;
-}
-
-function qualityFromHeight(height) {
-  if (!height) {
-    return 'Auto';
-  }
-
-  if (height >= 2160) {
-    return '4K';
-  }
-
-  return height + 'p';
-}
-
-function validatePlaylist(url, referer) {
-  return getText(url, {
+  const iframeRes = await safeFetch(`https:${iframeSrc}`, {
     headers: {
-      Referer: referer,
-      Origin: 'https://cloudnestra.com',
-      Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:145.0) Gecko/20100101 Firefox/145.0',
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.5',
+      referer: 'https://vsrc.su/',
+      'upgrade-insecure-requests': '1'
     }
-  }).then(function(playlistText) {
-    if (!String(playlistText || '').includes('#EXTM3U')) {
-      throw new Error('Invalid HLS playlist');
-    }
-
-    return {
-      url: url,
-      height: parseMaxHeight(playlistText)
-    };
   });
-}
+  const iframeHtml = iframeRes && iframeRes.ok ? await iframeRes.text() : '';
+  const prorcpSrc = (iframeHtml.match(/src:\s*["']([^"']+)["']/) || [])[1];
+  if (!prorcpSrc) return [];
 
-function buildStreams(validatedPlaylists, title, playbackReferer) {
-  return validatedPlaylists.map(function(item, index) {
-    var quality = qualityFromHeight(item.height);
-    var titleLine = item.height
-      ? title + '\nVidSrc ' + quality
-      : title + '\nVidSrc Auto';
+  const cloudRes = await safeFetch(`https://cloudnestra.com${prorcpSrc}`, { headers: { referer: 'https://cloudnestra.com/' } });
+  const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
 
-    return {
-      name: 'VidSrc' + (validatedPlaylists.length > 1 ? ' Server ' + (index + 1) : ''),
-      title: titleLine,
-      url: item.url,
-      quality: quality,
-      headers: {
-        Referer: playbackReferer,
-        Origin: 'https://cloudnestra.com',
-        'User-Agent': REQUEST_HEADERS['User-Agent']
-      },
-      provider: 'vidsrc'
-    };
+  const hidden = cloudHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
+  const divId = hidden ? hidden[1] : null;
+  const divText = hidden ? hidden[2] : null;
+  if (!divId || !divText) return [];
+
+  const decRes = await safeFetch('https://enc-dec.app/api/dec-cloudnestra', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: divText, div_id: divId })
   });
-}
+  const decJson = decRes && decRes.ok ? await decRes.json() : null;
+  const urls = decJson && Array.isArray(decJson.result) ? decJson.result : [];
+  if (urls.length === 0) return [];
 
-function fetchEmbedHtml(media, season, episode) {
-  var attempt = 0;
+  const results = [];
+  for (let idx = 0; idx < urls.length; idx++) {
+    const streamUrl = urls[idx];
+    if (!streamUrl) continue;
 
-  function tryDomain() {
-    var baseUrl = EMBED_DOMAINS[attempt];
-    var embedUrl = buildEmbedUrl(baseUrl, media, season, episode);
+    const scoreFromUrl = inferQualityScore(streamUrl);
+    const maxFromPlaylist = await detectPlaylistMaxQuality(streamUrl, headersCloud);
+    const assumed = streamUrl.includes('.m3u8') ? 1080 : 0;
+    const score = Math.max(scoreFromUrl, maxFromPlaylist, assumed);
+    if (score < 1080) continue;
 
-    return getText(embedUrl)
-      .then(function(html) {
-        if (!extractIframeUrl(html) || !extractCloudStreamHash(html)) {
-          throw new Error('Missing player iframe or CloudStream server');
-        }
-
-        return {
-          embedUrl: embedUrl,
-          html: html
-        };
-      })
-      .catch(function(error) {
-        attempt += 1;
-        if (attempt < EMBED_DOMAINS.length) {
-          return tryDomain();
-        }
-        throw error;
-      });
+    results.push({
+      name: `${PROVIDER_ID} - Server ${idx + 1}`,
+      url: streamUrl,
+      quality: toQualityLabel(score),
+      headers: headersCloud,
+      provider: PROVIDER_ID,
+      _score: score
+    });
   }
 
-  return tryDomain();
+  return results
+    .sort((a, b) => b._score - a._score)
+    .map(({ _score, ...rest }) => rest);
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-  return fetchMediaDetails(tmdbId, mediaType || 'movie')
-    .then(function(media) {
-      return fetchEmbedHtml(media, seasonNum, episodeNum).then(function(embedResult) {
-        var iframeUrl = new URL(extractIframeUrl(embedResult.html));
-        var hash = extractCloudStreamHash(embedResult.html);
-        var rcpUrl = new URL('/rcp/' + hash, iframeUrl.origin).toString();
-
-        return getText(rcpUrl, {
-          headers: {
-            Referer: new URL(embedResult.embedUrl).origin
-          }
-        }).then(function(rcpHtml) {
-          var playerPath = extractPlayerPath(rcpHtml);
-
-          if (!playerPath) {
-            return [];
-          }
-
-          var playerUrl = new URL(playerPath, iframeUrl.origin).toString();
-
-          return getText(playerUrl, {
-            headers: {
-              Referer: rcpUrl
-            }
-          }).then(function(playerHtml) {
-            var fileBundle = extractFileBundle(playerHtml);
-            var candidateUrls = resolveCandidateUrls(fileBundle);
-
-            if (!candidateUrls.length) {
-              return [];
-            }
-
-            return Promise.all(candidateUrls.map(function(url) {
-              return validatePlaylist(url, playerUrl).catch(function() {
-                return null;
-              });
-            })).then(function(validated) {
-              var playlists = validated.filter(Boolean);
-
-              if (!playlists.length) {
-                return [];
-              }
-
-              return buildStreams(playlists, extractTitle(embedResult.html), playerUrl);
-            });
-          });
-        });
-      });
-    })
-    .catch(function(error) {
-      console.error('[VidSrc] Error:', error && error.message ? error.message : error);
-      return [];
-    });
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+  try {
+    const type = mediaType === 'tv' ? 'tv' : 'movie';
+    const imdbId = await getImdbId(tmdbId, type);
+    if (!imdbId) return [];
+    return await resolveCloudnestraStreams(imdbId, type, seasonNum, episodeNum);
+  } catch {
+    return [];
+  }
 }
 
-module.exports = { getStreams: getStreams };
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { getStreams };
+} else {
+  global.getStreams = getStreams;
+}

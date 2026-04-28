@@ -395,7 +395,7 @@ function resolvePixelDrain(url) {
 }
 
 // src/flixindia/index.js
-var TMDB_API_KEY = "919605fd567bbffcf76492a03eb4d527";
+var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
 var TMDB_BASE = "https://api.themoviedb.org/3";
 function pad2(num) {
   return String(num).padStart(2, "0");

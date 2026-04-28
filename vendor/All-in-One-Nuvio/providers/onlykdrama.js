@@ -3,7 +3,7 @@
 var PROVIDER_NAME = "OnlyKDrama";
 var SITE_URL = "https://onlykdrama.top";
 var TMDB_URL = "https://www.themoviedb.org";
-var FILEPRESS_ORIGIN = "https://new2.filepress.wiki";
+var FILEPRESS_ORIGIN = "https://new3.filepress.wiki";
 var DEFAULT_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
   "Accept-Language": "en-US,en;q=0.9"
@@ -383,7 +383,7 @@ function resolveMoviePage(pageUrl, html) {
 }
 
 function extractEpisodeAnchors(html) {
-  var regex = /<a[^>]+href=["'](https:\/\/new2\.filepress\.wiki\/file\/([A-Za-z0-9]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
+  var regex = /<a[^>]+href=["'](https:\/\/new3\.filepress\.wiki\/file\/([A-Za-z0-9]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
   var results = [];
   var seen = {};
   var match;
