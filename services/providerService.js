@@ -387,8 +387,11 @@ const PRIORITY_COOLDOWN_HOSTS = new Set(['4khdhub', 'hdhub4u']);
 const PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   allyoucanwatch: 1,
   '4khdhub': 2,
-  hdhub4u: 2
+  hdhub4u: 2,
+  showbox: 2
 });
+const EXPLICIT_PROVIDER_GLOBAL_LANE_BONUS = 1;
+const EXPLICIT_PROVIDER_HOST_LANE_BONUS = 1;
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 25,
   '4khdhub_tv': 25,
@@ -428,8 +431,29 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'arabic-animecloud': 30,
   'arabic-cineby': 25
 });
-const getProviderTimeoutSeconds = (providerId) =>
-  PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
+const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
+  '4khdhub': 6,
+  '4khdhub_tv': 6,
+  hdhub4u: 8,
+  playimdb: 8,
+  uhdmovies: 8,
+  showbox: 8
+});
+const getProviderTimeoutSeconds = (providerId, params = null) => {
+  if (params?.enforceFastTimeout) {
+    const defaultFastTimeout = Math.min(config.PROVIDER_TIMEOUT_SECONDS, 5);
+    return PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS[providerId] || defaultFastTimeout;
+  }
+
+  if (
+    providerId === 'showbox' &&
+    String(params?.privateProviderSettings?.febboxUiCookie || '').trim()
+  ) {
+    return 25;
+  }
+
+  return PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
+};
 const PROVIDER_PRIORITY = [
   '4khdhub',
   '4khdhub_tv',
@@ -495,14 +519,18 @@ const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch']);
 const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'multivid', 'playimdb', 'vidsrc', 'vixsrc']);
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'vidsrc', 'vixsrc']);
-const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream']);
-const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'vidsrc', 'vixsrc', 'cinestream', 'vidlink', 'moviebox']);
-const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['animeworld', 'animesalt', 'moviebox']);
-const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian']);
+const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies']);
+const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'castle', 'moviebox', 'vidlink', 'cinestream']);
+const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'vidsrc', 'vixsrc', 'castle', 'cinestream', 'vidlink', 'moviebox']);
+const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
+const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'moviebox']);
+const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
+const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama', 'animekai']);
-const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies']);
+const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies', 'vidsrc']);
 const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'vidsrc']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
+  'animekai',
   'animepahe',
   'animesalt',
   'animeworld',
