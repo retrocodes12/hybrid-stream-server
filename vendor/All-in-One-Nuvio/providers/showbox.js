@@ -7,6 +7,8 @@ const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // ShowBox API Configuration
 const SHOWBOX_API_BASE = 'https://febapi.nuvioapp.space/api/media';
+const TMDB_REQUEST_TIMEOUT_MS = 4000;
+const SHOWBOX_API_TIMEOUT_MS = 22000;
 
 // Working headers for ShowBox API
 const WORKING_HEADERS = {
@@ -17,8 +19,23 @@ const WORKING_HEADERS = {
     'Content-Type': 'application/json'
 };
 
+function getEnvString(name) {
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env[name]) {
+            return String(process.env[name]).trim();
+        }
+    } catch (e) {
+        // ignore and fall through
+    }
+    return '';
+}
+
 // UI token (cookie) is provided by the host app via per-scraper settings (Plugin Screen)
-function getUiToken() {
+function getUiToken(scraperSettings = null) {
+    if (scraperSettings && scraperSettings.uiToken) {
+        return String(scraperSettings.uiToken).trim();
+    }
+
     try {
         // Prefer sandbox-injected globals
         if (typeof global !== 'undefined' && global.SCRAPER_SETTINGS && global.SCRAPER_SETTINGS.uiToken) {
@@ -30,11 +47,19 @@ function getUiToken() {
     } catch (e) {
         // ignore and fall through
     }
+    const envToken = getEnvString('SHOWBOX_UI_TOKEN') || getEnvString('SHOWBOX_COOKIE');
+    if (envToken) {
+        return envToken;
+    }
     return '';
 }
 
 // OSS Group is provided by the host app via per-scraper settings (Plugin Screen) - optional
-function getOssGroup() {
+function getOssGroup(scraperSettings = null) {
+    if (scraperSettings && scraperSettings.ossGroup) {
+        return String(scraperSettings.ossGroup).trim();
+    }
+
     try {
         // Prefer sandbox-injected globals
         if (typeof global !== 'undefined' && global.SCRAPER_SETTINGS && global.SCRAPER_SETTINGS.ossGroup) {
@@ -45,6 +70,10 @@ function getOssGroup() {
         }
     } catch (e) {
         // ignore and fall through
+    }
+    const envOssGroup = getEnvString('SHOWBOX_OSS_GROUP');
+    if (envOssGroup) {
+        return envOssGroup;
     }
     return null; // OSS group is optional
 }
@@ -105,16 +134,28 @@ function formatFileSize(sizeStr) {
 
 // Helper function to make HTTP requests
 function makeRequest(url, options = {}) {
+    const controller = new AbortController();
+    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : SHOWBOX_API_TIMEOUT_MS;
+    const timeoutId = setTimeout(function() {
+        controller.abort(new Error(`Request timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const requestOptions = { ...options };
+    delete requestOptions.timeoutMs;
+
     return fetch(url, {
-        method: options.method || 'GET',
-        headers: { ...WORKING_HEADERS, ...options.headers },
-        ...options
+        method: requestOptions.method || 'GET',
+        headers: { ...WORKING_HEADERS, ...requestOptions.headers },
+        ...requestOptions,
+        signal: requestOptions.signal || controller.signal
     }).then(function(response) {
+        clearTimeout(timeoutId);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         return response;
     }).catch(function(error) {
+        clearTimeout(timeoutId);
         console.error(`[ShowBox] Request failed for ${url}: ${error.message}`);
         throw error;
     });
@@ -125,7 +166,7 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
     
-    return makeRequest(url)
+    return makeRequest(url, { timeoutMs: TMDB_REQUEST_TIMEOUT_MS })
         .then(function(response) {
             return response.json();
         })
@@ -221,81 +262,84 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
 }
 
 // Main scraping function
-function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null) {
+function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null, scraperSettings = null) {
     console.log(`[ShowBox] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}${mediaType === 'tv' ? `, S:${seasonNum}E:${episodeNum}` : ''}`);
 
     // Get cookie (uiToken) - required
-    const cookie = getUiToken();
+    const cookie = getUiToken(scraperSettings);
     if (!cookie) {
         console.error('[ShowBox] No UI token (cookie) found in scraper settings');
         return Promise.resolve([]);
     }
 
     // Get OSS group - optional
-    const ossGroup = getOssGroup();
+    const ossGroup = getOssGroup(scraperSettings);
     console.log(`[ShowBox] Using cookie: ${cookie.substring(0, 20)}...${ossGroup ? `, OSS Group: ${ossGroup}` : ' (no OSS group)'}`);
 
-    // Get TMDB details for title formatting
-    return getTMDBDetails(tmdbId, mediaType)
+    // Build API URL based on media type
+    let apiUrl;
+    if (mediaType === 'tv' && seasonNum && episodeNum) {
+        // TV format: /api/media/tv/:tmdbId/oss=:ossGroup/:season/:episode?cookie=:cookie
+        if (ossGroup) {
+            apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+        } else {
+            apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+        }
+    } else {
+        // Movie format: /api/media/movie/:tmdbId?cookie=:cookie
+        apiUrl = `${SHOWBOX_API_BASE}/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
+    }
+
+    console.log(`[ShowBox] Requesting: ${apiUrl}`);
+
+    const mediaInfoPromise = getTMDBDetails(tmdbId, mediaType)
         .then(function(mediaInfo) {
             console.log(`[ShowBox] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || 'N/A'})`);
+            return mediaInfo;
+        });
 
-            // Build API URL based on media type
-            let apiUrl;
-            if (mediaType === 'tv' && seasonNum && episodeNum) {
-                // TV format: /api/media/tv/:tmdbId/oss=:ossGroup/:season/:episode?cookie=:cookie
-                if (ossGroup) {
-                    apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
-                } else {
-                    apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
-                }
-            } else {
-                // Movie format: /api/media/movie/:tmdbId?cookie=:cookie
-                apiUrl = `${SHOWBOX_API_BASE}/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
+    const apiRequestPromise = makeRequest(apiUrl, { timeoutMs: SHOWBOX_API_TIMEOUT_MS })
+        .then(function(response) {
+            console.log(`[ShowBox] API Response status: ${response.status}`);
+            return response.json();
+        })
+        .then(function(data) {
+            console.log(`[ShowBox] API Response received:`, JSON.stringify(data, null, 2));
+            return data;
+        })
+        .catch(function(error) {
+            console.error(`[ShowBox] API request failed: ${error.message}`);
+            throw error;
+        });
+
+    return Promise.all([mediaInfoPromise, apiRequestPromise])
+        .then(function([mediaInfo, data]) {
+            // Process the response
+            const streams = processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNum);
+
+            if (streams.length === 0) {
+                console.log(`[ShowBox] No streams found in API response`);
+                return [];
             }
 
-            console.log(`[ShowBox] Requesting: ${apiUrl}`);
+            // Sort streams by quality (highest first)
+            streams.sort(function(a, b) {
+                const qualityOrder = {
+                    'Original': 6,
+                    '4K': 5,
+                    '1440p': 4,
+                    '1080p': 3,
+                    '720p': 2,
+                    '480p': 1,
+                    '360p': 0,
+                    '240p': -1,
+                    'Unknown': -2
+                };
+                return (qualityOrder[b.quality] || -2) - (qualityOrder[a.quality] || -2);
+            });
 
-            // Make request to ShowBox API
-            return makeRequest(apiUrl)
-                .then(function(response) {
-                    console.log(`[ShowBox] API Response status: ${response.status}`);
-                    return response.json();
-                })
-                .then(function(data) {
-                    console.log(`[ShowBox] API Response received:`, JSON.stringify(data, null, 2));
-                    
-                    // Process the response
-                    const streams = processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNum);
-                    
-                    if (streams.length === 0) {
-                        console.log(`[ShowBox] No streams found in API response`);
-                        return [];
-                    }
-                    
-                    // Sort streams by quality (highest first)
-                    streams.sort(function(a, b) {
-                        const qualityOrder = { 
-                            'Original': 6, 
-                            '4K': 5, 
-                            '1440p': 4, 
-                            '1080p': 3, 
-                            '720p': 2, 
-                            '480p': 1, 
-                            '360p': 0, 
-                            '240p': -1, 
-                            'Unknown': -2 
-                        };
-                        return (qualityOrder[b.quality] || -2) - (qualityOrder[a.quality] || -2);
-                    });
-
-                    console.log(`[ShowBox] Returning ${streams.length} streams`);
-                    return streams;
-                })
-                .catch(function(error) {
-                    console.error(`[ShowBox] API request failed: ${error.message}`);
-                    throw error;
-                });
+            console.log(`[ShowBox] Returning ${streams.length} streams`);
+            return streams;
         })
         .catch(function(error) {
             console.error(`[ShowBox] Error in getStreams: ${error.message}`);

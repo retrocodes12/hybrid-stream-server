@@ -67,7 +67,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'vidsrc') {
-    return '24';
+    return '25';
   }
 
   if (providerId === 'animepahe') {
@@ -115,7 +115,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'hdhub4u') {
-    return '30';
+    return '31';
   }
 
   if (providerId === 'hdmovie2') {
@@ -124,6 +124,10 @@ const getProviderCacheVersion = (providerId) => {
 
   if (providerId === 'kisskh') {
     return '31';
+  }
+
+  if (providerId === 'showbox') {
+    return '46';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -158,6 +162,19 @@ const prioritizePrivateTokenProviders = (providers, privateProviderSettings = nu
   }
 
   return ordered;
+};
+
+const getPrivateProviderPriorityBoost = (providerId, privateProviderSettings = null) => {
+  const normalizedProviderId = String(providerId || '').trim().toLowerCase();
+
+  if (
+    normalizedProviderId === 'showbox' &&
+    String(privateProviderSettings?.febboxUiCookie || '').trim()
+  ) {
+    return 180;
+  }
+
+  return 0;
 };
 
 const normalizeFetchUrl = (input) => {
@@ -280,7 +297,7 @@ if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
     const nextInit = init && typeof init === 'object' ? { ...init } : {};
 
     if (nextInit.signal) {
-      nextInit.signal = AbortSignal.any
+      nextInit.signal = providerSignal && AbortSignal.any
         ? AbortSignal.any([nextInit.signal, providerSignal])
         : nextInit.signal;
     } else {
@@ -362,6 +379,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'nakios',
   'playimdb',
   'playimdb_v2',
+  'showbox',
   'toflix',
   'vidzee',
   'frembed',
@@ -1063,31 +1081,48 @@ const getProviderContentBoost = (providerId, contentProfile) => {
   }, 0);
 };
 
-const toProviderScore = (providerId, providerOrder, contentProfile = null) => {
+const toProviderScore = (
+  providerId,
+  providerOrder,
+  contentProfile = null,
+  privateProviderSettings = null
+) => {
   const baseReliability = Object.hasOwn(PROVIDER_RELIABILITY_SCORES, providerId)
     ? PROVIDER_RELIABILITY_SCORES[providerId]
     : 0;
   const contentBoost = getProviderContentBoost(providerId, contentProfile);
+  const privatePriorityBoost = getPrivateProviderPriorityBoost(providerId, privateProviderSettings);
   const index = providerOrder.indexOf(providerId);
 
   if (index === -1) {
-    return baseReliability + contentBoost;
+    return baseReliability + contentBoost + privatePriorityBoost;
   }
 
-  return baseReliability + contentBoost + Math.max(providerOrder.length - index, 1);
+  return baseReliability + contentBoost + privatePriorityBoost + Math.max(providerOrder.length - index, 1);
 };
 
-const rankStream = (stream, providerOrder, contentProfile = null) => {
+const rankStream = (stream, providerOrder, contentProfile = null, privateProviderSettings = null) => {
   const providerId = String(stream.provider || '').toLowerCase();
   const qualityScore = toQualityScore(stream.quality);
   const transportScore = stream.url ? toTransportScore(stream.url) : stream.magnet ? 6 : 10;
   const headerScore = toHeaderScore(stream.headers);
-  const providerScore = toProviderScore(providerId, providerOrder, contentProfile);
+  const providerScore = toProviderScore(
+    providerId,
+    providerOrder,
+    contentProfile,
+    privateProviderSettings
+  );
 
   return (providerScore * 10000) + (qualityScore * 100) + (transportScore * 10) + headerScore;
 };
 
-const mergeAndRankProviderStreams = (settledResults, providerOrder, contentProfile = null, limit = Infinity) => {
+const mergeAndRankProviderStreams = (
+  settledResults,
+  providerOrder,
+  contentProfile = null,
+  limit = Infinity,
+  privateProviderSettings = null
+) => {
   const mergedStreams = [];
   const seenSources = new Set();
 
@@ -1117,7 +1152,8 @@ const mergeAndRankProviderStreams = (settledResults, providerOrder, contentProfi
   }
 
   mergedStreams.sort((left, right) => {
-    const scoreDelta = rankStream(right, providerOrder, contentProfile) - rankStream(left, providerOrder, contentProfile);
+    const scoreDelta = rankStream(right, providerOrder, contentProfile, privateProviderSettings)
+      - rankStream(left, providerOrder, contentProfile, privateProviderSettings);
 
     if (scoreDelta !== 0) {
       return scoreDelta;
@@ -1457,7 +1493,8 @@ export class ProviderService {
     const settledResults = await mapConcurrent(normalizedProviders, config.PROVIDER_MAX_CONCURRENCY, async (provider) => {
       const streams = await this.getStreams({
         provider,
-        ...rest
+        ...rest,
+        priorityRequest: Array.isArray(providers) && providers.length > 0
       });
 
       return {
@@ -1473,7 +1510,13 @@ export class ProviderService {
     return {
       providers: normalizedProviders,
       tried,
-      streams: mergeAndRankProviderStreams(settledResults, normalizedProviders, contentProfile)
+      streams: mergeAndRankProviderStreams(
+        settledResults,
+        normalizedProviders,
+        contentProfile,
+        Infinity,
+        rest.privateProviderSettings
+      )
     };
   }
 
@@ -1617,7 +1660,9 @@ export class ProviderService {
         const rankedStreams = mergeAndRankProviderStreams(
           settledResults,
           queuedProviders,
-          contentProfile
+          contentProfile,
+          Infinity,
+          rest.privateProviderSettings
         );
         const perProviderSoftLimit = !hasExplicitProviders
           && Number.isInteger(contentProfile?.releaseYear)
@@ -1698,7 +1743,9 @@ export class ProviderService {
         const rankedStreams = mergeAndRankProviderStreams(
           settledResults,
           queuedProviders,
-          contentProfile
+          contentProfile,
+          Infinity,
+          rest.privateProviderSettings
         );
         const perProviderSoftLimit = !hasExplicitProviders
           && Number.isInteger(contentProfile?.releaseYear)
@@ -1881,7 +1928,8 @@ export class ProviderService {
           Promise.resolve()
             .then(() => this.getStreams({
               provider,
-              ...rest
+              ...rest,
+              priorityRequest: hasExplicitProviders || index < initialProviderLimit
             }))
             .then((streams) => {
               results[index] = {
@@ -1931,7 +1979,15 @@ export class ProviderService {
     });
   }
 
-  async getStreams({ provider, tmdbId, mediaType = 'movie', season = null, episode = null, privateProviderSettings = null }) {
+  async getStreams({
+    provider,
+    tmdbId,
+    mediaType = 'movie',
+    season = null,
+    episode = null,
+    privateProviderSettings = null,
+    priorityRequest = false
+  }) {
     const providerId = String(provider || '').trim().toLowerCase();
     const providerConfig = this.providers.get(providerId);
 
@@ -2052,7 +2108,8 @@ export class ProviderService {
       normalizedMediaType,
       normalizedSeason,
       normalizedEpisode,
-      privateProviderSettings
+      privateProviderSettings,
+      priorityRequest
     });
 
     this.inFlight.set(cacheKey, execution);
@@ -2073,7 +2130,8 @@ export class ProviderService {
     normalizedMediaType,
     normalizedSeason,
     normalizedEpisode,
-    privateProviderSettings
+    privateProviderSettings,
+    priorityRequest = false
   }) {
     const startedAt = Date.now();
     const existingRuntime = this.providerRuntime.get(providerId) || {};
@@ -2098,7 +2156,9 @@ export class ProviderService {
           season: normalizedSeason,
           episode: normalizedEpisode,
           privateProviderSettings
-        }))
+        }), null, priorityRequest),
+        null,
+        priorityRequest
       );
 
       const streams = await providerPromise;
@@ -2295,8 +2355,10 @@ export class ProviderService {
     });
   }
 
-  async withProviderGlobalSlot(fn, signal = null) {
-    while (this.providerGlobalInflight >= config.PROVIDER_GLOBAL_MAX_INFLIGHT) {
+  async withProviderGlobalSlot(fn, signal = null, priorityRequest = false) {
+    const maxInflight = config.PROVIDER_GLOBAL_MAX_INFLIGHT + (priorityRequest ? EXPLICIT_PROVIDER_GLOBAL_LANE_BONUS : 0);
+
+    while (this.providerGlobalInflight >= maxInflight) {
       await waitForProviderSlot(50, signal);
     }
 
@@ -2320,9 +2382,10 @@ export class ProviderService {
       .replace(/(?:_tv|-tv)$/u, '');
   }
 
-  async withProviderHostSlot(hostKey, fn, signal = null) {
+  async withProviderHostSlot(hostKey, fn, signal = null, priorityRequest = false) {
     const normalizedHostKey = String(hostKey || '').trim().toLowerCase() || 'default';
-    const maxInflight = PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES[normalizedHostKey] || config.PROVIDER_HOST_MAX_INFLIGHT;
+    const baseMaxInflight = PROVIDER_HOST_MAX_INFLIGHT_OVERRIDES[normalizedHostKey] || config.PROVIDER_HOST_MAX_INFLIGHT;
+    const maxInflight = baseMaxInflight + (priorityRequest ? EXPLICIT_PROVIDER_HOST_LANE_BONUS : 0);
 
     while ((this.providerHostInflight.get(normalizedHostKey) || 0) >= maxInflight) {
       await waitForProviderSlot(100, signal);
