@@ -427,6 +427,27 @@ function streamTapeExtractor(link) {
     }
   });
 }
+function hubCloudExtractRedirectUrl(html) {
+  var m;
+  m = html.match(/var url ?= ?'(.*?)'/);
+  if (m) return m[1];
+  m = html.match(/window\.location(?:\.href)? ?= ?['"](.*?)['"]/);
+  if (m) return m[1];
+  m = html.match(/location\.replace\(['"]([^'"]+)['"]\)/);
+  if (m) return m[1];
+  m = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=(.*?)["']/i);
+  if (m) return m[1];
+  m = html.match(/document\.location(?:\.href)? ?= ?['"](.*?)['"]/);
+  if (m) return m[1];
+  return null;
+}
+function hubCloudExtractCookieName(html) {
+  var m = html.match(/stck\(\s*['"]([\w]+)['"]\s*,/);
+  return m ? m[1] : null;
+}
+function hubCloudHasValidContent($) {
+  return $("#size, i#size").length > 0 || $('a:contains("FSL")').length > 0 || $('a:contains("PixelServer")').length > 0 || $("a.btn").length > 0;
+}
 function hubCloudExtractor(url, referer) {
   return __async(this, null, function* () {
     var _a;
@@ -435,6 +456,8 @@ function hubCloudExtractor(url, referer) {
       const pageResponse = yield fetch(currentUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
       let pageData = yield pageResponse.text();
       let finalUrl = currentUrl;
+      var cookieName = hubCloudExtractCookieName(pageData);
+      var cookieHeaders = cookieName ? { Cookie: cookieName + '=s4t' } : {};
       if (!currentUrl.includes("hubcloud.php")) {
         let nextHref = "";
         const $first = import_cheerio_without_node_native.default.load(pageData);
@@ -442,9 +465,7 @@ function hubCloudExtractor(url, referer) {
         if (downloadBtn.length) {
           nextHref = downloadBtn.attr("href");
         } else {
-          const scriptUrlMatch = pageData.match(/var url = '([^']*)'/);
-          if (scriptUrlMatch)
-            nextHref = scriptUrlMatch[1];
+          nextHref = hubCloudExtractRedirectUrl(pageData) || "";
         }
         if (nextHref) {
           if (!nextHref.startsWith("http")) {
@@ -452,11 +473,27 @@ function hubCloudExtractor(url, referer) {
             nextHref = `${urlObj.protocol}//${urlObj.hostname}/${nextHref.replace(/^\//, "")}`;
           }
           finalUrl = nextHref;
-          const secondResponse = yield fetch(finalUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: currentUrl }) });
+          const secondResponse = yield fetch(finalUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), __spreadValues({ Referer: currentUrl }, cookieHeaders)) });
           pageData = yield secondResponse.text();
         }
       }
-      const $ = import_cheerio_without_node_native.default.load(pageData);
+      var $ = import_cheerio_without_node_native.default.load(pageData);
+      if (!hubCloudHasValidContent($)) {
+        yield new Promise(function(r) { setTimeout(r, 2500); });
+        var retryResp = yield fetch(currentUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
+        var retryData = yield retryResp.text();
+        var retryHref = hubCloudExtractRedirectUrl(retryData);
+        if (retryHref) {
+          if (!retryHref.startsWith("http")) {
+            var urlObj2 = new URL(currentUrl);
+            retryHref = urlObj2.protocol + '//' + urlObj2.hostname + '/' + retryHref.replace(/^\//, '');
+          }
+          var retrySecond = yield fetch(retryHref, { headers: __spreadProps(__spreadValues({}, HEADERS), __spreadValues({ Referer: currentUrl }, cookieHeaders)) });
+          pageData = yield retrySecond.text();
+          $ = import_cheerio_without_node_native.default.load(pageData);
+        }
+        if (!hubCloudHasValidContent($)) return [];
+      }
       const size = $("i#size").text().trim();
       const header = $("div.card-header").text().trim();
       const qualityStr = (_a = header.match(/(\d{3,4})[pP]/)) == null ? void 0 : _a[1];

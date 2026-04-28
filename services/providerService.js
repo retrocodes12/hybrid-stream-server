@@ -27,7 +27,14 @@ const PROVIDER_FETCH_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   'cloudnestra.com': 2,
   'vixsrc.to': 2,
   'vsembed.ru': 2,
-  'vidsrc-embed.ru': 2
+  'vidsrc-embed.ru': 2,
+  'hubcloud.dad': 2,
+  'hubdrive.dad': 2,
+  'hubcdn.fans': 2,
+  'player.vidzee.wtf': 2,
+  'core.vidzee.wtf': 1,
+  'frembed.cyou': 2,
+  'search.pingora.fyi': 2
 });
 const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = null) => {
   if (providerId !== 'showbox') {

@@ -333,16 +333,28 @@ function resolveRedirectUrl(redirectUrl) {
     if (!redirectHtml)
       return null;
     try {
-      const redirectDataMatch = redirectHtml.match(/'o','(.*?)'/);
-      if (!redirectDataMatch)
+      var regex = /s\('o','([A-Za-z0-9+/=]+)'|ck\('_wp_http_\d+','([^']+)'/g;
+      var combinedString = '';
+      var match;
+      while ((match = regex.exec(redirectHtml)) !== null) {
+        combinedString += (match[1] || match[2] || '');
+      }
+      if (!combinedString) {
+        var singleMatch = redirectHtml.match(/'o','(.*?)'/);
+        if (singleMatch) combinedString = singleMatch[1];
+      }
+      if (!combinedString)
         return null;
-      const step1 = atob(redirectDataMatch[1]);
-      const step2 = atob(step1);
-      const step3 = rot13Cipher(step2);
-      const step4 = atob(step3);
-      const redirectData = JSON.parse(step4);
-      if (redirectData && redirectData.o) {
-        return atob(redirectData.o);
+      var redirectData = JSON.parse(atob(rot13Cipher(atob(atob(combinedString)))));
+      var encodedUrl = (redirectData.o || '').trim();
+      if (encodedUrl) {
+        return atob(encodedUrl);
+      }
+      var wphttp = (redirectData.blog_url || '').trim();
+      var data = (redirectData.data || '').trim();
+      if (wphttp && data) {
+        var fallbackHtml = yield fetchText(wphttp + '?re=' + data);
+        if (fallbackHtml) return fallbackHtml.trim();
       }
     } catch (e) {
       console.log(`[4KHDHub] Error resolving redirect: ${e.message}`);
@@ -387,21 +399,55 @@ function extractSourceResults($, el) {
     return null;
   });
 }
+function extractHubCloudRedirectUrl(html) {
+  var m;
+  m = html.match(/var url ?= ?'(.*?)'/);
+  if (m) return m[1];
+  m = html.match(/window\.location(?:\.href)? ?= ?['"](.*?)['"]/);
+  if (m) return m[1];
+  m = html.match(/location\.replace\(['"]([^'"]+)['"]\)/);
+  if (m) return m[1];
+  m = html.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=(.*?)["']/i);
+  if (m) return m[1];
+  m = html.match(/document\.location(?:\.href)? ?= ?['"](.*?)['"]/);
+  if (m) return m[1];
+  return null;
+}
+function extractHubCloudCookieName(html) {
+  var m = html.match(/stck\(\s*['"]([\w]+)['"]\s*,/);
+  return m ? m[1] : null;
+}
+function hasValidHubCloudContent($) {
+  return $("#size").length > 0 || $('a:contains("FSL")').length > 0 || $('a:contains("PixelServer")').length > 0;
+}
 function extractHubCloud(hubCloudUrl, baseMeta) {
   return __async(this, null, function* () {
     if (!hubCloudUrl)
       return [];
-    const redirectHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
+    var redirectHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
     if (!redirectHtml)
       return [];
-    const redirectUrlMatch = redirectHtml.match(/var url ?= ?'(.*?)'/);
-    if (!redirectUrlMatch)
+    var finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml);
+    if (!finalLinksUrl)
       return [];
-    const finalLinksUrl = redirectUrlMatch[1];
-    const linksHtml = yield fetchText(finalLinksUrl, { headers: { Referer: hubCloudUrl } });
+    var cookieName = extractHubCloudCookieName(redirectHtml);
+    var cookieHeader = cookieName ? { Cookie: cookieName + '=s4t' } : {};
+    var linksHtml = yield fetchText(finalLinksUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
     if (!linksHtml)
       return [];
-    const $ = cheerio2.load(linksHtml);
+    var $ = cheerio2.load(linksHtml);
+    if (!hasValidHubCloudContent($)) {
+      yield new Promise(function(r) { setTimeout(r, 2500); });
+      var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
+      if (retryHtml) {
+        var retryUrl = extractHubCloudRedirectUrl(retryHtml);
+        if (retryUrl) {
+          linksHtml = yield fetchText(retryUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
+          if (linksHtml) $ = cheerio2.load(linksHtml);
+        }
+      }
+      if (!hasValidHubCloudContent($)) return [];
+    }
     const results = [];
     const sizeText = $("#size").text();
     const titleText = $("title").text().trim();
@@ -414,7 +460,19 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       const href = $(el).attr("href");
       if (!href)
         return;
-      if (text.includes("FSL") || text.includes("Download File")) {
+      if (text.includes("FSL") && !text.includes("FSLv2")) {
+        results.push({
+          source: "FSL",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (text.includes("FSLv2")) {
+        results.push({
+          source: "FSLv2",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (text.includes("Download File")) {
         results.push({
           source: "FSL",
           url: href,
