@@ -87,11 +87,11 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'playimdb') {
-    return '24';
+    return '25';
   }
 
   if (providerId === 'playimdb_v2') {
-    return '24';
+    return '25';
   }
 
   if (providerId === 'toflix') {
@@ -454,6 +454,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub_tv': 6,
   hdhub4u: 8,
   playimdb: 8,
+  playimdb_v2: 8,
   uhdmovies: 8,
   showbox: 8
 });
