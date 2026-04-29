@@ -151,7 +151,14 @@ function makeRequest(url, options = {}) {
     }).then(function(response) {
         clearTimeout(timeoutId);
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            // Try to get response body for better error logging
+            return response.text().then(function(body) {
+                console.error(`[ShowBox] HTTP Error ${response.status}: ${response.statusText}`);
+                console.error(`[ShowBox] Response body: ${body.substring(0, 500)}`);
+                throw new Error(`HTTP ${response.status}: ${response.statusText} - ${body.substring(0, 200)}`);
+            }).catch(function(parseError) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            });
         }
         return response;
     }).catch(function(error) {
@@ -194,8 +201,22 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
     const streams = [];
     
     try {
-        if (!data || !data.success) {
-            console.log(`[ShowBox] API returned unsuccessful response`);
+        // Log full response for debugging
+        console.log(`[ShowBox] API Response: ${JSON.stringify(data, null, 2).substring(0, 1000)}`);
+        
+        if (!data) {
+            console.error(`[ShowBox] API returned empty/null response`);
+            return streams;
+        }
+        
+        // Check for API error messages in response
+        if (data.error || data.message) {
+            console.error(`[ShowBox] API Error: ${data.error || data.message}`);
+            return streams;
+        }
+        
+        if (!data.success) {
+            console.error(`[ShowBox] API returned unsuccessful response (success=false)`);
             return streams;
         }
 
@@ -290,7 +311,12 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
         apiUrl = `${SHOWBOX_API_BASE}/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
     }
 
-    console.log(`[ShowBox] Requesting: ${apiUrl}`);
+    // Debug log with redacted cookie (show first/last 10 chars only)
+    const debugUrl = apiUrl.replace(/cookie=([^&]+)/, function(match, cookieVal) {
+        return 'cookie=' + cookieVal.substring(0, 10) + '...' + cookieVal.substring(cookieVal.length - 10);
+    });
+    console.log(`[ShowBox] Requesting: ${debugUrl}`);
+    console.log(`[ShowBox] Cookie length: ${cookie.length}, Expires: ${new Date(JSON.parse(Buffer.from(cookie.split('.')[1], 'base64').toString()).exp * 1000).toISOString()}`);
 
     const mediaInfoPromise = getTMDBDetails(tmdbId, mediaType)
         .then(function(mediaInfo) {
