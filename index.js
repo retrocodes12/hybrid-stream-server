@@ -3587,11 +3587,18 @@ const BOT_USER_AGENT_PATTERN = /\b(?:ahrefs|aiohttp|axios|baiduspider|bingbot|bo
 const BOT_STRICT_USER_AGENT_PATTERN = /(?:headless|phantomjs|playwright|puppeteer|selenium)/iu;
 const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|aiostreams|axios|curl|go-http-client|httpx|insomnia|libwww-perl|node-fetch|okhttp|postmanruntime|python-requests|python-urllib|stremioshell|stremio-apple|strmr|undici|wget)\b/iu;
 
+const isStremioManifestPath = (pathName) =>
+  pathName === '/manifest.json'
+  || pathName === '/stremio/manifest.json'
+  || pathName.endsWith('/manifest.json')
+  || pathName.endsWith('/stremio/manifest.json');
+
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
-  || pathName === '/favicon.ico';
+  || pathName === '/favicon.ico'
+  || isStremioManifestPath(pathName);
 
 const isExpensiveBotProtectionPath = (pathName) =>
   pathName === '/stream'
@@ -4090,12 +4097,10 @@ const bootstrap = async () => {
 
       return req.path === '/'
         || req.path === '/configure'
-        || req.path === '/manifest.json'
-        || req.path === '/stremio/manifest.json'
         || req.path.startsWith('/preview/')
         || req.path.startsWith('/stremio/preview/')
-        || req.path.startsWith('/configured/')
-        || req.path.startsWith('/private/');
+        || (req.path.startsWith('/configured/') && !isStremioManifestPath(req.path))
+        || (req.path.startsWith('/private/') && !isStremioManifestPath(req.path));
     }
   }));
   app.use(createRateLimiter({
