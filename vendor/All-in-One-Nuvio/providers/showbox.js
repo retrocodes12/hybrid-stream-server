@@ -78,6 +78,43 @@ function getOssGroup(scraperSettings = null) {
     return null; // OSS group is optional
 }
 
+function decodeBase64Url(value) {
+    const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+
+    if (typeof atob === 'function') {
+        return decodeURIComponent(Array.prototype.map.call(atob(padded), function(char) {
+            return '%' + ('00' + char.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+    }
+
+    if (typeof Buffer !== 'undefined' && Buffer.from) {
+        return Buffer.from(padded, 'base64').toString('utf8');
+    }
+
+    throw new Error('No base64 decoder available');
+}
+
+function getJwtExpiryIso(token) {
+    try {
+        const payloadSegment = String(token || '').split('.')[1];
+
+        if (!payloadSegment) {
+            return 'unknown';
+        }
+
+        const payload = JSON.parse(decodeBase64Url(payloadSegment));
+
+        if (!payload || typeof payload.exp !== 'number') {
+            return 'unknown';
+        }
+
+        return new Date(payload.exp * 1000).toISOString();
+    } catch (error) {
+        return 'unknown';
+    }
+}
+
 // Utility Functions
 function getQualityFromName(qualityStr) {
     if (!qualityStr) return 'Unknown';
@@ -316,7 +353,7 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
         return 'cookie=' + cookieVal.substring(0, 10) + '...' + cookieVal.substring(cookieVal.length - 10);
     });
     console.log(`[ShowBox] Requesting: ${debugUrl}`);
-    console.log(`[ShowBox] Cookie length: ${cookie.length}, Expires: ${new Date(JSON.parse(Buffer.from(cookie.split('.')[1], 'base64').toString()).exp * 1000).toISOString()}`);
+    console.log(`[ShowBox] Cookie length: ${cookie.length}, Expires: ${getJwtExpiryIso(cookie)}`);
 
     const mediaInfoPromise = getTMDBDetails(tmdbId, mediaType)
         .then(function(mediaInfo) {

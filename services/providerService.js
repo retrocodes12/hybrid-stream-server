@@ -127,7 +127,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '46';
+    return '47';
   }
 
   if (providerId === 'latino-lamovie') {
