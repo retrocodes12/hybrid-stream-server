@@ -86,11 +86,16 @@ export class ReverseProxyService {
 
   async handle(req, res, next) {
     const targetUrl = this.getTargetUrl(req.originalUrl || req.url);
+    const canRetry = req.method === 'GET' || req.method === 'HEAD';
+    let attemptedRetry = false;
+
+    const proxyOnce = () => new Promise((resolve, reject) => {
     const transport = this.getTransport(targetUrl.protocol);
     const upstreamRequest = transport.request({
       protocol: targetUrl.protocol,
       hostname: targetUrl.hostname,
       port: targetUrl.port || DEFAULT_PORTS[targetUrl.protocol],
+      servername: targetUrl.hostname,
       method: req.method,
       path: `${targetUrl.pathname}${targetUrl.search}`,
       agent: this.getAgent(targetUrl.protocol),
@@ -112,12 +117,14 @@ export class ReverseProxyService {
       }
 
       upstreamResponse.pipe(res);
+      upstreamResponse.on('end', resolve);
       upstreamResponse.on('error', (error) => {
         logger.warn('reverse proxy upstream response failed', {
           targetUrl: targetUrl.toString(),
           error
         });
         res.destroy(error);
+        reject(error);
       });
     });
 
@@ -128,10 +135,11 @@ export class ReverseProxyService {
     upstreamRequest.on('error', (error) => {
       if (res.headersSent) {
         res.destroy(error);
+        reject(error);
         return;
       }
 
-      next(error);
+      reject(error);
     });
 
     req.on('aborted', () => {
@@ -139,5 +147,28 @@ export class ReverseProxyService {
     });
 
     req.pipe(upstreamRequest);
+    });
+
+    try {
+      await proxyOnce();
+    } catch (error) {
+      const retryableTlsDisconnect =
+        canRetry &&
+        !attemptedRetry &&
+        !res.headersSent &&
+        /Client network socket disconnected before secure TLS connection was established|ECONNRESET|socket hang up/i.test(String(error?.message || error));
+
+      if (retryableTlsDisconnect) {
+        attemptedRetry = true;
+        logger.warn('reverse proxy retrying upstream request after socket disconnect', {
+          targetUrl: targetUrl.toString(),
+          error
+        });
+        await proxyOnce();
+        return;
+      }
+
+      next(error);
+    }
   }
 }

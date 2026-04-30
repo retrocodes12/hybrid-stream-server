@@ -44,7 +44,7 @@ var __async = (__this, __arguments, generator) => {
 
 // src/4khdhub/constants.js
 var BASE_URL = "https://4khdhub.dad";
-var TMDB_API_KEY = "1c29a5198ee1854bd5eb45dbe8d17d92";
+var TMDB_API_KEY = process.env.TMDB_API_KEY || "439c478a771f35c05022f9feabcca01c";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 
@@ -70,11 +70,10 @@ function fetchLatestDomain() {
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
     try {
-      const response = yield fetch(url, {
-        headers: __spreadValues({
+      const headers = __spreadValues({
           "User-Agent": USER_AGENT
-        }, options.headers)
-      });
+        }, options.headers);
+      const response = yield fetch(url, { headers });
       return yield response.text();
     } catch (err) {
       console.log(`[4KHDHub] Request failed for ${url}: ${err.message}`);
@@ -348,7 +347,11 @@ function resolveRedirectUrl(redirectUrl) {
       var redirectData = JSON.parse(atob(rot13Cipher(atob(atob(combinedString)))));
       var encodedUrl = (redirectData.o || '').trim();
       if (encodedUrl) {
-        return atob(encodedUrl);
+        let resolved = atob(encodedUrl);
+        if (resolved.startsWith("/")) {
+          resolved = domainCache.url + resolved;
+        }
+        return resolved;
       }
       var wphttp = (redirectData.blog_url || '').trim();
       var data = (redirectData.data || '').trim();
@@ -379,17 +382,25 @@ function extractSourceResults($, el) {
     };
     const hubCloudLink = $(el).find("a").filter((_, a) => $(a).text().includes("HubCloud")).attr("href");
     if (hubCloudLink) {
+      if (/^https?:\/\/(?:[^/]+\.)?hubcloud\./i.test(hubCloudLink)) {
+        return { url: hubCloudLink, meta };
+      }
       const resolved = yield resolveRedirectUrl(hubCloudLink);
       return { url: resolved, meta };
     }
     const hubDriveLink = $(el).find("a").filter((_, a) => $(a).text().includes("HubDrive")).attr("href");
     if (hubDriveLink) {
-      const resolvedDrive = yield resolveRedirectUrl(hubDriveLink);
+      const resolvedDrive = /^https?:\/\/(?:[^/]+\.)?hubdrive\./i.test(hubDriveLink)
+        ? hubDriveLink
+        : yield resolveRedirectUrl(hubDriveLink);
       if (resolvedDrive) {
         const hubDriveHtml = yield fetchText(resolvedDrive);
         if (hubDriveHtml) {
           const $2 = cheerio2.load(hubDriveHtml);
-          const innerCloudLink = $2('a:contains("HubCloud")').attr("href");
+          let innerCloudLink = $2('a:contains("HubCloud")').attr("href");
+          if (innerCloudLink && innerCloudLink.startsWith("/")) {
+            innerCloudLink = domainCache.url + innerCloudLink;
+          }
           if (innerCloudLink) {
             return { url: innerCloudLink, meta };
           }
@@ -430,6 +441,9 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     var finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml);
     if (!finalLinksUrl)
       return [];
+    if (finalLinksUrl.startsWith("/")) {
+      finalLinksUrl = domainCache.url + finalLinksUrl;
+    }
     var cookieName = extractHubCloudCookieName(redirectHtml);
     var cookieHeader = cookieName ? { Cookie: cookieName + '=s4t' } : {};
     var linksHtml = yield fetchText(finalLinksUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
@@ -441,6 +455,9 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
       if (retryHtml) {
         var retryUrl = extractHubCloudRedirectUrl(retryHtml);
+        if (retryUrl && retryUrl.startsWith("/")) {
+          retryUrl = domainCache.url + retryUrl;
+        }
         if (retryUrl) {
           linksHtml = yield fetchText(retryUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
           if (linksHtml) $ = cheerio2.load(linksHtml);
@@ -493,6 +510,24 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
 
 // src/4khdhub/index.js
 var cheerio3 = require("cheerio-without-node-native");
+function getMirrorStreams(tmdbId, type, season, episode) {
+  return __async(this, null, function* () {
+    try {
+      const mirrorProvider = require("./hdhub4u.js");
+      const mirrorStreams = yield mirrorProvider.getStreams(tmdbId, type, season, episode);
+      return (Array.isArray(mirrorStreams) ? mirrorStreams : []).map((stream) => __spreadProps(__spreadValues({}, stream), {
+        name: String(stream.name || "HDHub4u").replace(/^HDHub4u/i, "4KHDHub Mirror"),
+        provider: "4khdhub",
+        behaviorHints: __spreadValues({
+          bingeGroup: "4khdhub-mirror"
+        }, stream.behaviorHints || {})
+      }));
+    } catch (error) {
+      console.log(`[4KHDHub] Mirror fallback failed: ${error.message}`);
+      return [];
+    }
+  });
+}
 function getStreams(tmdbId, type, season, episode) {
   return __async(this, null, function* () {
     const tmdbDetails = yield getTmdbDetails(tmdbId, type);
@@ -578,7 +613,12 @@ function getStreams(tmdbId, type, season, episode) {
       }
     }));
     const results = yield Promise.all(streamPromises);
-    return results.reduce((acc, val) => acc.concat(val), []);
+    const streams = results.reduce((acc, val) => acc.concat(val), []);
+    if (streams.length > 0) {
+      return streams;
+    }
+    console.log("[4KHDHub] No direct streams found, trying mirror fallback");
+    return yield getMirrorStreams(tmdbId, type, season, episode);
   });
 }
 module.exports = { getStreams };

@@ -286,6 +286,44 @@ function getTMDBDetails(tmdbId, mediaType) {
     return { title, year, imdbId: ((_a = data.external_ids) == null ? void 0 : _a.imdb_id) || null };
   });
 }
+function normalizeToCurrentDomain(url) {
+  try {
+    const currentDomain = new URL(MAIN_URL);
+    const nextUrl = new URL(url, MAIN_URL);
+    if (/hdhub4u\.fo$/i.test(nextUrl.hostname) && nextUrl.hostname !== currentDomain.hostname) {
+      nextUrl.protocol = currentDomain.protocol;
+      nextUrl.hostname = currentDomain.hostname;
+      nextUrl.port = currentDomain.port;
+    }
+    return nextUrl.toString();
+  } catch {
+    return url;
+  }
+}
+function fetchTextWithDomainFallback(url, options = {}) {
+  return __async(this, null, function* () {
+    const attempts = [url, normalizeToCurrentDomain(url)].filter((value, index, list) => value && list.indexOf(value) === index);
+    let lastError = null;
+    for (const attemptUrl of attempts) {
+      try {
+        const response = yield fetch(attemptUrl, options);
+        try {
+          const responseUrl = new URL(response.url || attemptUrl);
+          if (/hdhub4u\.fo$/i.test(responseUrl.hostname)) {
+            updateMainUrl(`${responseUrl.protocol}//${responseUrl.hostname}`);
+          }
+        } catch {}
+        return {
+          url: response.url || attemptUrl,
+          text: yield response.text()
+        };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("fetch failed");
+  });
+}
 
 // src/hdhub4u/extractors.js
 var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
@@ -648,8 +686,10 @@ function search(query) {
 function getDownloadLinks(mediaUrl) {
   return __async(this, null, function* () {
     const domain = yield getCurrentDomain();
-    const response = yield fetch(mediaUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }) });
-    const data = yield response.text();
+    mediaUrl = normalizeToCurrentDomain(mediaUrl);
+    const fetched = yield fetchTextWithDomainFallback(mediaUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }) });
+    mediaUrl = fetched.url || mediaUrl;
+    const data = fetched.text;
     const $ = import_cheerio_without_node_native2.default.load(data);
     const typeRaw = $("h1.page-title span").text();
     const isMovie = typeRaw.toLowerCase().includes("movie");
