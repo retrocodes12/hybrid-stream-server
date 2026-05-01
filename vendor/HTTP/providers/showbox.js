@@ -205,11 +205,23 @@ function makeRequest(url, options = {}) {
     });
 }
 
+// Simple in-memory cache for TMDB metadata
+const tmdbCache = new Map();
+const TMDB_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 // Get movie/TV show details from TMDB
 function getTMDBDetails(tmdbId, mediaType) {
+    const cacheKey = `${mediaType}:${tmdbId}`;
+    const cached = tmdbCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+        console.log(`[ShowBox] TMDB cache hit for ${cacheKey}`);
+        return Promise.resolve(cached.value);
+    }
+
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
-    
+
     return makeRequest(url, { timeoutMs: TMDB_REQUEST_TIMEOUT_MS })
         .then(function(response) {
             return response.json();
@@ -218,11 +230,25 @@ function getTMDBDetails(tmdbId, mediaType) {
             const title = mediaType === 'tv' ? data.name : data.title;
             const releaseDate = mediaType === 'tv' ? data.first_air_date : data.release_date;
             const year = releaseDate ? parseInt(releaseDate.split('-')[0]) : null;
-            
-            return {
+
+            const result = {
                 title: title,
                 year: year
             };
+
+            tmdbCache.set(cacheKey, { value: result, expiresAt: Date.now() + TMDB_CACHE_TTL_MS });
+
+            // Prune cache if it grows too large
+            if (tmdbCache.size > 1000) {
+                const now = Date.now();
+                for (const [key, entry] of tmdbCache) {
+                    if (entry.expiresAt <= now) {
+                        tmdbCache.delete(key);
+                    }
+                }
+            }
+
+            return result;
         })
         .catch(function(error) {
             console.log(`[ShowBox] TMDB lookup failed: ${error.message}`);
