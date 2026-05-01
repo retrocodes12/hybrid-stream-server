@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -68,8 +69,14 @@ export class ReverseProxyService {
   constructor({ targetBaseUrl, timeoutSeconds }) {
     this.targetBaseUrl = new URL(targetBaseUrl);
     this.timeoutMs = Math.max(1, Number(timeoutSeconds || 20)) * 1000;
-    this.httpAgent = new http.Agent({ keepAlive: true });
-    this.httpsAgent = new https.Agent({ keepAlive: true });
+    this.httpAgent = new http.Agent({
+      keepAlive: true
+    });
+    this.httpsAgent = new https.Agent({
+      keepAlive: true,
+      servername: this.targetBaseUrl.hostname,
+      rejectUnauthorized: config.REVERSE_PROXY_REJECT_UNAUTHORIZED
+    });
   }
 
   getTargetUrl(requestPath) {
@@ -164,6 +171,7 @@ export class ReverseProxyService {
           targetUrl: targetUrl.toString(),
           error
         });
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await proxyOnce();
         return;
       }
