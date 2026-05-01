@@ -2704,6 +2704,7 @@ const renderAdminPage = ({ stats }) => `<!doctype html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="10">
     <title>NebulaStreams Admin</title>
     <style>
       :root {
