@@ -44,7 +44,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/4khdhub/constants.js
-var BASE_URL = "https://4khdhub.dad";
+var BASE_URL = "https://4khdhub.click";
 var TMDB_API_KEY = process.env.TMDB_API_KEY || "439c478a771f35c05022f9feabcca01c";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
@@ -62,7 +62,7 @@ function fetchLatestDomain() {
         domainCache.url = data["4khdhub"];
         domainCache.ts = now;
       }
-    } catch (e) {}
+    } catch (e) { }
     return domainCache.url;
   });
 }
@@ -126,7 +126,7 @@ function atob(input) {
   return output;
 }
 function rot13Cipher(str) {
-  return str.replace(/[a-zA-Z]/g, function(c) {
+  return str.replace(/[a-zA-Z]/g, function (c) {
     return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
   });
 }
@@ -349,7 +349,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       return [];
     var $ = cheerio2.load(linksHtml);
     if (!hasValidHubCloudContent($)) {
-      yield new Promise(function(r) { setTimeout(r, 2500); });
+      yield new Promise(function (r) { setTimeout(r, 2500); });
       var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
       if (retryHtml) {
         var retryUrl = extractHubCloudRedirectUrl(retryHtml);

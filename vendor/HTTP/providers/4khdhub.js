@@ -43,7 +43,7 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/4khdhub/constants.js
-var BASE_URL = "https://4khdhub.dad";
+var BASE_URL = "https://4khdhub.click";
 var TMDB_API_KEY = process.env.TMDB_API_KEY || "439c478a771f35c05022f9feabcca01c";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
@@ -61,7 +61,7 @@ function fetchLatestDomain() {
         domainCache.url = data["4khdhub"];
         domainCache.ts = now;
       }
-    } catch (e) {}
+    } catch (e) { }
     return domainCache.url;
   });
 }
@@ -71,8 +71,8 @@ function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
     try {
       const headers = __spreadValues({
-          "User-Agent": USER_AGENT
-        }, options.headers);
+        "User-Agent": USER_AGENT
+      }, options.headers);
       const response = yield fetch(url, { headers });
       return yield response.text();
     } catch (err) {
@@ -124,7 +124,7 @@ function atob(input) {
   return output;
 }
 function rot13Cipher(str) {
-  return str.replace(/[a-zA-Z]/g, function(c) {
+  return str.replace(/[a-zA-Z]/g, function (c) {
     return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
   });
 }
@@ -225,26 +225,26 @@ function extractLanguages(text) {
   var t = text || "";
   var langs = [];
   var LANG_MAP = [
-    ["Hindi",      /\bHindi\b/i],
-    ["English",    /\bEnglish\b/i],
-    ["Tamil",      /\bTamil\b/i],
-    ["Telugu",     /\bTelugu\b/i],
-    ["Malayalam",  /\bMalayalam\b/i],
-    ["Kannada",    /\bKannada\b/i],
-    ["Bengali",    /\bBengali\b/i],
-    ["Punjabi",    /\bPunjabi\b/i],
-    ["Korean",     /\bKorean\b/i],
-    ["Japanese",   /\bJapanese\b/i],
-    ["Chinese",    /\bChinese\b/i],
-    ["Spanish",    /\bSpanish\b/i],
-    ["French",     /\bFrench\b/i],
-    ["German",     /\bGerman\b/i],
-    ["Arabic",     /\bArabic\b/i],
-    ["Russian",    /\bRussian\b/i],
-    ["Turkish",    /\bTurkish\b/i],
+    ["Hindi", /\bHindi\b/i],
+    ["English", /\bEnglish\b/i],
+    ["Tamil", /\bTamil\b/i],
+    ["Telugu", /\bTelugu\b/i],
+    ["Malayalam", /\bMalayalam\b/i],
+    ["Kannada", /\bKannada\b/i],
+    ["Bengali", /\bBengali\b/i],
+    ["Punjabi", /\bPunjabi\b/i],
+    ["Korean", /\bKorean\b/i],
+    ["Japanese", /\bJapanese\b/i],
+    ["Chinese", /\bChinese\b/i],
+    ["Spanish", /\bSpanish\b/i],
+    ["French", /\bFrench\b/i],
+    ["German", /\bGerman\b/i],
+    ["Arabic", /\bArabic\b/i],
+    ["Russian", /\bRussian\b/i],
+    ["Turkish", /\bTurkish\b/i],
     ["Portuguese", /\bPortuguese\b/i],
   ];
-  LANG_MAP.forEach(function(pair) {
+  LANG_MAP.forEach(function (pair) {
     if (pair[1].test(t)) langs.push(pair[0]);
   });
   if (/\bMulti\b/i.test(t) && !langs.length) langs.push("Multi-Audio");
@@ -253,23 +253,23 @@ function extractLanguages(text) {
 
 function parseCardInfo(cheerioInstance, el) {
   var $ = cheerioInstance;
-  var header     = $(el).find(".download-header").first();
+  var header = $(el).find(".download-header").first();
   var headerText = header.find(".flex-1").clone().children("code").remove().end().text().trim();
-  var fileTitle  = $(el).find(".file-title, .episode-file-title").text().trim();
+  var fileTitle = $(el).find(".file-title, .episode-file-title").text().trim();
 
   var badgeText = "";
-  header.find("code .badge, code span").each(function(_, b) {
+  header.find("code .badge, code span").each(function (_, b) {
     badgeText += " " + $(b).text().trim();
   });
 
-  var corpus  = headerText + " " + fileTitle + " " + badgeText;
-  var codec   = extractCodec(fileTitle + " " + headerText);
-  var audio   = extractAudio(fileTitle);
-  var langs   = extractLanguages(badgeText + " " + headerText);
+  var corpus = headerText + " " + fileTitle + " " + badgeText;
+  var codec = extractCodec(fileTitle + " " + headerText);
+  var audio = extractAudio(fileTitle);
+  var langs = extractLanguages(badgeText + " " + headerText);
 
   var srcMatch = corpus.match(/\b(WEB[\s-]?DL|WEBRip|BluRay|BRRip|HDCAM|NF|AMZN|DSNP)\b/i);
   var SOURCE_LABELS = { 'bluray': 'BluRay', 'brrip': 'BRRip', 'webrip': 'WEBRip', 'web-dl': 'WEB-DL', 'webdl': 'WEB-DL', 'hdcam': 'HDCAM', 'nf': 'NF', 'amzn': 'AMZN', 'dsnp': 'DSNP' };
-  var source   = srcMatch ? (SOURCE_LABELS[srcMatch[1].toLowerCase().replace(/\s/g, '')] || srcMatch[1].toUpperCase()) : null;
+  var source = srcMatch ? (SOURCE_LABELS[srcMatch[1].toLowerCase().replace(/\s/g, '')] || srcMatch[1].toUpperCase()) : null;
 
   return { codec, audio, languages: langs, source };
 }
@@ -451,7 +451,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       return [];
     var $ = cheerio2.load(linksHtml);
     if (!hasValidHubCloudContent($)) {
-      yield new Promise(function(r) { setTimeout(r, 2500); });
+      yield new Promise(function (r) { setTimeout(r, 2500); });
       var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
       if (retryHtml) {
         var retryUrl = extractHubCloudRedirectUrl(retryHtml);
@@ -583,7 +583,7 @@ function getStreams(tmdbId, type, season, episode) {
             // Line 3: source · codec
             const techParts = [];
             if (cardInfo.source) techParts.push(cardInfo.source);
-            if (cardInfo.codec)  techParts.push(cardInfo.codec);
+            if (cardInfo.codec) techParts.push(cardInfo.codec);
             if (techParts.length) lines.push("\uD83D\uDCFA " + techParts.join(" \u00B7 "));
 
             // Line 4: languages
