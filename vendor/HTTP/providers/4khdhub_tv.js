@@ -339,9 +339,24 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     var redirectHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
     if (!redirectHtml)
       return [];
-    var finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml);
+    var finalLinksUrl = "";
+    const $first = cheerio2.load(redirectHtml);
+    const downloadBtn = $first("#download");
+    if (downloadBtn.length) {
+      finalLinksUrl = downloadBtn.attr("href") || "";
+    } else {
+      finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml) || "";
+    }
     if (!finalLinksUrl)
       return [];
+    if (!finalLinksUrl.startsWith("http")) {
+      try {
+        const urlObj = new URL(hubCloudUrl);
+        finalLinksUrl = `${urlObj.protocol}//${urlObj.hostname}/${finalLinksUrl.replace(/^\//, "")}`;
+      } catch (e) {
+        finalLinksUrl = hubCloudUrl + finalLinksUrl;
+      }
+    }
     var cookieName = extractHubCloudCookieName(redirectHtml);
     var cookieHeader = cookieName ? { Cookie: cookieName + '=s4t' } : {};
     var linksHtml = yield fetchText(finalLinksUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
@@ -352,7 +367,20 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       yield new Promise(function (r) { setTimeout(r, 2500); });
       var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
       if (retryHtml) {
-        var retryUrl = extractHubCloudRedirectUrl(retryHtml);
+        var retryUrl = "";
+        const $retry = cheerio2.load(retryHtml);
+        const retryBtn = $retry("#download");
+        if (retryBtn.length) {
+          retryUrl = retryBtn.attr("href") || "";
+        } else {
+          retryUrl = extractHubCloudRedirectUrl(retryHtml) || "";
+        }
+        if (retryUrl && !retryUrl.startsWith("http")) {
+          try {
+            const urlObj = new URL(hubCloudUrl);
+            retryUrl = `${urlObj.protocol}//${urlObj.hostname}/${retryUrl.replace(/^\//, "")}`;
+          } catch (e) { }
+        }
         if (retryUrl) {
           linksHtml = yield fetchText(retryUrl, { headers: __spreadValues({ Referer: hubCloudUrl }, cookieHeader) });
           if (linksHtml) $ = cheerio2.load(linksHtml);
