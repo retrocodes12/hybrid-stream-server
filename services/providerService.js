@@ -344,7 +344,7 @@ if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
   globalThis.fetch = fetchWithProviderAbort;
 }
 
-const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/All-in-One-Nuvio/providers');
+const PROVIDERS_DIR = path.resolve(process.cwd(), 'vendor/HTTP/providers');
 const LOCAL_PROVIDERS = Object.freeze({
   tamilian: {
     id: 'tamilian',
@@ -945,7 +945,7 @@ const createCombinedAbortSignal = (signals, fallbackMessage) => {
   for (const s of cleanSignals) {
     if (s?.aborted) {
       controller.abort(getAbortReason(s.reason, fallbackMessage));
-      return { signal, cleanup: () => {} };
+      return { signal, cleanup: () => { } };
     }
 
     s?.addEventListener?.('abort', abortHandler, { once: true });
@@ -2723,7 +2723,7 @@ export class ProviderService {
       this.resultCache.delete(cacheKey);
       try {
         await rm(this.getCacheFilePath(cacheKey), { force: true });
-      } catch {}
+      } catch { }
       return;
     }
 
@@ -2775,7 +2775,7 @@ export class ProviderService {
 
     try {
       await rm(this.getCacheFilePath(cacheKey), { force: true });
-    } catch {}
+    } catch { }
   }
 
   normalizeProviders(providers) {
