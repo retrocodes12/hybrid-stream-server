@@ -133,6 +133,8 @@ export const config = Object.freeze({
   HTTP_MAX_SOCKETS: toBoundedInteger(process.env.HTTP_MAX_SOCKETS, 8, 2, 16),
   HTTP_MAX_FREE_SOCKETS: toBoundedInteger(process.env.HTTP_MAX_FREE_SOCKETS, 4, 1, 8),
   HTTP_KEEP_ALIVE_MILLISECONDS: toPositiveInteger(process.env.HTTP_KEEP_ALIVE_MILLISECONDS, 1000),
+  HTTP_STREAM_RETRY_MAX: toBoundedInteger(process.env.HTTP_STREAM_RETRY_MAX, 2, 0, 6),
+  HTTP_STREAM_RETRY_BASE_DELAY_MS: toBoundedInteger(process.env.HTTP_STREAM_RETRY_BASE_DELAY_MS, 250, 50, 5000),
   PUBLIC_RATE_LIMIT_WINDOW_SECONDS: toPositiveInteger(process.env.PUBLIC_RATE_LIMIT_WINDOW_SECONDS, 60),
   PUBLIC_RATE_LIMIT_MAX_REQUESTS: toPositiveInteger(process.env.PUBLIC_RATE_LIMIT_MAX_REQUESTS, 90),
   STREAM_RATE_LIMIT_WINDOW_SECONDS: toPositiveInteger(process.env.STREAM_RATE_LIMIT_WINDOW_SECONDS, 60),

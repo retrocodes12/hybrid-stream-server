@@ -12,6 +12,44 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createHttpError, parseRangeHeader } from './streamManager.js';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const jitterMs = (baseMs) => {
+  const jitter = Math.floor(Math.random() * Math.min(250, Math.max(25, baseMs * 0.25)));
+  return baseMs + jitter;
+};
+
+const isRetryableDnsError = (error) => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  return error.code === 'EAI_AGAIN'
+    || error.code === 'ETIMEOUT'
+    || error.code === 'ECONNRESET';
+};
+
+const isRetryableUpstreamError = (error) => {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const status = error.response?.status;
+
+  if (typeof status === 'number') {
+    return status === 429 || (status >= 500 && status <= 599);
+  }
+
+  return error.code === 'ECONNRESET'
+    || error.code === 'ETIMEDOUT'
+    || error.code === 'EAI_AGAIN'
+    || error.code === 'ENOTFOUND'
+    || error.code === 'ECONNREFUSED'
+    || error.code === 'EPIPE'
+    || error.code === 'ERR_SOCKET_CONNECTION_TIMEOUT'
+    || error.message === 'socket hang up';
+};
+
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -134,112 +172,139 @@ export class HttpProxyService {
   }
 
   async getUpstreamStreamDescriptor({ targetUrl, rangeHeader, requestHeaders = null }) {
-    let upstreamResponse;
-
     const forwardedHeaders = {
       'accept-encoding': 'identity',
       ...(requestHeaders || {}),
       ...(rangeHeader ? { range: rangeHeader } : {})
     };
 
-    try {
-      upstreamResponse = await this.client.get(targetUrl, {
-        family: 4,
-        headers: forwardedHeaders,
-        responseType: 'stream'
-      });
-    } catch (error) {
-      throw this.mapUpstreamError(error);
-    }
+    const maxAttempts = Math.max(1, config.HTTP_STREAM_RETRY_MAX + 1);
+    let lastError;
 
-    const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers);
-    logger.info('http stream started', {
-      targetUrl,
-      statusCode: upstreamResponse.status,
-      rangeRequested: Boolean(rangeHeader)
-    });
-    const rangeRequested = Boolean(rangeHeader);
-    const contentLength = upstreamResponse.headers['content-length']
-      ? Number.parseInt(upstreamResponse.headers['content-length'], 10)
-      : null;
-    const shouldCache = !rangeRequested
-      && upstreamResponse.status === 200
-      && Number.isInteger(contentLength)
-      && contentLength > 0
-      && contentLength <= this.cacheManager.maxCacheSizeBytes;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const upstreamResponse = await this.client.get(targetUrl, {
+          family: 4,
+          headers: forwardedHeaders,
+          responseType: 'stream'
+        });
 
-    if (!shouldCache) {
-      return {
-        statusCode: upstreamResponse.status,
-        stream: upstreamResponse.data,
-        headers: {
-          ...upstreamHeaders,
-          'Cache-Control': 'no-store'
-        },
-        cleanup: async ({ completed }) => {
-          if (!completed && !upstreamResponse.data.destroyed) {
-            upstreamResponse.data.destroy();
+        const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers);
+        logger.info('http stream started', {
+          targetUrl,
+          statusCode: upstreamResponse.status,
+          rangeRequested: Boolean(rangeHeader),
+          attempt
+        });
+        const rangeRequested = Boolean(rangeHeader);
+        const contentLength = upstreamResponse.headers['content-length']
+          ? Number.parseInt(upstreamResponse.headers['content-length'], 10)
+          : null;
+        const shouldCache = !rangeRequested
+          && upstreamResponse.status === 200
+          && Number.isInteger(contentLength)
+          && contentLength > 0
+          && contentLength <= this.cacheManager.maxCacheSizeBytes;
+
+        if (!shouldCache) {
+          return {
+            statusCode: upstreamResponse.status,
+            stream: upstreamResponse.data,
+            headers: {
+              ...upstreamHeaders,
+              'Cache-Control': 'no-store'
+            },
+            cleanup: async ({ completed }) => {
+              if (!completed && !upstreamResponse.data.destroyed) {
+                upstreamResponse.data.destroy();
+              }
+            }
+          };
+        }
+
+        const cacheWrite = await this.cacheManager.createHttpCacheWrite(targetUrl, upstreamResponse.headers);
+
+        if (!cacheWrite) {
+          return {
+            statusCode: upstreamResponse.status,
+            stream: upstreamResponse.data,
+            headers: {
+              ...upstreamHeaders,
+              'Cache-Control': 'no-store'
+            },
+            cleanup: async ({ completed }) => {
+              if (!completed && !upstreamResponse.data.destroyed) {
+                upstreamResponse.data.destroy();
+              }
+            }
+          };
+        }
+
+        const clientStream = new PassThrough();
+        const cacheStream = new PassThrough();
+        const writerFinished = finished(cacheWrite.writer);
+
+        upstreamResponse.data.pipe(clientStream);
+        upstreamResponse.data.pipe(cacheStream);
+        cacheStream.pipe(cacheWrite.writer);
+
+        return {
+          statusCode: upstreamResponse.status,
+          stream: clientStream,
+          headers: {
+            ...upstreamHeaders,
+            'Cache-Control': 'no-store',
+            'X-Cache-Status': 'MISS'
+          },
+          cleanup: async ({ completed }) => {
+            if (!completed) {
+              upstreamResponse.data.destroy();
+              clientStream.destroy();
+              cacheStream.destroy();
+              await cacheWrite.abort();
+              return;
+            }
+
+            try {
+              await writerFinished;
+              await cacheWrite.commit();
+              await this.cacheManager.pruneCache(this.torrentEngine.getActiveCachePaths());
+            } catch (error) {
+              logger.error('cache commit failed', {
+                targetUrl,
+                error
+              });
+              await cacheWrite.abort();
+            }
           }
-        }
-      };
-    }
-
-    const cacheWrite = await this.cacheManager.createHttpCacheWrite(targetUrl, upstreamResponse.headers);
-
-    if (!cacheWrite) {
-      return {
-        statusCode: upstreamResponse.status,
-        stream: upstreamResponse.data,
-        headers: {
-          ...upstreamHeaders,
-          'Cache-Control': 'no-store'
-        },
-        cleanup: async ({ completed }) => {
-          if (!completed && !upstreamResponse.data.destroyed) {
-            upstreamResponse.data.destroy();
-          }
-        }
-      };
-    }
-
-    const clientStream = new PassThrough();
-    const cacheStream = new PassThrough();
-    const writerFinished = finished(cacheWrite.writer);
-
-    upstreamResponse.data.pipe(clientStream);
-    upstreamResponse.data.pipe(cacheStream);
-    cacheStream.pipe(cacheWrite.writer);
-
-    return {
-      statusCode: upstreamResponse.status,
-      stream: clientStream,
-      headers: {
-        ...upstreamHeaders,
-        'Cache-Control': 'no-store',
-        'X-Cache-Status': 'MISS'
-      },
-      cleanup: async ({ completed }) => {
-        if (!completed) {
-          upstreamResponse.data.destroy();
-          clientStream.destroy();
-          cacheStream.destroy();
-          await cacheWrite.abort();
-          return;
+        };
+      } catch (error) {
+        if (error?.response?.data && typeof error.response.data.destroy === 'function') {
+          error.response.data.destroy();
         }
 
-        try {
-          await writerFinished;
-          await cacheWrite.commit();
-          await this.cacheManager.pruneCache(this.torrentEngine.getActiveCachePaths());
-        } catch (error) {
-          logger.error('cache commit failed', {
-            targetUrl,
-            error
-          });
-          await cacheWrite.abort();
+        lastError = error;
+
+        const shouldRetry = attempt < maxAttempts && isRetryableUpstreamError(error);
+
+        logger.warn('http stream attempt failed', {
+          targetUrl,
+          attempt,
+          maxAttempts,
+          code: error?.code,
+          statusCode: error?.response?.status,
+          shouldRetry
+        });
+
+        if (!shouldRetry) {
+          throw this.mapUpstreamError(error);
         }
+
+        const delayMs = jitterMs(config.HTTP_STREAM_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+        await sleep(delayMs);
       }
-    };
+    }
+    throw this.mapUpstreamError(lastError);
   }
 
   async validateTargetUrl(targetUrl) {
@@ -269,12 +334,32 @@ export class HttpProxyService {
 
     let resolvedAddresses;
 
-    try {
-      resolvedAddresses = net.isIP(parsedUrl.hostname)
-        ? [{ address: parsedUrl.hostname }]
-        : await dns.lookup(parsedUrl.hostname, { all: true, verbatim: true });
-    } catch {
-      throw createHttpError(502, 'Failed to resolve upstream host');
+    const lookupTarget = parsedUrl.hostname;
+
+    for (let attempt = 1; attempt <= Math.max(1, config.HTTP_STREAM_RETRY_MAX + 1); attempt += 1) {
+      try {
+        resolvedAddresses = net.isIP(lookupTarget)
+          ? [{ address: lookupTarget }]
+          : await dns.lookup(lookupTarget, { all: true, verbatim: true });
+        break;
+      } catch (error) {
+        const shouldRetry = attempt < Math.max(1, config.HTTP_STREAM_RETRY_MAX + 1) && isRetryableDnsError(error);
+
+        logger.warn('upstream dns lookup failed', {
+          hostname: lookupTarget,
+          attempt,
+          maxAttempts: Math.max(1, config.HTTP_STREAM_RETRY_MAX + 1),
+          code: error?.code,
+          shouldRetry
+        });
+
+        if (!shouldRetry) {
+          throw createHttpError(502, 'Failed to resolve upstream host');
+        }
+
+        const delayMs = jitterMs(config.HTTP_STREAM_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+        await sleep(delayMs);
+      }
     }
 
     if (resolvedAddresses.length === 0 || resolvedAddresses.some(({ address }) => !isPublicAddress(address))) {
