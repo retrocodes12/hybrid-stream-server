@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createHttpError } from './streamManager.js';
+import { Agent } from 'undici';
 
 const require = createRequire(import.meta.url);
 const { mkdir, readFile, readdir, rm, writeFile } = fsPromises;
@@ -19,6 +20,13 @@ const providerFetchContextStorage = new AsyncLocalStorage();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 const providerFetchHostInflight = new Map();
 const PROVIDER_FETCH_MAX_RETRIES = 2;
+const PROVIDER_FETCH_DISPATCHER = new Agent({
+  connect: { family: 4 }
+});
+const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
+  hdhub4u: 45_000,
+  uhdmovies: 30_000
+});
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT = 2;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   'enc-dec.app': 1,
@@ -296,12 +304,23 @@ if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
 
     const nextInit = init && typeof init === 'object' ? { ...init } : {};
 
-    if (nextInit.signal) {
-      nextInit.signal = providerSignal && AbortSignal.any
-        ? AbortSignal.any([nextInit.signal, providerSignal])
-        : nextInit.signal;
-    } else {
-      nextInit.signal = providerSignal;
+    const providerTimeoutMs = providerFetchContext?.providerId
+      ? (PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS[String(providerFetchContext.providerId).trim().toLowerCase()] || config.PROVIDER_FETCH_REQUEST_TIMEOUT_MS)
+      : config.PROVIDER_FETCH_REQUEST_TIMEOUT_MS;
+    const timeoutSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(providerTimeoutMs)
+      : null;
+
+    const signals = [nextInit.signal, providerSignal, timeoutSignal].filter(Boolean);
+
+    if (signals.length > 1 && AbortSignal.any) {
+      nextInit.signal = AbortSignal.any(signals);
+    } else if (signals.length === 1) {
+      nextInit.signal = signals[0];
+    }
+
+    if (!nextInit.dispatcher) {
+      nextInit.dispatcher = PROVIDER_FETCH_DISPATCHER;
     }
 
     if (!providerFetchContext || !requestUrl || !['http:', 'https:'].includes(requestUrl.protocol)) {
@@ -420,8 +439,10 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   cinestream: 20,
   'dahmermovies-4k': 25,
   fmovies: 20,
-  hdhub4u: 25,
-  uhdmovies: 25,
+  // These providers often require multi-hop extraction / CF redirects.
+  // Give them enough headroom to succeed without marking them as failed.
+  hdhub4u: 55,
+  uhdmovies: 55,
   moviebox: 20,
   moviesmod: 40,
   multivid: 20,
@@ -453,17 +474,17 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 6,
   '4khdhub_tv': 6,
-  hdhub4u: 8,
+  hdhub4u: 15,
   playimdb: 8,
   playimdb_v2: 8,
-  uhdmovies: 8,
+  uhdmovies: 15,
   showbox: 8
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 6_000,
   '4khdhub_tv': 6_000,
-  hdhub4u: 8_000,
-  uhdmovies: 8_000,
+  hdhub4u: 20_000,
+  uhdmovies: 20_000,
   moviesmod: 18_000,
   streamflix: 16_000
 });
