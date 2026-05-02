@@ -1,7 +1,7 @@
 const cheerio = require('cheerio-without-node-native');
 
 // Konstanta dari file Adicinemax21Extractor.kt
-const MAIN_URL = "https://kisskh.ovh";
+const MAIN_URL = "https://kisskh.xyz";
 // URL Google Script untuk generate key (PENTING)
 const KISSKH_API = "https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id=";
 
@@ -11,7 +11,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         // Di sini saya asumsikan Nuvio mengirim tmdbId, tapi Kisskh butuh "Query String" (Judul).
         // CATATAN: Karena kita tidak punya judul teks di parameter getStreams, 
         // kita harus fetch detail TMDB dulu.
-        
+
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=b030404650f279792a8d3287232358e3`; // API Key umum dari source code Kotlin
 
         fetch(tmdbUrl)
@@ -19,22 +19,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(tmdbData => {
                 const title = tmdbData.title || tmdbData.name || tmdbData.original_title;
                 const year = (tmdbData.release_date || tmdbData.first_air_date || "").substring(0, 4);
-                
+
                 // 1. Cari Drama di Kisskh
                 const searchUrl = `${MAIN_URL}/api/DramaList/Search?q=${encodeURIComponent(title)}&type=0`;
-                
+
                 return fetch(searchUrl)
                     .then(res => res.json())
                     .then(searchList => {
                         // Logika pencarian mirip Kotlin: Cek exact match, lalu fuzzy match
                         let matched = searchList.find(item => item.title.toLowerCase() === title.toLowerCase());
-                        
+
                         if (!matched && searchList.length > 0) {
-                             matched = searchList[0]; // Fallback ke hasil pertama
+                            matched = searchList[0]; // Fallback ke hasil pertama
                         }
 
                         if (!matched) throw new Error("Drama tidak ditemukan di Kisskh");
-                        
+
                         return matched.id;
                     });
             })
@@ -57,7 +57,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }
 
                         if (!targetEp) throw new Error(`Episode ${episodeNum} tidak ditemukan`);
-                        
+
                         return targetEp.id;
                     });
             })
@@ -65,12 +65,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 // 3. Ambil Kunci Video (Wajib untuk Kisskh)
                 // Source: invokeKisskh di Kotlin
                 const keyUrl = `${KISSKH_API}${epsId}&version=2.8.10`;
-                
+
                 return fetch(keyUrl)
                     .then(res => res.json())
                     .then(keyData => {
                         if (!keyData.key) throw new Error("Gagal mengambil kunci video");
-                        
+
                         // 4. Ambil Source Video
                         const videoApi = `${MAIN_URL}/api/DramaList/Episode/${epsId}.png?err=false&ts=&time=&kkey=${keyData.key}`;
                         return fetch(videoApi);
@@ -78,10 +78,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     .then(res => res.json())
                     .then(sources => {
                         const streams = [];
-                        
+
                         // Proses link video
                         const links = [sources.Video, sources.ThirdParty].filter(l => l);
-                        
+
                         links.forEach(link => {
                             if (link.includes('.m3u8')) {
                                 streams.push({
@@ -103,7 +103,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                 });
                             }
                         });
-                        
+
                         resolve(streams);
                     });
             })

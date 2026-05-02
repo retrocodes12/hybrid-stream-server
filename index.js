@@ -183,534 +183,708 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NebulaStreams Configure</title>
+    <title>NebulaStreams • Configure</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       :root {
         color-scheme: dark;
-        --bg: #090d14;
-        --bg-2: #0d121c;
-        --sidebar: rgba(8, 12, 18, 0.92);
-        --panel: rgba(17, 22, 33, 0.92);
-        --panel-soft: rgba(255,255,255,0.035);
-        --panel-soft-2: rgba(255,255,255,0.055);
-        --border: rgba(255,255,255,0.08);
-        --border-strong: rgba(255,255,255,0.12);
-        --text: #eef3ff;
-        --muted: #97a4c0;
-        --accent: #6aa7ff;
-        --accent-2: #8a7cff;
-        --accent-3: #46d7b7;
-        --danger: #ff98a8;
-        --shadow: 0 28px 90px rgba(0, 0, 0, 0.4);
+        --bg-0: #05060d;
+        --bg-1: #0a0d1a;
+        --bg-2: #11142a;
+        --surface: rgba(255, 255, 255, 0.035);
+        --surface-2: rgba(255, 255, 255, 0.06);
+        --surface-3: rgba(255, 255, 255, 0.09);
+        --border: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.14);
+        --text: #eef1fb;
+        --text-dim: #b6bdd4;
+        --muted: #7d86a4;
+        --accent: #7c5cff;
+        --accent-2: #22d3ee;
+        --accent-3: #ff5cf0;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --danger: #f87171;
+        --radius-lg: 20px;
+        --radius-md: 14px;
+        --radius-sm: 10px;
+        --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.55);
+        --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.35);
+        --shadow-glow: 0 0 0 1px rgba(124, 92, 255, 0.25), 0 18px 60px rgba(124, 92, 255, 0.25);
       }
 
       * { box-sizing: border-box; }
 
+      html, body { margin: 0; padding: 0; }
+
       body {
-        margin: 0;
-        background:
-          radial-gradient(circle at top left, rgba(106, 167, 255, 0.14), transparent 24%),
-          radial-gradient(circle at top right, rgba(138, 124, 255, 0.14), transparent 22%),
-          linear-gradient(180deg, var(--bg), var(--bg-2));
+        font-family: 'Inter', system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
         color: var(--text);
-        font: 15px/1.55 "Segoe UI", "SF Pro Text", "Helvetica Neue", sans-serif;
+        background: var(--bg-0);
+        background-image:
+          radial-gradient(1100px 700px at 8% -10%, rgba(124, 92, 255, 0.22), transparent 60%),
+          radial-gradient(900px 600px at 95% 5%, rgba(34, 211, 238, 0.16), transparent 60%),
+          radial-gradient(700px 500px at 50% 100%, rgba(255, 92, 240, 0.10), transparent 60%),
+          linear-gradient(180deg, #05060d 0%, #07091a 60%, #05060d 100%);
+        background-attachment: fixed;
+        min-height: 100vh;
+      }
+
+      /* ----- Background floaters ----- */
+      .bg-grid {
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 30%, transparent 75%);
+        pointer-events: none;
+        z-index: 0;
       }
 
       main {
-        width: min(1400px, calc(100vw - 32px));
+        position: relative;
+        z-index: 1;
+        width: min(1240px, calc(100vw - 32px));
         margin: 0 auto;
-        padding: 20px 0 28px;
+        padding: 28px 0 48px;
       }
 
-      .app-shell {
-        display: grid;
-        grid-template-columns: 252px minmax(0, 1fr);
-        gap: 20px;
-        min-height: calc(100vh - 48px);
-      }
-
-      .sidebar {
-        position: sticky;
-        top: 20px;
-        align-self: start;
+      /* ----- Top bar ----- */
+      .topbar {
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
         gap: 18px;
-        min-height: calc(100vh - 48px);
-        padding: 18px;
-        border-radius: 24px;
+        padding: 14px 18px;
+        border-radius: var(--radius-lg);
         border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(7, 11, 17, 0.95), rgba(10, 14, 22, 0.92));
-        box-shadow: var(--shadow);
+        background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
         backdrop-filter: blur(18px);
+        box-shadow: var(--shadow-md);
       }
 
       .brand {
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 8px 4px 2px;
       }
 
       .brand-mark {
-        width: 52px;
-        height: 52px;
-        border-radius: 16px;
+        width: 46px;
+        height: 46px;
+        border-radius: 14px;
         overflow: hidden;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.04);
-        flex-shrink: 0;
+        border: 1px solid var(--border-strong);
+        background: linear-gradient(135deg, rgba(124, 92, 255, 0.4), rgba(34, 211, 238, 0.3));
+        display: grid;
+        place-items: center;
       }
 
       .brand-mark img {
         width: 100%;
         height: 100%;
-        object-fit: contain;
-        padding: 6px;
-        box-sizing: border-box;
+        object-fit: cover;
       }
 
-      .brand-copy h1 {
+      .brand-text h1 {
         margin: 0;
-        font-size: 20px;
-        line-height: 1.1;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: -0.01em;
       }
 
-      .brand-copy p {
-        margin: 4px 0 0;
-        color: var(--muted);
+      .brand-text p {
+        margin: 2px 0 0;
         font-size: 12px;
+        color: var(--muted);
       }
 
-      .sidebar-nav {
-        display: grid;
-        gap: 8px;
-      }
-
-      .nav-item {
-        appearance: none;
-        width: 100%;
+      .topbar-actions {
         display: flex;
+        gap: 8px;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px solid transparent;
-        background: transparent;
-        color: #d7e1f8;
-        text-align: left;
-        cursor: pointer;
-        font: inherit;
       }
 
-      .nav-item:hover {
-        background: rgba(255,255,255,0.04);
-        border-color: rgba(255,255,255,0.06);
-      }
-
-      .nav-item.is-active {
-        background: linear-gradient(135deg, rgba(106,167,255,0.18), rgba(138,124,255,0.12));
-        border-color: rgba(106,167,255,0.2);
-        color: #f5f8ff;
-      }
-
-      .nav-index {
+      .pill {
         display: inline-flex;
         align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
+        gap: 6px;
+        padding: 7px 12px;
         border-radius: 999px;
-        background: rgba(255,255,255,0.06);
-        font-size: 12px;
-      }
-
-      .sidebar-footer {
-        margin-top: auto;
-        padding: 16px;
-        border-radius: 18px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--text-dim);
+        font-weight: 500;
       }
 
-      .sidebar-footer strong {
-        display: block;
-        font-size: 13px;
-        color: #eef3ff;
+      .pill .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--success);
+        box-shadow: 0 0 10px var(--success);
       }
 
-      .sidebar-footer p {
-        margin: 8px 0 0;
-        color: var(--muted);
-        font-size: 13px;
-      }
-
-      .workspace {
-        display: grid;
-        gap: 18px;
-      }
-
+      /* ----- Hero ----- */
       .hero {
-        padding: 28px;
+        margin-top: 22px;
+        padding: 38px 32px;
         border-radius: 24px;
         border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(16, 21, 32, 0.94), rgba(12, 17, 27, 0.92));
-        box-shadow: var(--shadow);
+        background:
+          radial-gradient(900px 400px at 0% 0%, rgba(124, 92, 255, 0.18), transparent 60%),
+          radial-gradient(700px 400px at 100% 0%, rgba(34, 211, 238, 0.14), transparent 60%),
+          linear-gradient(180deg, rgba(20, 22, 44, 0.85), rgba(12, 14, 30, 0.85));
+        box-shadow: var(--shadow-lg);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .hero::after {
+        content: '';
+        position: absolute;
+        right: -100px;
+        top: -100px;
+        width: 320px;
+        height: 320px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255, 92, 240, 0.18), transparent 70%);
+        pointer-events: none;
       }
 
       .hero-tag {
-        display: flex;
+        display: inline-flex;
         align-items: center;
         gap: 8px;
-        width: fit-content;
-        padding: 7px 12px;
+        padding: 7px 13px;
         border-radius: 999px;
-        border: 1px solid rgba(106,167,255,0.18);
-        background: rgba(106,167,255,0.08);
-        color: #d7e8ff;
+        border: 1px solid rgba(124, 92, 255, 0.35);
+        background: rgba(124, 92, 255, 0.12);
+        color: #d4caff;
         font-size: 11px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
         font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
       }
 
       .hero h2 {
-        margin: 16px 0 8px;
-        font-size: clamp(34px, 6vw, 48px);
-        line-height: 1.03;
+        margin: 18px 0 10px;
+        font-size: clamp(32px, 5vw, 50px);
+        line-height: 1.05;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        background: linear-gradient(135deg, #ffffff 0%, #c8c0ff 50%, #8de8ff 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
       }
 
       .hero p {
-        max-width: 760px;
         margin: 0;
-        color: var(--muted);
+        max-width: 680px;
+        color: var(--text-dim);
         font-size: 16px;
       }
 
       .hero-meta {
         display: flex;
         flex-wrap: wrap;
-        gap: 14px;
-        margin-top: 18px;
+        gap: 10px;
+        margin-top: 22px;
       }
 
       .hero-chip {
-        padding: 10px 12px;
-        border-radius: 14px;
+        padding: 8px 14px;
+        border-radius: 999px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
-        color: #dbe5ff;
+        background: var(--surface);
+        color: var(--text-dim);
         font-size: 13px;
+        font-weight: 500;
       }
 
-      .content-grid {
+      /* ----- Layout ----- */
+      .layout {
         display: grid;
-        gap: 18px;
+        grid-template-columns: 240px minmax(0, 1fr);
+        gap: 22px;
+        margin-top: 22px;
+        align-items: start;
       }
 
-      .two-column {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-        gap: 18px;
-      }
-
-      .settings-card {
-        border-radius: 24px;
+      .sidebar {
+        position: sticky;
+        top: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 14px;
+        border-radius: var(--radius-lg);
         border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(17, 22, 33, 0.96), rgba(14, 18, 28, 0.94));
-        box-shadow: 0 18px 50px rgba(0,0,0,0.18);
+        background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01));
+        backdrop-filter: blur(14px);
+        box-shadow: var(--shadow-md);
+      }
+
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        padding: 11px 12px;
+        border-radius: var(--radius-md);
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text-dim);
+        text-align: left;
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.18s ease;
+      }
+
+      .nav-item:hover {
+        background: var(--surface);
+        color: var(--text);
+      }
+
+      .nav-item.is-active {
+        background: linear-gradient(135deg, rgba(124, 92, 255, 0.22), rgba(34, 211, 238, 0.14));
+        border-color: rgba(124, 92, 255, 0.4);
+        color: #fff;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+      }
+
+      .nav-index {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: var(--surface-2);
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-dim);
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      .nav-item.is-active .nav-index {
+        background: rgba(124, 92, 255, 0.35);
+        color: #fff;
+      }
+
+      .nav-label {
+        flex: 1;
+        font-size: 14px;
+      }
+
+      .workspace {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        min-width: 0;
+      }
+
+      /* ----- Cards ----- */
+      .card {
+        position: relative;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20, 23, 45, 0.7), rgba(12, 14, 28, 0.7));
+        backdrop-filter: blur(14px);
+        box-shadow: var(--shadow-md);
         overflow: hidden;
       }
 
-      .settings-card-header {
+      .card-inner { padding: 24px; }
+
+      .card-header {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
         gap: 16px;
-        padding: 0 0 18px;
-      }
-
-      .settings-card-inner {
-        padding: 22px;
-      }
-
-      .card-badge {
-        display: inline-flex;
-        width: fit-content;
-        padding: 8px 14px;
-        border-radius: 0 0 16px 0;
-        border-right: 1px solid var(--border-strong);
-        border-bottom: 1px solid var(--border-strong);
-        background: linear-gradient(135deg, rgba(106,167,255,0.08), rgba(138,124,255,0.06));
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #dfe9ff;
+        margin-bottom: 18px;
       }
 
       .card-title {
         margin: 0;
-        font-size: 21px;
+        font-size: 19px;
         font-weight: 700;
+        letter-spacing: -0.01em;
       }
 
-      .card-description {
-        margin: 8px 0 0;
+      .card-desc {
+        margin: 6px 0 0;
         color: var(--muted);
         font-size: 14px;
       }
 
+      .card-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: rgba(124, 92, 255, 0.12);
+        border: 1px solid rgba(124, 92, 255, 0.3);
+        color: #d4caff;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        flex-shrink: 0;
+      }
+
+      /* ----- Manifest / Install card ----- */
+      .install-card {
+        background:
+          radial-gradient(700px 300px at 0% 0%, rgba(124, 92, 255, 0.16), transparent 60%),
+          linear-gradient(180deg, rgba(22, 24, 48, 0.85), rgba(14, 16, 32, 0.85));
+        border-color: rgba(124, 92, 255, 0.25);
+      }
+
       .manifest-box {
-        padding: 16px;
-        border-radius: 18px;
+        padding: 16px 18px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: rgba(0, 0, 0, 0.3);
       }
 
       .manifest-label {
-        margin: 0 0 8px;
+        margin: 0 0 6px;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
       }
 
       .manifest-url {
         margin: 0;
-        font-size: 14px;
-        color: #edf2ff;
-        word-break: break-word;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px;
+        color: #c8d6ff;
+        word-break: break-all;
       }
 
-      .overview-grid {
+      .install-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
-        gap: 16px;
-        margin-top: 16px;
+        grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+        gap: 18px;
       }
 
       .meta-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 10px;
       }
 
       .meta-card {
         padding: 14px;
-        border-radius: 18px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.025);
+        background: var(--surface);
       }
 
       .meta-label {
         margin: 0;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
       }
 
       .meta-value {
         margin: 8px 0 0;
-        color: #eef3ff;
-        font-size: 18px;
-        font-weight: 700;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        background: linear-gradient(135deg, #fff, #b8c5ff);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
       }
 
-      .field {
-        margin-top: 18px;
-      }
-
-      .field-label {
-        display: block;
-        margin-bottom: 10px;
-        color: #dee6fc;
-        font-size: 13px;
-      }
-
-      .field-input {
-        width: 100%;
-        padding: 14px 16px;
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        background: rgba(255,255,255,0.03);
-        color: var(--text);
+      /* ----- Buttons ----- */
+      button, .btn {
+        appearance: none;
+        border: 0;
         font: inherit;
-        outline: none;
-      }
-
-      .field-input:focus {
-        border-color: rgba(106,167,255,0.5);
-        box-shadow: 0 0 0 4px rgba(106,167,255,0.12);
-      }
-
-      select.field-input {
-        color-scheme: dark;
-        background-color: #111621;
+        cursor: pointer;
+        border-radius: var(--radius-md);
+        padding: 12px 18px;
+        font-weight: 600;
+        font-size: 14px;
+        transition: all 0.18s ease;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
         color: var(--text);
       }
 
-      select.field-input option {
-        background: #111621;
-        color: #eef3ff;
+      .btn-primary {
+        background: linear-gradient(135deg, #7c5cff, #22d3ee);
+        color: #fff;
+        box-shadow: 0 12px 30px rgba(124, 92, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.2);
       }
 
-      .field-help {
-        margin-top: 10px;
-        color: var(--muted);
+      .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 16px 40px rgba(124, 92, 255, 0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+      }
+
+      .btn-secondary {
+        background: var(--surface-2);
+        border: 1px solid var(--border-strong);
+        color: var(--text);
+      }
+
+      .btn-secondary:hover {
+        background: var(--surface-3);
+        border-color: rgba(255,255,255,0.22);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 9px 14px;
         font-size: 13px;
+        border-radius: 999px;
       }
 
-      .toolbar {
+      .btn-ghost:hover {
+        background: var(--surface);
+        color: var(--text);
+        border-color: var(--border-strong);
+      }
+
+      .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
         margin-top: 14px;
       }
 
-      button,
-      .support-link {
-        appearance: none;
-        border: 0;
-        border-radius: 14px;
-        padding: 13px 16px;
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 14px 0;
+      }
+
+      /* ----- Forms ----- */
+      .field { margin-top: 16px; }
+
+      .field-label {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-dim);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .field-input {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.25);
+        color: var(--text);
         font: inherit;
-        cursor: pointer;
-        text-decoration: none;
+        font-size: 14px;
+        outline: none;
+        transition: all 0.18s ease;
+      }
+
+      .field-input:focus {
+        border-color: rgba(124, 92, 255, 0.5);
+        background: rgba(0, 0, 0, 0.4);
+        box-shadow: 0 0 0 4px rgba(124, 92, 255, 0.15);
+      }
+
+      .field-input::placeholder { color: var(--muted); }
+
+      select.field-input {
+        appearance: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%237d86a4' d='M6 8L0 0h12z'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 14px center;
+        padding-right: 38px;
+      }
+
+      select.field-input option {
+        background: #11142a;
         color: var(--text);
       }
 
-      .primary-button {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        color: #f8fbff;
-        box-shadow: 0 12px 28px rgba(106,167,255,0.2);
+      .field-help {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12.5px;
+        line-height: 1.5;
       }
 
-      .secondary-button,
-      .mini-button,
-      .support-link {
+      .field-help code {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        padding: 1px 6px;
+        background: var(--surface-2);
+        border-radius: 6px;
+        color: #c8d6ff;
+      }
+
+      /* ----- Provider grid ----- */
+      .summary-strip {
+        margin-top: 12px;
+        padding: 11px 14px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.04);
-        color: #eef3ff;
-      }
-
-      .mini-button {
-        border-radius: 999px;
-        padding: 10px 14px;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-top: 16px;
+        background: var(--surface);
+        font-size: 13px;
+        color: var(--text-dim);
       }
 
       .provider-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 10px;
-        margin-top: 16px;
-        max-height: 340px;
-        overflow: auto;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 8px;
+        margin-top: 14px;
+        max-height: 380px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+
+      .provider-grid::-webkit-scrollbar { width: 8px; }
+      .provider-grid::-webkit-scrollbar-track { background: transparent; }
+      .provider-grid::-webkit-scrollbar-thumb {
+        background: var(--surface-3);
+        border-radius: 4px;
       }
 
       .provider-option {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 12px 14px;
-        border-radius: 16px;
+        padding: 11px 13px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
         cursor: pointer;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+
+      .provider-option:hover {
+        background: var(--surface-2);
+        border-color: rgba(124, 92, 255, 0.3);
+        transform: translateY(-1px);
+      }
+
+      .provider-option:has(input:checked) {
+        background: rgba(124, 92, 255, 0.12);
+        border-color: rgba(124, 92, 255, 0.5);
       }
 
       .provider-option input {
-        accent-color: #8b5cf6;
+        accent-color: #7c5cff;
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
       }
 
       .provider-name {
-        font-size: 14px;
+        font-size: 13.5px;
+        font-weight: 500;
         word-break: break-word;
       }
 
-      .empty-state {
-        margin-top: 16px;
-        padding: 14px;
-        border-radius: 16px;
-        background: rgba(255,255,255,0.025);
-        color: var(--muted);
-      }
-
-      .summary-strip {
-        margin-top: 14px;
-        padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.025);
-        color: #e9eeff;
-        font-size: 14px;
-      }
-
+      /* ----- Quality list ----- */
       .quality-list {
-        display: grid;
-        gap: 10px;
-        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 14px;
       }
 
       .quality-row {
         display: grid;
         grid-template-columns: auto 1fr auto;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
         padding: 12px 14px;
-        border-radius: 16px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
+        transition: all 0.15s ease;
+      }
+
+      .quality-row:hover {
+        background: var(--surface-2);
+        border-color: var(--border-strong);
       }
 
       .quality-rank {
-        width: 28px;
-        height: 28px;
+        width: 30px;
+        height: 30px;
         display: grid;
         place-items: center;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        color: #dce7ff;
-        font-size: 13px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, rgba(124, 92, 255, 0.25), rgba(34, 211, 238, 0.15));
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        font-weight: 700;
+        color: #d4caff;
       }
 
-      .quality-actions {
-        display: flex;
-        gap: 8px;
-      }
+      .quality-actions { display: flex; gap: 6px; }
 
       .arrow-button {
-        width: 34px;
-        height: 34px;
-        border-radius: 12px;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 8px;
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.05);
-        color: var(--text);
+        background: var(--surface-2);
+        color: var(--text-dim);
+        font-size: 14px;
         cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .arrow-button:hover:not(:disabled) {
+        background: var(--surface-3);
+        color: var(--text);
+        border-color: var(--border-strong);
       }
 
       .arrow-button:disabled {
-        opacity: 0.35;
-        cursor: default;
+        opacity: 0.3;
+        cursor: not-allowed;
       }
 
-      .option-group {
-        margin-top: 18px;
-        display: grid;
-        gap: 12px;
-      }
-
+      /* ----- Choice cards ----- */
       .choice-grid {
         display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .three-column {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
       }
 
@@ -720,214 +894,289 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         gap: 12px;
         align-items: start;
         padding: 14px;
-        border-radius: 16px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+
+      .choice-card:hover {
+        background: var(--surface-2);
+        border-color: rgba(124, 92, 255, 0.3);
+      }
+
+      .choice-card:has(input:checked) {
+        background: rgba(124, 92, 255, 0.1);
+        border-color: rgba(124, 92, 255, 0.45);
       }
 
       .choice-card input {
         margin-top: 2px;
-        accent-color: #8b5cf6;
+        accent-color: #7c5cff;
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
       }
 
       .choice-title {
         margin: 0;
         font-size: 14px;
-        color: #eef2ff;
+        font-weight: 600;
+        color: var(--text);
       }
 
       .choice-copy {
         margin: 4px 0 0;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12.5px;
+        line-height: 1.5;
       }
 
-      .choice-grid {
-        display: grid;
-        gap: 10px;
-      }
-
+      /* ----- Presets ----- */
       .preset-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
         gap: 12px;
+        margin-top: 14px;
       }
 
       .preset-card {
-        width: 100%;
-        display: grid;
-        gap: 8px;
         text-align: left;
         padding: 16px;
-        border-radius: 18px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
         color: var(--text);
+        cursor: pointer;
+        transition: all 0.18s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .preset-card::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(124, 92, 255, 0.08), transparent 60%);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        pointer-events: none;
       }
 
       .preset-card:hover {
-        border-color: rgba(106,167,255,0.24);
-        background: rgba(255,255,255,0.04);
+        background: var(--surface-2);
+        border-color: rgba(124, 92, 255, 0.4);
+        transform: translateY(-2px);
       }
+
+      .preset-card:hover::before { opacity: 1; }
 
       .preset-card.is-active {
-        border-color: rgba(106,167,255,0.28);
-        background: linear-gradient(135deg, rgba(106,167,255,0.12), rgba(138,124,255,0.08));
-        box-shadow: inset 0 0 0 1px rgba(106,167,255,0.08);
+        background: linear-gradient(135deg, rgba(124, 92, 255, 0.18), rgba(34, 211, 238, 0.08));
+        border-color: rgba(124, 92, 255, 0.55);
+        box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.3), 0 14px 36px rgba(124, 92, 255, 0.22);
       }
 
+      .preset-card.is-active::before { opacity: 1; }
+
       .preset-name {
-        margin: 0;
+        margin: 0 0 6px;
         font-size: 15px;
         font-weight: 700;
-        color: #eef3ff;
+        letter-spacing: -0.01em;
       }
 
       .preset-copy {
         margin: 0;
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12.5px;
+        line-height: 1.5;
       }
 
       .preset-status {
         margin-top: 14px;
         padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.025);
-        color: #dde7ff;
-        font-size: 14px;
+        border-radius: var(--radius-md);
+        border: 1px dashed var(--border-strong);
+        background: var(--surface);
+        color: var(--text-dim);
+        font-size: 13px;
       }
 
-      .three-column {
+      .preset-status strong { color: var(--text); }
+
+      /* ----- Empty state ----- */
+      .empty-state {
+        margin-top: 14px;
+        padding: 18px;
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        color: var(--muted);
+        text-align: center;
+        font-size: 13.5px;
+      }
+
+      /* ----- Two column ----- */
+      .two-column {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 18px;
       }
 
+      /* ----- Preview ----- */
       .preview-grid {
         display: grid;
-        grid-template-columns: minmax(140px, 180px) minmax(0, 1fr) auto;
-        gap: 12px;
-        margin-top: 16px;
+        grid-template-columns: 160px minmax(0, 1fr) auto;
+        gap: 10px;
+        margin-top: 14px;
       }
 
       .preview-result {
-        margin-top: 16px;
+        margin-top: 14px;
         padding: 16px;
-        border-radius: 18px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.025);
+        background: rgba(0, 0, 0, 0.2);
       }
 
       .preview-empty {
         color: var(--muted);
-        font-size: 14px;
+        font-size: 13.5px;
+        text-align: center;
+        padding: 8px 0;
       }
 
       .stat-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+        gap: 8px;
       }
 
       .stat-card {
         padding: 12px;
-        border-radius: 16px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.035);
+        background: var(--surface);
       }
 
       .stat-label {
         margin: 0;
         color: var(--muted);
-        font-size: 12px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
       }
 
       .stat-value {
         margin: 6px 0 0;
-        color: #eef2ff;
-        font-size: 22px;
-        font-weight: 700;
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        background: linear-gradient(135deg, #fff, #b8c5ff);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
       }
 
-      .reason-list,
-      .sample-list {
-        display: grid;
+      .reason-list, .sample-list {
+        display: flex;
+        flex-direction: column;
         gap: 8px;
         margin-top: 14px;
       }
 
       .diagnostic-group {
-        display: grid;
-        gap: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
 
-      .reason-row,
-      .sample-row {
+      .reason-row {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         gap: 12px;
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.035);
-        color: #dde5ff;
+        padding: 10px 13px;
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        border: 1px solid var(--border);
         font-size: 13px;
       }
 
+      .reason-row strong {
+        font-family: 'JetBrains Mono', monospace;
+        color: #ffd0a8;
+      }
+
       .sample-row {
-        align-items: start;
-        flex-direction: column;
+        padding: 11px 13px;
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        font-size: 13px;
+      }
+
+      .sample-row strong {
+        display: block;
+        color: var(--text);
+        font-size: 13.5px;
+        margin-bottom: 4px;
       }
 
       .diagnostic-examples {
-        display: grid;
-        gap: 8px;
-        padding-left: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-left: 12px;
+        border-left: 2px solid var(--border-strong);
+        margin-left: 8px;
       }
 
       .diagnostic-example {
-        padding: 10px 12px;
-        border-radius: 14px;
+        padding: 9px 12px;
+        border-radius: var(--radius-sm);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.02);
+        background: rgba(0,0,0,0.2);
       }
 
       .diagnostic-example strong {
         display: block;
-        color: #eef3ff;
-        font-size: 13px;
+        color: var(--text);
+        font-size: 12.5px;
       }
 
-      .diagnostic-meta,
-      .sample-meta {
+      .diagnostic-meta, .sample-meta {
         color: var(--muted);
-        font-size: 12px;
-        margin-top: 4px;
+        font-size: 11.5px;
+        margin-top: 3px;
+        font-family: 'JetBrains Mono', monospace;
       }
 
+      /* ----- Support ----- */
       .support-shell {
-        display: grid;
+        display: flex;
+        flex-direction: column;
         gap: 14px;
       }
 
       .support-card {
-        padding: 18px;
-        border-radius: 20px;
+        padding: 20px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: linear-gradient(135deg, rgba(34, 211, 238, 0.06), rgba(124, 92, 255, 0.05));
       }
 
       .support-card h3 {
-        margin: 0;
+        margin: 0 0 8px;
         font-size: 17px;
+        font-weight: 700;
       }
 
       .support-card p {
-        margin: 8px 0 0;
-        color: var(--muted);
+        margin: 0;
+        color: var(--text-dim);
         font-size: 14px;
       }
 
@@ -935,26 +1184,49 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
-        margin-top: 14px;
+        margin-top: 16px;
       }
 
       .donate-toggle {
-        background: linear-gradient(135deg, rgba(70,215,183,0.9), rgba(106,167,255,0.85));
-        color: #081018;
+        background: linear-gradient(135deg, #34d399, #22d3ee);
+        color: #051018;
         font-weight: 700;
+      }
+
+      .donate-toggle:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 30px rgba(34, 211, 238, 0.4);
+      }
+
+      .support-link {
+        padding: 12px 18px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-strong);
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 600;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.18s ease;
+      }
+
+      .support-link:hover {
+        background: var(--surface-3);
+        border-color: rgba(255,255,255,0.25);
       }
 
       .widget-panel {
         display: none;
-        padding: 18px;
-        border-radius: 20px;
+        padding: 16px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.03);
+        background: var(--surface);
       }
 
-      .widget-panel.open {
-        display: block;
-      }
+      .widget-panel.open { display: block; }
 
       .widget-frame {
         display: block;
@@ -962,916 +1234,537 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         min-height: 600px;
         margin: 0 auto;
         border: 0;
-        border-radius: 16px;
-        background: #ffffff;
+        border-radius: 12px;
+        background: #fff;
       }
 
-      .flash {
-        min-height: 20px;
-        color: #e4ebff;
-        font-size: 13px;
-      }
-
+      /* ----- Notes ----- */
       .notes-list {
-        display: grid;
+        display: flex;
+        flex-direction: column;
         gap: 10px;
+        margin-top: 14px;
       }
 
       .note-item {
         margin: 0;
-        padding: 12px 14px;
-        border-radius: 16px;
+        padding: 13px 16px;
+        border-radius: var(--radius-md);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.025);
-        color: var(--muted);
-        font-size: 14px;
+        background: var(--surface);
+        color: var(--text-dim);
+        font-size: 13.5px;
+        line-height: 1.55;
       }
 
-      .note-item strong {
-        color: #edf2ff;
-      }
+      .note-item strong { color: var(--text); }
 
       .disclaimer {
         margin-top: 16px;
         padding: 16px;
-        border-radius: 18px;
-        border: 1px solid rgba(255,152,168,0.18);
-        background: rgba(255,152,168,0.05);
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(248, 113, 113, 0.25);
+        background: rgba(248, 113, 113, 0.06);
       }
 
       .disclaimer-text {
         margin: 0;
-        color: #d5ddef;
-        font-size: 14px;
+        color: var(--text-dim);
+        font-size: 13.5px;
         line-height: 1.6;
       }
 
-      .disclaimer-text strong {
-        color: var(--danger);
+      .disclaimer-text strong { color: var(--danger); }
+
+      /* ----- Flash ----- */
+      .flash {
+        min-height: 22px;
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--text-dim);
+        font-weight: 500;
       }
 
-      @media (max-width: 1160px) {
-        .app-shell {
-          grid-template-columns: 220px minmax(0, 1fr);
-        }
-
-        .two-column,
-        .overview-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .three-column {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-
-      @media (max-width: 920px) {
-        main {
-          width: min(100vw, calc(100vw - 24px));
-          padding-top: 12px;
-        }
-
-        .app-shell {
-          grid-template-columns: 1fr;
-        }
-
+      /* ----- Responsive ----- */
+      @media (max-width: 1024px) {
+        .layout { grid-template-columns: 1fr; }
         .sidebar {
           position: static;
-          min-height: 0;
+          flex-direction: row;
+          flex-wrap: wrap;
+          overflow-x: auto;
         }
-
-        .sidebar-nav {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
+        .nav-item { flex: 1 1 140px; min-width: 140px; }
+        .install-grid, .two-column, .three-column {
+          grid-template-columns: 1fr;
         }
       }
 
       @media (max-width: 640px) {
         main {
           width: calc(100vw - 20px);
+          padding: 16px 0 32px;
         }
-
-        .hero,
-        .settings-card-inner {
-          padding: 18px;
-        }
-
-        .sidebar {
-          padding: 14px;
-        }
-
-        .sidebar-nav {
-          grid-template-columns: 1fr;
-        }
-
-        .preview-grid,
-        .three-column {
-          grid-template-columns: 1fr;
-        }
-
-        .actions {
-          flex-direction: column;
-        }
+        .topbar { padding: 12px 14px; }
+        .hero { padding: 28px 22px; }
+        .card-inner { padding: 18px; }
+        .preview-grid { grid-template-columns: 1fr; }
+        .actions { flex-direction: column; }
+        .actions .btn { width: 100%; }
+        .brand-text p { display: none; }
       }
 
-      /* Sootio-inspired configure flow:
-         - centered single control surface
-         - compact top navigation instead of heavy side rail
-         - softer, form-first cards
-         This keeps NebulaStreams branding and structure intact. */
-      body {
-        background:
-          radial-gradient(circle at 20% 0%, rgba(80, 146, 255, 0.16), transparent 28%),
-          radial-gradient(circle at 80% 0%, rgba(62, 222, 180, 0.12), transparent 24%),
-          linear-gradient(180deg, #09111c 0%, #0a1422 55%, #0b1626 100%);
-        font: 15px/1.6 "Open Sans", "Segoe UI", "Helvetica Neue", sans-serif;
-      }
+      section[id] { scroll-margin-top: 16px; }
 
-      main {
-        width: min(980px, calc(100vw - 28px));
-        padding: 20px 0 32px;
-      }
-
-      .app-shell {
-        grid-template-columns: 1fr;
-        gap: 12px;
-        min-height: 0;
-      }
-
-      .sidebar {
-        position: static;
-        min-height: 0;
-        padding: 16px 18px;
-        border-radius: 22px;
-        background:
-          linear-gradient(180deg, rgba(8, 17, 29, 0.92), rgba(9, 20, 34, 0.9));
-        border: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 20px 54px rgba(0, 0, 0, 0.24);
-      }
-
-      .brand {
-        justify-content: flex-start;
-        padding: 2px 0 4px;
-      }
-
-      .brand-mark {
-        width: 56px;
-        height: 56px;
-        border-radius: 18px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.24);
-      }
-
-      .brand-copy {
-        text-align: left;
-      }
-
-      .brand-copy h1 {
-        font-size: 24px;
-        letter-spacing: -0.02em;
-      }
-
-      .brand-copy p {
-        font-size: 13px;
-        color: #9eb0ca;
-      }
-
-      .sidebar-nav {
-        display: flex;
-        flex-wrap: nowrap;
-        gap: 10px;
-        margin-top: 12px;
-        overflow-x: auto;
-        padding-bottom: 4px;
-        scrollbar-width: thin;
-      }
-
-      .nav-item {
-        flex: 0 0 auto;
-        min-width: 132px;
-        min-height: 52px;
-        padding: 12px 14px;
-        border-radius: 16px;
-        background: rgba(255,255,255,0.028);
-        border: 1px solid rgba(255,255,255,0.055);
-      }
-
-      .nav-item:hover {
-        background: rgba(255,255,255,0.05);
-        border-color: rgba(100, 255, 218, 0.14);
-      }
-
-      .nav-item.is-active {
-        background: linear-gradient(135deg, rgba(85, 161, 255, 0.18), rgba(72, 209, 174, 0.14));
-        border-color: rgba(100, 255, 218, 0.2);
-      }
-
-      .nav-index {
-        width: 24px;
-        height: 24px;
-        font-size: 11px;
-        background: rgba(255,255,255,0.08);
-      }
-
-      .sidebar-footer {
-        display: none;
-      }
-
-      .workspace {
-        padding: 14px;
-        border-radius: 22px;
-        background:
-          linear-gradient(180deg, rgba(10, 23, 38, 0.92), rgba(9, 18, 30, 0.9));
-        border: 1px solid rgba(255,255,255,0.08);
-        box-shadow: 0 24px 72px rgba(0, 0, 0, 0.28);
-      }
-
-      .hero {
-        padding: 18px 18px 16px;
-        border-radius: 18px;
-        background:
-          linear-gradient(180deg, rgba(13, 28, 45, 0.9), rgba(10, 20, 33, 0.86));
-        box-shadow: none;
-      }
-
-      .hero-tag {
-        background: rgba(100, 255, 218, 0.08);
-        border-color: rgba(100, 255, 218, 0.16);
-        color: #c7fff1;
-      }
-
-      .hero h2 {
-        margin-top: 14px;
-        font-size: clamp(28px, 5vw, 38px);
-        letter-spacing: -0.03em;
-      }
-
-      .hero p {
-        font-size: 14px;
-        max-width: 620px;
-      }
-
-      .hero-meta {
-        gap: 8px;
-        margin-top: 12px;
-      }
-
-      .hero-chip {
-        padding: 8px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-      }
-
-      .content-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      .settings-card {
-        border-radius: 18px;
-        background: rgba(255,255,255,0.028);
-        box-shadow: none;
-      }
-
-      .settings-card-inner {
-        padding: 16px;
-      }
-
-      .card-badge {
-        padding: 7px 12px;
-        border-radius: 0 0 14px 0;
-      }
-
-      .settings-card-header {
-        padding-bottom: 14px;
-      }
-
-      .card-title {
-        font-size: 18px;
-        letter-spacing: -0.01em;
-      }
-
-      .card-description {
-        margin-top: 6px;
-        font-size: 13px;
-        color: #99abc4;
-      }
-
-      .overview-grid,
-      .two-column {
-        gap: 14px;
-      }
-
-      .manifest-box,
-      .meta-card,
-      .summary-strip,
-      .preset-status,
-      .support-card,
-      .preview-result,
-      .note-item,
-      .disclaimer,
-      .quality-row,
-      .provider-option,
-      .choice-card,
-      .preset-card,
-      .stat-card,
-      .reason-row,
-      .sample-row,
-      .diagnostic-example {
-        background: rgba(255,255,255,0.03);
-        border-color: rgba(255,255,255,0.065);
-      }
-
-      .provider-grid {
-        max-height: 420px;
-      }
-
-      section[id] {
-        scroll-margin-top: 18px;
-      }
-
-      #overview-section { order: 1; }
-      #presets-section { order: 2; }
-      #providers-section { order: 3; }
-      .two-column { order: 4; }
-      #preview-section { order: 5; }
-      #notes-section { order: 6; }
-      #support-section { order: 7; }
-
-      .provider-option {
-        transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
-      }
-
-      .provider-option:hover {
-        border-color: rgba(100, 255, 218, 0.16);
-        background: rgba(255,255,255,0.045);
-        transform: translateY(-1px);
-      }
-
-      .field {
-        margin-top: 16px;
-      }
-
-      .field-label {
-        margin-bottom: 8px;
-        font-size: 12px;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #d7e4ff;
-      }
-
-      .field-input {
-        padding: 13px 14px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.025);
-      }
-
-      .field-help {
-        font-size: 12px;
-        line-height: 1.5;
-      }
-
-      .actions {
-        gap: 10px;
-      }
-
-      .primary-button,
-      .donate-toggle {
-        background: linear-gradient(135deg, #6fe6c3, #5a95ff);
-        color: #07111a;
-        font-weight: 700;
-      }
-
-      .secondary-button,
-      .mini-button,
-      .support-link {
-        background: rgba(255,255,255,0.04);
-      }
-
-      .mini-button {
-        padding: 9px 13px;
-      }
-
-      #overview-section {
-        position: static;
-      }
-
-      @media (max-width: 920px) {
-        main {
-          width: min(100vw, calc(100vw - 18px));
-        }
-
-        .workspace {
-          padding: 14px;
-          border-radius: 22px;
-        }
-      }
-
-      @media (max-width: 640px) {
-        body {
-          font-size: 14px;
-        }
-
-        main {
-          width: calc(100vw - 12px);
-          padding-top: 10px;
-        }
-
-        .sidebar,
-        .workspace {
-          padding: 14px;
-          border-radius: 18px;
-        }
-
-        .brand {
-          justify-content: flex-start;
-        }
-
-        .brand-copy h1 {
-          font-size: 21px;
-        }
-
-        .hero,
-        .settings-card-inner {
-          padding: 16px;
-        }
-
-        .hero-meta {
-          display: none;
-        }
-
-        .sidebar-nav {
-          gap: 8px;
-        }
-
-        .nav-item {
-          min-width: 118px;
-          min-height: 48px;
-          padding: 10px 12px;
-        }
+      /* fade-in */
+      .card { animation: fadeIn 0.5s ease both; }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
       }
     </style>
   </head>
   <body>
+    <div class="bg-grid"></div>
     <main>
-      <div class="app-shell">
+      <!-- TOP BAR -->
+      <div class="topbar">
+        <div class="brand">
+          <div class="brand-mark">
+            <img src="${escapeHtml(baseUrl)}/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg" alt="NebulaStreams" onerror="this.style.display='none'">
+          </div>
+          <div class="brand-text">
+            <h1>NebulaStreams</h1>
+            <p>Stremio addon configuration</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="pill"><span class="dot"></span>Live</span>
+          <span class="pill">${providers.length} providers</span>
+        </div>
+      </div>
+
+      <!-- HERO -->
+      <section class="hero">
+        <span class="hero-tag">Configure addon</span>
+        <h2>Build your perfect stream pipeline.</h2>
+        <p>Pick providers, sort qualities, fine-tune filters, then install in one click. Every change updates the install URL in real time.</p>
+        <div class="hero-meta">
+          <div class="hero-chip">⚡ Live manifest</div>
+          <div class="hero-chip">🎯 Smart presets</div>
+          <div class="hero-chip">🔍 Built-in preview</div>
+          <div class="hero-chip">🔒 Private configs</div>
+        </div>
+      </section>
+
+      <!-- LAYOUT -->
+      <div class="layout">
+        <!-- SIDEBAR -->
         <aside class="sidebar">
-          <div class="brand">
-            <div class="brand-mark">
-              <img src="${escapeHtml(baseUrl)}/assets/WhatsApp%20Image%202026-04-25%20at%2012.16.53%20AM.jpeg" alt="NebulaStreams">
-            </div>
-            <div class="brand-copy">
-              <h1>NebulaStreams</h1>
-              <p>Configure add-on</p>
-            </div>
-          </div>
-
-          <nav class="sidebar-nav">
-            <button type="button" class="nav-item is-active" data-section-target="overview-section"><span>Install</span><span class="nav-index">01</span></button>
-            <button type="button" class="nav-item" data-section-target="presets-section"><span>Presets</span><span class="nav-index">02</span></button>
-            <button type="button" class="nav-item" data-section-target="providers-section"><span>Providers</span><span class="nav-index">03</span></button>
-            <button type="button" class="nav-item" data-section-target="sorting-section"><span>Quality</span><span class="nav-index">04</span></button>
-            <button type="button" class="nav-item" data-section-target="filters-section"><span>Filters</span><span class="nav-index">05</span></button>
-            <button type="button" class="nav-item" data-section-target="preview-section"><span>Preview</span><span class="nav-index">06</span></button>
-            <button type="button" class="nav-item" data-section-target="notes-section"><span>Notes</span><span class="nav-index">07</span></button>
-            <button type="button" class="nav-item" data-section-target="support-section"><span>Support</span><span class="nav-index">08</span></button>
-          </nav>
-
-          <div class="sidebar-footer">
-            <strong>Live manifest builder</strong>
-            <p>Every provider, sorting, and filter change updates the install URL immediately.</p>
-          </div>
+          <button type="button" class="nav-item is-active" data-section-target="overview-section">
+            <span class="nav-index">01</span><span class="nav-label">Install</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="presets-section">
+            <span class="nav-index">02</span><span class="nav-label">Presets</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="providers-section">
+            <span class="nav-index">03</span><span class="nav-label">Providers</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="sorting-section">
+            <span class="nav-index">04</span><span class="nav-label">Quality</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="filters-section">
+            <span class="nav-index">05</span><span class="nav-label">Filters</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="ranking-section">
+            <span class="nav-index">06</span><span class="nav-label">Ranking</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="preview-section">
+            <span class="nav-index">07</span><span class="nav-label">Preview</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="support-section">
+            <span class="nav-index">08</span><span class="nav-label">Support</span>
+          </button>
+          <button type="button" class="nav-item" data-section-target="notes-section">
+            <span class="nav-index">09</span><span class="nav-label">Notes</span>
+          </button>
         </aside>
 
-        <section class="workspace">
-          <section class="hero">
-            <div class="hero-tag">NebulaStreams Config</div>
-            <h2>Set it up fast and install it clean.</h2>
-            <p>Choose providers, set quality order, apply a few practical filters, and install the manifest.</p>
-            <div class="hero-meta">
-              <div class="hero-chip">Install-first flow</div>
-              <div class="hero-chip">Live manifest</div>
-              <div class="hero-chip">Quick preview</div>
+        <!-- WORKSPACE -->
+        <div class="workspace">
+          <!-- INSTALL -->
+          <section class="card install-card" id="overview-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Install URL</h3>
+                  <p class="card-desc">This is the manifest NebulaStreams will generate from your current settings.</p>
+                </div>
+                <span class="card-badge">Save & Install</span>
+              </div>
+
+              <div class="install-grid">
+                <div>
+                  <div class="manifest-box">
+                    <p class="manifest-label">Manifest URL</p>
+                    <p class="manifest-url" id="manifest-url">${escapeHtml(baseUrl)}/manifest.json</p>
+                  </div>
+                  <div class="actions">
+                    <button type="button" class="btn-primary" id="install-addon">⬇ Install Add-on</button>
+                    <button type="button" class="btn-secondary" id="copy-url">📋 Copy URL</button>
+                  </div>
+                  <div class="flash" id="flash" aria-live="polite"></div>
+                </div>
+
+                <div class="meta-grid">
+                  <div class="meta-card">
+                    <p class="meta-label">Providers</p>
+                    <p class="meta-value" id="overview-provider-count">${providers.length}</p>
+                  </div>
+                  <div class="meta-card">
+                    <p class="meta-label">Quality</p>
+                    <p class="meta-value">Custom</p>
+                  </div>
+                  <div class="meta-card">
+                    <p class="meta-label">Preview</p>
+                    <p class="meta-value">Live</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </section>
 
-          <div class="content-grid">
-            <section class="settings-card" id="support-section">
-              <div class="card-badge">Support</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
+          <!-- PRESETS -->
+          <section class="card" id="presets-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">One-Click Presets</h3>
+                  <p class="card-desc">Apply a ready-made profile, then tweak anything you want manually.</p>
+                </div>
+                <span class="card-badge">Presets</span>
+              </div>
+
+              <div class="preset-grid">
+                <button type="button" class="preset-card" data-preset-id="web-fast">
+                  <p class="preset-name">⚡ Web Fast</p>
+                  <p class="preset-copy">Direct-friendly playback, H.264 preference, aggressive dedupe.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="mobile-data">
+                  <p class="preset-name">📱 Mobile Data</p>
+                  <p class="preset-copy">Smaller files & resolutions, tighter caps for low-bandwidth.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="4k-hdr">
+                  <p class="preset-name">🎬 4K HDR</p>
+                  <p class="preset-copy">Top-end quality and HDR releases, no size restrictions.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="anime">
+                  <p class="preset-name">🍙 Anime</p>
+                  <p class="preset-copy">Anime-focused providers with Japanese audio preference.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="indian-content">
+                  <p class="preset-name">🇮🇳 Indian Content</p>
+                  <p class="preset-copy">Indian-focused providers, direct hosts preferred.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="turkish-content">
+                  <p class="preset-name">🇹🇷 Turkish Content</p>
+                  <p class="preset-copy">Turkish-focused providers for movies and series.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="italian-content">
+                  <p class="preset-name">🇮🇹 Italian Content</p>
+                  <p class="preset-copy">Italian-focused providers for movies, series, anime.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="latino-content">
+                  <p class="preset-name">🌶 Latino Content</p>
+                  <p class="preset-copy">Spanish and Latino-focused providers.</p>
+                </button>
+                <button type="button" class="preset-card" data-preset-id="arabic-content">
+                  <p class="preset-name">🌙 Arabic Content</p>
+                  <p class="preset-copy">Arabic-focused providers for movies, series, anime.</p>
+                </button>
+              </div>
+
+              <div class="preset-status" id="preset-status">Preset: <strong>Custom</strong></div>
+            </div>
+          </section>
+
+          <!-- PROVIDERS -->
+          <section class="card" id="providers-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Provider Selection</h3>
+                  <p class="card-desc">Pick any combination. Leaving everything unchecked falls back to all providers.</p>
+                </div>
+                <span class="card-badge">Providers</span>
+              </div>
+
+              <div class="field">
+                <label class="field-label" for="provider-search">Search providers</label>
+                <input id="provider-search" class="field-input" type="text" placeholder="Type to filter…" spellcheck="false" autocomplete="off">
+                <div class="field-help">Examples: ${providerHints || '4khdhub, cinestream, streamflix'}</div>
+              </div>
+
+              <div class="toolbar">
+                <button type="button" class="btn-ghost" id="select-all-providers">Select all</button>
+                <button type="button" class="btn-ghost" id="clear-providers">Clear</button>
+              </div>
+
+              <div class="summary-strip" id="provider-summary">All providers selected</div>
+              <div class="provider-grid" id="provider-grid"></div>
+            </div>
+          </section>
+
+          <!-- TWO COLUMN: SORTING + FILTERS -->
+          <div class="two-column">
+            <section class="card" id="sorting-section">
+              <div class="card-inner">
+                <div class="card-header">
                   <div>
-                    <h3 class="card-title">Support NebulaStreams</h3>
-                    <p class="card-description">The addon is free. If it makes your setup easier, support helps keep the backend stable and maintained.</p>
+                    <h3 class="card-title">Quality Priority</h3>
+                    <p class="card-desc">Move preferred qualities up. Used for ranking results.</p>
                   </div>
+                  <span class="card-badge">Sort</span>
                 </div>
-
-                <div class="support-shell">
-                  ${hasDonationSupport ? `
-                    <div class="support-card">
-                      <h3>This addon is completely free.</h3>
-                      <p>If NebulaStreams has made your setup easier, support helps keep the servers online for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
-                      <div class="support-actions">
-                        <button type="button" class="donate-toggle" id="donate-toggle">Support</button>
-                        ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">Support on Ko-fi</a>` : ''}
-                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">More ways to support</a>
-                      </div>
-                    </div>
-                  ` : `
-                    <div class="support-card">
-                      <h3>Feeling generous?</h3>
-                      <p>If NebulaStreams has made your setup easier, support helps keep the backend stable for everyone using it right now. Traffic has grown a lot, and keeping it alive now means paying for hosting, tunnels, and the time spent fixing crashes when providers break.</p>
-                      <div class="support-actions">
-                        ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">Support on Ko-fi</a>` : ''}
-                        <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
-                      </div>
-                    </div>
-                  `}
-
-                  ${nowPaymentsWidgetUrl ? `
-                    <div class="widget-panel" id="donation-widget-panel">
-                      <iframe
-                        class="widget-frame"
-                        src="${nowPaymentsWidgetUrl}"
-                        loading="lazy"
-                        scrolling="no"
-                        title="NOWPayments donation widget"
-                      >
-                        Can't load widget
-                      </iframe>
-                    </div>
-                  ` : ''}
+                <div class="toolbar">
+                  <button type="button" class="btn-ghost" id="reset-quality-order">↺ Reset</button>
                 </div>
+                <div class="quality-list" id="quality-list"></div>
               </div>
             </section>
 
-            <section class="settings-card" id="overview-section">
-              <div class="card-badge">Save & Install</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
+            <section class="card" id="filters-section">
+              <div class="card-inner">
+                <div class="card-header">
                   <div>
-                    <h3 class="card-title">Install URL</h3>
-                    <p class="card-description">This is the manifest NebulaStreams will generate from the current provider, ranking, and filter settings.</p>
+                    <h3 class="card-title">Playback Filters</h3>
+                    <p class="card-desc">Cut noisy results without losing unknown or unlabeled streams.</p>
                   </div>
+                  <span class="card-badge">Filter</span>
                 </div>
 
-                <div class="overview-grid">
-                  <div>
-                    <div class="manifest-box">
-                      <div class="manifest-label">Manifest URL</div>
-                      <p class="manifest-url" id="manifest-url">${escapeHtml(baseUrl)}/manifest.json</p>
+                <div class="choice-grid">
+                  <label class="choice-card">
+                    <input type="checkbox" id="web-ready-only">
+                    <div>
+                      <p class="choice-title">Web-ready only</p>
+                      <p class="choice-copy">Strict — only simple MP4-style links without proxy headers. Reduces results heavily.</p>
                     </div>
-
-                    <div class="actions">
-                      <button type="button" class="primary-button" id="install-addon">Install Add-on</button>
-                      <button type="button" class="secondary-button" id="copy-url">Copy URL</button>
+                  </label>
+                  <label class="choice-card">
+                    <input type="checkbox" id="hide-heavy-formats">
+                    <div>
+                      <p class="choice-title">Hide HEVC / HDR / 10-bit</p>
+                      <p class="choice-copy">For lighter playback devices that struggle with heavier codecs.</p>
                     </div>
-
-                    <div class="flash" id="flash" aria-live="polite"></div>
-                  </div>
-
-                  <div class="meta-grid">
-                    <div class="meta-card">
-                      <p class="meta-label">Providers</p>
-                      <p class="meta-value" id="overview-provider-count">${providers.length}</p>
-                    </div>
-                    <div class="meta-card">
-                      <p class="meta-label">Quality Order</p>
-                      <p class="meta-value">Custom</p>
-                    </div>
-                    <div class="meta-card">
-                      <p class="meta-label">Preview</p>
-                      <p class="meta-value">Built in</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-card" id="presets-section">
-              <div class="card-badge">Presets</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">One-Click Presets</h3>
-                    <p class="card-description">Apply a ready-made profile for common playback goals, then adjust anything manually if you want.</p>
-                  </div>
-                </div>
-
-                <div class="preset-grid">
-                  <button type="button" class="preset-card" data-preset-id="web-fast">
-                    <p class="preset-name">Web Fast</p>
-                    <p class="preset-copy">Simple direct-friendly playback with lighter formats, H.264 preference, and aggressive dedupe.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="mobile-data">
-                    <p class="preset-name">Mobile Data</p>
-                    <p class="preset-copy">Smaller files, smaller resolutions, direct hosts, and tighter caps for low-bandwidth usage.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="4k-hdr">
-                    <p class="preset-name">4K HDR</p>
-                    <p class="preset-copy">Favor top-end quality and HDR releases without applying size or format restrictions.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="anime">
-                    <p class="preset-name">Anime</p>
-                    <p class="preset-copy">Focus the provider mix on anime sources and prefer Japanese audio when it is labeled.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="indian-content">
-                    <p class="preset-name">Indian Content</p>
-                    <p class="preset-copy">Bias toward Indian-focused providers with direct-host preference and practical dedupe.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="turkish-content">
-                    <p class="preset-name">Turkish Content</p>
-                    <p class="preset-copy">Use Turkish-focused providers first for Turkish movies and series.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="italian-content">
-                    <p class="preset-name">Italian Content</p>
-                    <p class="preset-copy">Use Italian-focused providers first for Italian movies, series, and anime.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="latino-content">
-                    <p class="preset-name">Latino Content</p>
-                    <p class="preset-copy">Use Latino-focused providers first for Spanish and Latino movies and series.</p>
-                  </button>
-                  <button type="button" class="preset-card" data-preset-id="arabic-content">
-                    <p class="preset-name">Arabic Content</p>
-                    <p class="preset-copy">Use Arabic-focused providers first for Arabic movies, series, and anime.</p>
-                  </button>
-                </div>
-
-                <div class="preset-status" id="preset-status">Preset: Custom</div>
-              </div>
-            </section>
-
-            <section class="settings-card" id="providers-section">
-              <div class="card-badge">Providers</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">Provider Selection</h3>
-                    <p class="card-description">Select any number of providers. Leaving everything unchecked falls back to the default all-provider install.</p>
-                  </div>
+                  </label>
                 </div>
 
                 <div class="field">
-                  <label class="field-label" for="provider-search">Filter providers</label>
-                  <input
-                    id="provider-search"
-                    class="field-input"
-                    type="text"
-                    placeholder="Search providers"
-                    spellcheck="false"
-                    autocomplete="off"
-                  >
-                  <div class="field-help">Examples: ${providerHints || '4khdhub, cinestream, streamflix'}</div>
-                </div>
-
-                <div class="toolbar">
-                  <button type="button" class="mini-button" id="select-all-providers">Select all</button>
-                  <button type="button" class="mini-button" id="clear-providers">Clear</button>
-                </div>
-
-                <div class="summary-strip" id="provider-summary">All providers selected</div>
-                <div class="provider-grid" id="provider-grid"></div>
-              </div>
-            </section>
-
-            <div class="two-column">
-              <section class="settings-card" id="sorting-section">
-                <div class="card-badge">Sorting</div>
-                <div class="settings-card-inner">
-                  <div class="settings-card-header">
-                    <div>
-                      <h3 class="card-title">Quality Priority</h3>
-                      <p class="card-description">Move your preferred qualities to the top. NebulaStreams uses this order when ranking results.</p>
-                    </div>
-                  </div>
-
-                  <div class="toolbar">
-                    <button type="button" class="mini-button" id="reset-quality-order">Reset order</button>
-                  </div>
-
-                  <div class="quality-list" id="quality-list"></div>
-                </div>
-              </section>
-
-              <section class="settings-card" id="filters-section">
-                <div class="card-badge">Filters</div>
-                <div class="settings-card-inner">
-                  <div class="settings-card-header">
-                    <div>
-                      <h3 class="card-title">Playback Filters</h3>
-                      <p class="card-description">Filter noisy results and add ranking hints without losing unknown or unlabeled streams unnecessarily.</p>
-                    </div>
-                  </div>
-
-                  <div class="choice-grid">
-                    <label class="choice-card">
-                      <input type="checkbox" id="web-ready-only">
-                      <div>
-                        <p class="choice-title">Web-ready only (Not recommended)</p>
-                        <p class="choice-copy">Keep only simple MP4-style links that need no proxy headers. This is strict and can reduce result count heavily.</p>
-                      </div>
-                    </label>
-
-                    <label class="choice-card">
-                      <input type="checkbox" id="hide-heavy-formats">
-                      <div>
-                        <p class="choice-title">Hide HEVC / HDR / 10-bit</p>
-                        <p class="choice-copy">Useful for lighter playback devices and players that struggle with heavier formats.</p>
-                      </div>
-                    </label>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="preferred-audio-language">Preferred audio language</label>
-                    <select id="preferred-audio-language" class="field-input">
-                      <option value="">Any language</option>
-                      <option value="Hindi">Hindi</option>
-                      <option value="English">English</option>
-                      <option value="Tamil">Tamil</option>
-                      <option value="Telugu">Telugu</option>
-                      <option value="Malayalam">Malayalam</option>
-                      <option value="Kannada">Kannada</option>
-                      <option value="Japanese">Japanese</option>
-                      <option value="Korean">Korean</option>
-                      <option value="Turkish">Turkish</option>
-                      <option value="Italian">Italian</option>
-                      <option value="Latino">Latino</option>
-                      <option value="Spanish">Spanish</option>
-                      <option value="Arabic">Arabic</option>
-                    </select>
-                    <div class="field-help">Keeps matching streams and unknown-language streams. Only clearly different labeled audio gets filtered out.</div>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="max-size-gb">Maximum file size</label>
-                    <select id="max-size-gb" class="field-input">
-                      <option value="0">No limit</option>
-                      <option value="1.5">1.5 GB</option>
-                      <option value="3">3 GB</option>
-                      <option value="5">5 GB</option>
-                      <option value="10">10 GB</option>
-                      <option value="20">20 GB</option>
-                    </select>
-                    <div class="field-help">Hide oversized files when you want lighter playback or smaller downloads.</div>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="blocked-hosts">Blocked hosts</label>
-                    <input
-                      id="blocked-hosts"
-                      class="field-input"
-                      type="text"
-                      placeholder="pixeldrain.dev, hub.toxix.buzz"
-                      spellcheck="false"
-                      autocomplete="off"
-                    >
-                    <div class="field-help">Comma-separated host fragments to hide. Useful for mirrors you do not want to see.</div>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="custom-proxy-url">Custom proxy URL</label>
-                    <input
-                      id="custom-proxy-url"
-                      class="field-input"
-                      type="text"
-                      placeholder="Optional. Example: https://your-proxy.example/?url={url}&headers={headers}"
-                      spellcheck="false"
-                      autocomplete="off"
-                    >
-                    <div class="field-help">Optional. If set, HTTP streams are rewritten through your proxy. Supports <code>{url}</code> and <code>{headers}</code> placeholders. If you only provide a base URL, NebulaStreams appends <code>?url=...</code> and <code>&headers=...</code> automatically. Stored behind a private config id.</div>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="febbox-ui-cookie">Febbox UI cookie for ShowBox</label>
-                    <input
-                      id="febbox-ui-cookie"
-                      class="field-input"
-                      type="password"
-                      placeholder="Optional personal token"
-                      spellcheck="false"
-                      autocomplete="off"
-                    >
-                    <div class="field-help">Optional. This enables ShowBox with your own Febbox UI cookie and is stored behind a private config id instead of being exposed in the manifest URL.</div>
-                  </div>
-
-                  <div class="field">
-                    <label class="field-label" for="dedupe-mode">Deduplication mode</label>
-                    <select id="dedupe-mode" class="field-input">
-                      <option value="off">Off</option>
-                      <option value="smart">Smart (Recommended)</option>
-                      <option value="filename">By filename</option>
-                      <option value="host-quality">By host + quality</option>
-                    </select>
-                    <div class="field-help">Collapse repeated streams after ranking so the best-scored duplicate stays visible.</div>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <section class="settings-card">
-              <div class="card-badge">Ranking</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">Preference Boosts</h3>
-                    <p class="card-description">These do not remove streams. They only push matching streams higher in the final list.</p>
-                  </div>
-                </div>
-
-                <div class="three-column">
-                  <label class="choice-card">
-                    <input type="checkbox" id="prefer-hdr">
-                    <div>
-                      <p class="choice-title">Prefer HDR</p>
-                      <p class="choice-copy">Push HDR and Dolby Vision releases higher without hiding SDR.</p>
-                    </div>
-                  </label>
-
-                  <label class="choice-card">
-                    <input type="checkbox" id="prefer-h264">
-                    <div>
-                      <p class="choice-title">Prefer H.264 / x264</p>
-                      <p class="choice-copy">Useful when your player behaves better with H.264 than HEVC.</p>
-                    </div>
-                  </label>
-
-                  <label class="choice-card">
-                    <input type="checkbox" id="prefer-smaller-files">
-                    <div>
-                      <p class="choice-title">Prefer smaller files</p>
-                      <p class="choice-copy">Push lighter files upward when speed matters more than maximum quality.</p>
-                    </div>
-                  </label>
-
-                  <label class="choice-card">
-                    <input type="checkbox" id="prefer-direct-hosts">
-                    <div>
-                      <p class="choice-title">Prefer direct hosts</p>
-                      <p class="choice-copy">Push cleaner direct HTTP hosts above streams that need extra request headers.</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-card" id="preview-section">
-              <div class="card-badge">Preview</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">Filter Preview</h3>
-                    <p class="card-description">Test the current configuration against a title and see how many streams each rule removes.</p>
-                  </div>
-                </div>
-
-                <div class="preview-grid">
-                  <select id="preview-type" class="field-input">
-                    <option value="movie">Movie</option>
-                    <option value="series">Series</option>
+                  <label class="field-label" for="preferred-audio-language">Preferred audio language</label>
+                  <select id="preferred-audio-language" class="field-input">
+                    <option value="">Any language</option>
+                    <option value="Hindi">Hindi</option>
+                    <option value="English">English</option>
+                    <option value="Tamil">Tamil</option>
+                    <option value="Telugu">Telugu</option>
+                    <option value="Malayalam">Malayalam</option>
+                    <option value="Kannada">Kannada</option>
+                    <option value="Japanese">Japanese</option>
+                    <option value="Korean">Korean</option>
+                    <option value="Turkish">Turkish</option>
+                    <option value="Italian">Italian</option>
+                    <option value="Latino">Latino</option>
+                    <option value="Spanish">Spanish</option>
+                    <option value="Arabic">Arabic</option>
                   </select>
-                  <input
-                    id="preview-id"
-                    class="field-input"
-                    type="text"
-                    value="tt0133093"
-                    placeholder="tt0133093 or tt0944947:1:1"
-                    spellcheck="false"
-                    autocomplete="off"
-                  >
-                  <button type="button" class="secondary-button" id="run-preview">Run Preview</button>
+                  <div class="field-help">Keeps matches and unknown-language streams. Only clearly different audio is filtered.</div>
                 </div>
 
-                <div class="preview-result" id="preview-result">
-                  <div class="preview-empty">Use an IMDb id to preview the current provider and filter settings.</div>
-                </div>
-              </div>
-            </section>
-
-            <section class="settings-card" id="notes-section">
-              <div class="card-badge">Notes</div>
-              <div class="settings-card-inner">
-                <div class="settings-card-header">
-                  <div>
-                    <h3 class="card-title">Operational Notes</h3>
-                    <p class="card-description">A few practical details about how the generated addon behaves.</p>
-                  </div>
+                <div class="field">
+                  <label class="field-label" for="max-size-gb">Maximum file size</label>
+                  <select id="max-size-gb" class="field-input">
+                    <option value="0">No limit</option>
+                    <option value="1.5">1.5 GB</option>
+                    <option value="3">3 GB</option>
+                    <option value="5">5 GB</option>
+                    <option value="10">10 GB</option>
+                    <option value="20">20 GB</option>
+                  </select>
+                  <div class="field-help">Hide oversized files for lighter playback or smaller downloads.</div>
                 </div>
 
-                <div class="notes-list">
-                  <p class="note-item"><strong>Quality order:</strong> this only affects ranking. It does not invent missing qualities from providers that have no match for a title.</p>
-                  <p class="note-item"><strong>Web-ready mode:</strong> this deliberately filters hard. Use it only if you want the safest direct-play subset.</p>
-                  <p class="note-item"><strong>Cold starts:</strong> the first request can take longer while the hosted backend wakes up and providers are queried in parallel.</p>
-                  <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store the media files themselves. It discovers external links and passes them through the configured playback flow.</p>
+                <div class="field">
+                  <label class="field-label" for="blocked-hosts">Blocked hosts</label>
+                  <input id="blocked-hosts" class="field-input" type="text" placeholder="pixeldrain.dev, hub.toxix.buzz" spellcheck="false" autocomplete="off">
+                  <div class="field-help">Comma-separated host fragments to hide.</div>
                 </div>
 
-                <div class="disclaimer">
-                  <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own the media itself. It should not be used to view copyrighted material without permission. The developer assumes no responsibility for how this tool is utilized.</p>
+                <div class="field">
+                  <label class="field-label" for="custom-proxy-url">Custom proxy URL</label>
+                  <input id="custom-proxy-url" class="field-input" type="text" placeholder="https://your-proxy.example/?url={url}&headers={headers}" spellcheck="false" autocomplete="off">
+                  <div class="field-help">Optional. HTTP streams will be rewritten through your proxy. Supports <code>{url}</code> and <code>{headers}</code> placeholders. Stored behind a private config id.</div>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="febbox-ui-cookie">Febbox UI cookie (ShowBox)</label>
+                  <input id="febbox-ui-cookie" class="field-input" type="password" placeholder="Optional personal token" spellcheck="false" autocomplete="off">
+                  <div class="field-help">Optional. Enables ShowBox with your own Febbox UI cookie. Stored behind a private config id.</div>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="dedupe-mode">Deduplication mode</label>
+                  <select id="dedupe-mode" class="field-input">
+                    <option value="off">Off</option>
+                    <option value="smart">Smart (Recommended)</option>
+                    <option value="filename">By filename</option>
+                    <option value="host-quality">By host + quality</option>
+                  </select>
+                  <div class="field-help">Collapse duplicates after ranking, keeping the best-scored copy.</div>
                 </div>
               </div>
             </section>
           </div>
-        </section>
+
+          <!-- RANKING -->
+          <section class="card" id="ranking-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Preference Boosts</h3>
+                  <p class="card-desc">These don't remove streams — they push matching streams higher.</p>
+                </div>
+                <span class="card-badge">Ranking</span>
+              </div>
+
+              <div class="three-column">
+                <label class="choice-card">
+                  <input type="checkbox" id="prefer-hdr">
+                  <div>
+                    <p class="choice-title">Prefer HDR</p>
+                    <p class="choice-copy">Push HDR & Dolby Vision higher.</p>
+                  </div>
+                </label>
+                <label class="choice-card">
+                  <input type="checkbox" id="prefer-h264">
+                  <div>
+                    <p class="choice-title">Prefer H.264 / x264</p>
+                    <p class="choice-copy">For players that struggle with HEVC.</p>
+                  </div>
+                </label>
+                <label class="choice-card">
+                  <input type="checkbox" id="prefer-smaller-files">
+                  <div>
+                    <p class="choice-title">Prefer smaller files</p>
+                    <p class="choice-copy">When speed matters more than quality.</p>
+                  </div>
+                </label>
+                <label class="choice-card">
+                  <input type="checkbox" id="prefer-direct-hosts">
+                  <div>
+                    <p class="choice-title">Prefer direct hosts</p>
+                    <p class="choice-copy">Direct HTTP above streams that need extra headers.</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <!-- PREVIEW -->
+          <section class="card" id="preview-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Filter Preview</h3>
+                  <p class="card-desc">Test current configuration against a title and see what each rule does.</p>
+                </div>
+                <span class="card-badge">Preview</span>
+              </div>
+
+              <div class="preview-grid">
+                <select id="preview-type" class="field-input">
+                  <option value="movie">Movie</option>
+                  <option value="series">Series</option>
+                </select>
+                <input id="preview-id" class="field-input" type="text" value="tt0133093" placeholder="tt0133093 or tt0944947:1:1" spellcheck="false" autocomplete="off">
+                <button type="button" class="btn-secondary" id="run-preview">▶ Run</button>
+              </div>
+
+              <div class="preview-result" id="preview-result">
+                <div class="preview-empty">Use an IMDb id to preview the current provider and filter settings.</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SUPPORT -->
+          <section class="card" id="support-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Support NebulaStreams</h3>
+                  <p class="card-desc">The addon is free. Support keeps the backend stable and maintained.</p>
+                </div>
+                <span class="card-badge">Support</span>
+              </div>
+
+              <div class="support-shell">
+                ${hasDonationSupport ? `
+                  <div class="support-card">
+                    <h3>This addon is completely free.</h3>
+                    <p>If NebulaStreams has made your setup easier, support helps keep the servers online for everyone using it. Traffic has grown a lot, and keeping it alive means paying for hosting, tunnels, and time spent fixing crashes when providers break.</p>
+                    <div class="support-actions">
+                      <button type="button" class="donate-toggle" id="donate-toggle">💖 Support</button>
+                      ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">☕ Ko-fi</a>` : ''}
+                      <a class="support-link" href="${escapeHtml(baseUrl)}/donate">More ways</a>
+                    </div>
+                  </div>
+                ` : `
+                  <div class="support-card">
+                    <h3>Feeling generous?</h3>
+                    <p>Support keeps the backend stable for everyone. Hosting, tunnels, and time spent fixing provider crashes all add up.</p>
+                    <div class="support-actions">
+                      ${donationPrimaryUrl ? `<a class="support-link" href="${donationPrimaryUrl}" target="_blank" rel="noopener">☕ Ko-fi</a>` : ''}
+                      <a class="support-link" href="${escapeHtml(baseUrl)}/donate">Support</a>
+                    </div>
+                  </div>
+                `}
+
+                ${nowPaymentsWidgetUrl ? `
+                  <div class="widget-panel" id="donation-widget-panel">
+                    <iframe class="widget-frame" src="${nowPaymentsWidgetUrl}" loading="lazy" scrolling="no" title="NOWPayments donation widget">Can't load widget</iframe>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          </section>
+
+          <!-- NOTES -->
+          <section class="card" id="notes-section">
+            <div class="card-inner">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">Operational Notes</h3>
+                  <p class="card-desc">A few practical details about how the addon behaves.</p>
+                </div>
+                <span class="card-badge">Notes</span>
+              </div>
+
+              <div class="notes-list">
+                <p class="note-item"><strong>Quality order:</strong> only affects ranking. It can't invent missing qualities providers don't have.</p>
+                <p class="note-item"><strong>Web-ready mode:</strong> filters hard. Use only for the safest direct-play subset.</p>
+                <p class="note-item"><strong>Cold starts:</strong> first request can be slower while the backend wakes up and queries providers in parallel.</p>
+                <p class="note-item"><strong>Media hosting:</strong> NebulaStreams does not store media. It discovers external links and passes them through configured playback.</p>
+              </div>
+
+              <div class="disclaimer">
+                <p class="disclaimer-text"><strong>Disclaimer:</strong> NebulaStreams is a stream discovery tool. It does not host, upload, or own any media. It should not be used to view copyrighted material without permission. The developer assumes no responsibility for how this tool is utilized.</p>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
+
     <script>
       const origin = ${JSON.stringify(baseUrl)};
       const providerData = ${JSON.stringify(providerIds)};
@@ -1880,45 +1773,45 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       let qualityPriority = [...defaultQualityPriority];
       let activePresetId = null;
 
-      providerData.forEach((providerId) => selectedProviders.add(providerId));
+      providerData.forEach((p) => selectedProviders.add(p));
 
-      const providerSearch = document.getElementById('provider-search');
-      const providerGrid = document.getElementById('provider-grid');
-      const providerSummary = document.getElementById('provider-summary');
-      const manifestUrl = document.getElementById('manifest-url');
-      const flash = document.getElementById('flash');
-      const copyButton = document.getElementById('copy-url');
-      const installButton = document.getElementById('install-addon');
-      const qualityList = document.getElementById('quality-list');
-      const selectAllProvidersButton = document.getElementById('select-all-providers');
-      const clearProvidersButton = document.getElementById('clear-providers');
-      const resetQualityOrderButton = document.getElementById('reset-quality-order');
-      const webReadyOnly = document.getElementById('web-ready-only');
-      const hideHeavyFormats = document.getElementById('hide-heavy-formats');
-      const preferHdr = document.getElementById('prefer-hdr');
-      const preferH264 = document.getElementById('prefer-h264');
-      const preferSmallerFiles = document.getElementById('prefer-smaller-files');
-      const preferDirectHosts = document.getElementById('prefer-direct-hosts');
-      const preferredAudioLanguage = document.getElementById('preferred-audio-language');
-      const maxSizeGb = document.getElementById('max-size-gb');
-      const blockedHosts = document.getElementById('blocked-hosts');
-      const customProxyUrl = document.getElementById('custom-proxy-url');
-      const febboxUiCookie = document.getElementById('febbox-ui-cookie');
-      const dedupeMode = document.getElementById('dedupe-mode');
-      const overviewProviderCount = document.getElementById('overview-provider-count');
-      const presetStatus = document.getElementById('preset-status');
+      const $ = (id) => document.getElementById(id);
+      const providerSearch = $('provider-search');
+      const providerGrid = $('provider-grid');
+      const providerSummary = $('provider-summary');
+      const manifestUrl = $('manifest-url');
+      const flash = $('flash');
+      const copyButton = $('copy-url');
+      const installButton = $('install-addon');
+      const qualityList = $('quality-list');
+      const selectAllProvidersButton = $('select-all-providers');
+      const clearProvidersButton = $('clear-providers');
+      const resetQualityOrderButton = $('reset-quality-order');
+      const webReadyOnly = $('web-ready-only');
+      const hideHeavyFormats = $('hide-heavy-formats');
+      const preferHdr = $('prefer-hdr');
+      const preferH264 = $('prefer-h264');
+      const preferSmallerFiles = $('prefer-smaller-files');
+      const preferDirectHosts = $('prefer-direct-hosts');
+      const preferredAudioLanguage = $('preferred-audio-language');
+      const maxSizeGb = $('max-size-gb');
+      const blockedHosts = $('blocked-hosts');
+      const customProxyUrl = $('custom-proxy-url');
+      const febboxUiCookie = $('febbox-ui-cookie');
+      const dedupeMode = $('dedupe-mode');
+      const overviewProviderCount = $('overview-provider-count');
+      const presetStatus = $('preset-status');
       const presetButtons = Array.from(document.querySelectorAll('[data-preset-id]'));
-      const donateToggle = document.getElementById('donate-toggle');
-      const donationWidgetPanel = document.getElementById('donation-widget-panel');
-      const previewType = document.getElementById('preview-type');
-      const previewId = document.getElementById('preview-id');
-      const runPreviewButton = document.getElementById('run-preview');
-      const previewResult = document.getElementById('preview-result');
+      const donateToggle = $('donate-toggle');
+      const donationWidgetPanel = $('donation-widget-panel');
+      const previewType = $('preview-type');
+      const previewId = $('preview-id');
+      const runPreviewButton = $('run-preview');
+      const previewResult = $('preview-result');
       const navItems = Array.from(document.querySelectorAll('[data-section-target]'));
-      let latestManifestPath = '/manifest.json';
       let manifestResolveNonce = 0;
 
-      const escapeHtmlClient = (value) => String(value)
+      const escapeHtmlClient = (v) => String(v)
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
@@ -1927,9 +1820,9 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const showFlash = (text, isError = false) => {
         flash.textContent = text;
-        flash.style.color = isError ? '#ff98a8' : '#dce7ff';
+        flash.style.color = isError ? '#f87171' : '#34d399';
         clearTimeout(flash._timer);
-        flash._timer = setTimeout(() => { flash.textContent = ''; }, 2200);
+        flash._timer = setTimeout(() => { flash.textContent = ''; }, 2400);
       };
 
       const copyText = async (value, successMessage) => {
@@ -1937,443 +1830,194 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           if (navigator.clipboard?.writeText) {
             await navigator.clipboard.writeText(value);
           } else {
-            const textarea = document.createElement('textarea');
-            textarea.value = value;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
+            const t = document.createElement('textarea');
+            t.value = value;
+            t.style.position = 'fixed';
+            t.style.opacity = '0';
+            document.body.appendChild(t);
+            t.select();
             document.execCommand('copy');
-            document.body.removeChild(textarea);
+            document.body.removeChild(t);
           }
-
-          showFlash(successMessage);
-        } catch (error) {
-          console.error('Copy failed', error);
+          showFlash('✓ ' + successMessage);
+        } catch (e) {
           showFlash('Copy failed. Please copy manually.', true);
         }
       };
 
       const isDefaultQualityOrder = () =>
         qualityPriority.length === defaultQualityPriority.length &&
-        qualityPriority.every((quality, index) => quality === defaultQualityPriority[index]);
+        qualityPriority.every((q, i) => q === defaultQualityPriority[i]);
 
       const presetDefinitions = {
-        'web-fast': {
-          label: 'Web Fast',
-          code: 'WF',
-          providers: 'all',
-          qualityPriority: ['1080p', '720p', '480p', '360p', '2160p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: true,
-          hideHeavyFormats: true,
-          preferHdr: false,
-          preferH264: true,
-          preferSmallerFiles: true,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: '',
-          maxSizeGb: '5',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        'mobile-data': {
-          label: 'Mobile Data',
-          code: 'MD',
-          providers: 'all',
-          qualityPriority: ['720p', '480p', '360p', '1080p', '2160p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: true,
-          preferHdr: false,
-          preferH264: true,
-          preferSmallerFiles: true,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: '',
-          maxSizeGb: '3',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        '4k-hdr': {
-          label: '4K HDR',
-          code: '4K',
-          providers: 'all',
-          qualityPriority: ['2160p', '1440p', '1080p', '720p', '480p', '360p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: true,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: false,
-          customProxyUrl: '',
-          preferredAudioLanguage: '',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'smart'
-        },
-        anime: {
-          label: 'Anime',
-          code: 'AN',
-          providers: ['anime-sama', 'animekai', 'animesalt', 'animeworld', '4khdhub_tv', '4khdhub', 'hdhub4u', 'kisskh', 'vidlink', 'videasy'],
-          qualityPriority: ['1080p', '720p', '1440p', '2160p', '480p', '360p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: 'Japanese',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'smart'
-        },
-        'indian-content': {
-          label: 'Indian Content',
-          code: 'IN',
-          providers: ['4khdhub', '4khdhub_tv', 'hdhub4u', 'flixindia', 'hindmoviez', 'isaidub', 'tamilian', 'streamflix', 'streamflix_eng', 'allwish', 'moviesmod'],
-          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: '',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        'turkish-content': {
-          label: 'Turkish Content',
-          code: 'TR',
-          providers: ['vidmody-tr', 'turkish-m3u', 'rectv-tr', 'diziyou', 'sinemacx', 'cinemacity', 'vidlink', 'videasy'],
-          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: 'Turkish',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        'italian-content': {
-          label: 'Italian Content',
-          code: 'IT',
-          providers: ['it-streamingcommunity', 'it-guardahd', 'it-guardaserie', 'it-guardoserie', 'it-cc', 'it-animeunity', 'it-animeworld', 'it-animesaturn', 'vidlink', 'videasy'],
-          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: 'Italian',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        'latino-content': {
-          label: 'Latino Content',
-          code: 'LA',
-          providers: ['latino-lamovie', 'latino-embed69', 'latino-cinecalidad', 'latino-xupalace', 'latino-seriesmetro', 'lamovie', 'purstream', 'vidlink', 'videasy'],
-          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: 'Latino',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        },
-        'arabic-content': {
-          label: 'Arabic Content',
-          code: 'AR',
-          providers: ['arabic-faselhd', 'arabic-cineby', 'arabic-witanime', 'arabic-animecloud', 'arabic-kirmzi', 'vidlink', 'videasy'],
-          qualityPriority: ['1080p', '720p', '2160p', '480p', '360p', '1440p', 'auto', 'unknown'],
-          webReadyOnly: false,
-          hideHeavyFormats: false,
-          preferHdr: false,
-          preferH264: false,
-          preferSmallerFiles: false,
-          preferDirectHosts: true,
-          customProxyUrl: '',
-          preferredAudioLanguage: 'Arabic',
-          maxSizeGb: '0',
-          blockedHosts: '',
-          dedupeMode: 'host-quality'
-        }
+        'web-fast': { label: 'Web Fast', code: 'WF', providers: 'all', qualityPriority: ['1080p','720p','480p','360p','2160p','1440p','auto','unknown'], webReadyOnly: true, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '5', blockedHosts: '', dedupeMode: 'host-quality' },
+        'mobile-data': { label: 'Mobile Data', code: 'MD', providers: 'all', qualityPriority: ['720p','480p','360p','1080p','2160p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '3', blockedHosts: '', dedupeMode: 'host-quality' },
+        '4k-hdr': { label: '4K HDR', code: '4K', providers: 'all', qualityPriority: ['2160p','1440p','1080p','720p','480p','360p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: true, preferH264: false, preferSmallerFiles: false, preferDirectHosts: false, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'smart' },
+        'anime': { label: 'Anime', code: 'AN', providers: ['anime-sama','animekai','animesalt','animeworld','4khdhub_tv','4khdhub','hdhub4u','kisskh','vidlink','videasy'], qualityPriority: ['1080p','720p','1440p','2160p','480p','360p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Japanese', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'smart' },
+        'indian-content': { label: 'Indian Content', code: 'IN', providers: ['4khdhub','4khdhub_tv','hdhub4u','flixindia','hindmoviez','isaidub','tamilian','streamflix','streamflix_eng','allwish','moviesmod'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
+        'turkish-content': { label: 'Turkish Content', code: 'TR', providers: ['vidmody-tr','turkish-m3u','rectv-tr','diziyou','sinemacx','cinemacity','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Turkish', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
+        'italian-content': { label: 'Italian Content', code: 'IT', providers: ['it-streamingcommunity','it-guardahd','it-guardaserie','it-guardoserie','it-cc','it-animeunity','it-animeworld','it-animesaturn','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Italian', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
+        'latino-content': { label: 'Latino Content', code: 'LA', providers: ['latino-lamovie','latino-embed69','latino-cinecalidad','latino-xupalace','latino-seriesmetro','lamovie','purstream','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Latino', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' },
+        'arabic-content': { label: 'Arabic Content', code: 'AR', providers: ['arabic-faselhd','arabic-cineby','arabic-witanime','arabic-animecloud','arabic-kirmzi','vidlink','videasy'], qualityPriority: ['1080p','720p','2160p','480p','360p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Arabic', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'host-quality' }
       };
 
       const getOrderedProviders = () =>
-        providerData.filter((providerId) => selectedProviders.has(providerId));
+        providerData.filter((p) => selectedProviders.has(p));
 
-      const setSelectedProviders = (providersOrAll) => {
+      const setSelectedProviders = (input) => {
         selectedProviders.clear();
-
-        if (providersOrAll === 'all') {
-          providerData.forEach((providerId) => selectedProviders.add(providerId));
+        if (input === 'all') {
+          providerData.forEach((p) => selectedProviders.add(p));
           return;
         }
-
-        const allowedProviders = Array.isArray(providersOrAll)
-          ? providersOrAll.filter((providerId) => providerData.includes(providerId))
-          : [];
-
-        allowedProviders.forEach((providerId) => selectedProviders.add(providerId));
+        const allowed = Array.isArray(input) ? input.filter((p) => providerData.includes(p)) : [];
+        allowed.forEach((p) => selectedProviders.add(p));
       };
 
       const updatePresetUi = () => {
-        presetButtons.forEach((button) => {
-          button.classList.toggle('is-active', button.dataset.presetId === activePresetId);
-        });
-
+        presetButtons.forEach((b) => b.classList.toggle('is-active', b.dataset.presetId === activePresetId));
         if (presetStatus) {
-          const presetLabel = activePresetId && presetDefinitions[activePresetId]
-            ? presetDefinitions[activePresetId].label
-            : 'Custom';
-          presetStatus.textContent = 'Preset: ' + presetLabel;
+          const label = activePresetId && presetDefinitions[activePresetId] ? presetDefinitions[activePresetId].label : 'Custom';
+          presetStatus.innerHTML = 'Preset: <strong>' + escapeHtmlClient(label) + '</strong>';
         }
       };
 
       const markPresetAsCustom = () => {
-        if (!activePresetId) {
-          return;
-        }
-
+        if (!activePresetId) return;
         activePresetId = null;
         updatePresetUi();
       };
 
-      const applyPreset = (presetId) => {
-        const preset = presetDefinitions[presetId];
-
-        if (!preset) {
-          return;
-        }
-
-        setSelectedProviders(preset.providers);
-        qualityPriority = [...preset.qualityPriority];
-        webReadyOnly.checked = Boolean(preset.webReadyOnly);
-        hideHeavyFormats.checked = Boolean(preset.hideHeavyFormats);
-        preferHdr.checked = Boolean(preset.preferHdr);
-        preferH264.checked = Boolean(preset.preferH264);
-        preferSmallerFiles.checked = Boolean(preset.preferSmallerFiles);
-        preferDirectHosts.checked = Boolean(preset.preferDirectHosts);
-        customProxyUrl.value = preset.customProxyUrl || '';
-        preferredAudioLanguage.value = preset.preferredAudioLanguage || '';
-        maxSizeGb.value = preset.maxSizeGb || '0';
-        blockedHosts.value = preset.blockedHosts || '';
-        dedupeMode.value = preset.dedupeMode || 'off';
-        activePresetId = presetId;
+      const applyPreset = (id) => {
+        const p = presetDefinitions[id];
+        if (!p) return;
+        setSelectedProviders(p.providers);
+        qualityPriority = [...p.qualityPriority];
+        webReadyOnly.checked = !!p.webReadyOnly;
+        hideHeavyFormats.checked = !!p.hideHeavyFormats;
+        preferHdr.checked = !!p.preferHdr;
+        preferH264.checked = !!p.preferH264;
+        preferSmallerFiles.checked = !!p.preferSmallerFiles;
+        preferDirectHosts.checked = !!p.preferDirectHosts;
+        customProxyUrl.value = p.customProxyUrl || '';
+        preferredAudioLanguage.value = p.preferredAudioLanguage || '';
+        maxSizeGb.value = p.maxSizeGb || '0';
+        blockedHosts.value = p.blockedHosts || '';
+        dedupeMode.value = p.dedupeMode || 'off';
+        activePresetId = id;
         renderProviderOptions();
         renderQualityList();
         updateManifest();
         updatePresetUi();
-        showFlash(preset.label + ' preset applied.');
+        showFlash(p.label + ' preset applied');
       };
 
       const getOptionTokens = () => {
         const tokens = [];
-        const activePreset = activePresetId ? presetDefinitions[activePresetId] : null;
-
-        if (activePreset?.code) {
-          tokens.push('profile=' + activePreset.code.toLowerCase());
-        }
-
-        if (webReadyOnly.checked) {
-          tokens.push('web-ready-only');
-        }
-
-        if (hideHeavyFormats.checked) {
-          tokens.push('hide-heavy-formats');
-        }
-
-        if (preferHdr.checked) {
-          tokens.push('prefer-hdr');
-        }
-
-        if (preferH264.checked) {
-          tokens.push('prefer-h264');
-        }
-
-        if (preferSmallerFiles.checked) {
-          tokens.push('prefer-smaller-files');
-        }
-
-        if (preferDirectHosts.checked) {
-          tokens.push('prefer-direct-hosts');
-        }
-
-        if (preferredAudioLanguage.value) {
-          tokens.push('preferred-audio=' + preferredAudioLanguage.value.toLowerCase());
-        }
-
-        if (dedupeMode.value && dedupeMode.value !== 'off') {
-          tokens.push('dedupe=' + dedupeMode.value);
-        }
-
-        if (Number.parseFloat(maxSizeGb.value) > 0) {
-          tokens.push('max-size-gb=' + Number.parseFloat(maxSizeGb.value));
-        }
-
-        const blockedHostTokens = blockedHosts.value
-          .split(/[,\\n]/)
-          .map((value) => value.trim().toLowerCase())
-          .filter(Boolean)
-          .filter((value, index, values) => values.indexOf(value) === index);
-
-        if (blockedHostTokens.length > 0) {
-          tokens.push('block-hosts=' + blockedHostTokens.join('|'));
-        }
-
+        const ap = activePresetId ? presetDefinitions[activePresetId] : null;
+        if (ap?.code) tokens.push('profile=' + ap.code.toLowerCase());
+        if (webReadyOnly.checked) tokens.push('web-ready-only');
+        if (hideHeavyFormats.checked) tokens.push('hide-heavy-formats');
+        if (preferHdr.checked) tokens.push('prefer-hdr');
+        if (preferH264.checked) tokens.push('prefer-h264');
+        if (preferSmallerFiles.checked) tokens.push('prefer-smaller-files');
+        if (preferDirectHosts.checked) tokens.push('prefer-direct-hosts');
+        if (preferredAudioLanguage.value) tokens.push('preferred-audio=' + preferredAudioLanguage.value.toLowerCase());
+        if (dedupeMode.value && dedupeMode.value !== 'off') tokens.push('dedupe=' + dedupeMode.value);
+        if (Number.parseFloat(maxSizeGb.value) > 0) tokens.push('max-size-gb=' + Number.parseFloat(maxSizeGb.value));
+        const blocked = blockedHosts.value.split(/[,\\n]/).map((v) => v.trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+        if (blocked.length > 0) tokens.push('block-hosts=' + blocked.join('|'));
         return tokens;
       };
 
       const buildManifestPath = () => {
-        const orderedProviders = getOrderedProviders();
-        const providerSegment = orderedProviders.length > 0 && orderedProviders.length < providerData.length
-          ? encodeURIComponent(orderedProviders.join(','))
-          : 'all';
-        const qualitySegment = isDefaultQualityOrder()
-          ? 'default'
-          : encodeURIComponent(qualityPriority.join(','));
-        const optionTokens = getOptionTokens();
-
-        if (providerSegment === 'all' && qualitySegment === 'default' && optionTokens.length === 0) {
-          return '/manifest.json';
-        }
-
-        if (optionTokens.length === 0 && qualitySegment === 'default') {
-          return '/configured/' + providerSegment + '/manifest.json';
-        }
-
-        if (optionTokens.length === 0) {
-          return '/configured/' + providerSegment + '/' + qualitySegment + '/manifest.json';
-        }
-
-        return '/configured/' + providerSegment + '/' + qualitySegment + '/' + encodeURIComponent(optionTokens.join(',')) + '/manifest.json';
+        const ordered = getOrderedProviders();
+        const ps = ordered.length > 0 && ordered.length < providerData.length ? encodeURIComponent(ordered.join(',')) : 'all';
+        const qs = isDefaultQualityOrder() ? 'default' : encodeURIComponent(qualityPriority.join(','));
+        const ot = getOptionTokens();
+        if (ps === 'all' && qs === 'default' && ot.length === 0) return '/manifest.json';
+        if (ot.length === 0 && qs === 'default') return '/configured/' + ps + '/manifest.json';
+        if (ot.length === 0) return '/configured/' + ps + '/' + qs + '/manifest.json';
+        return '/configured/' + ps + '/' + qs + '/' + encodeURIComponent(ot.join(',')) + '/manifest.json';
       };
 
       const buildPrivateConfigPayload = () => {
-        const orderedProviders = getOrderedProviders();
-
+        const ordered = getOrderedProviders();
         return {
-        providers: orderedProviders.length === 0 || orderedProviders.length === providerData.length
-          ? []
-          : orderedProviders,
-        qualityPriority: [...qualityPriority],
-        streamOptions: {
-          webReadyOnly: webReadyOnly.checked,
-          hideHeavyFormats: hideHeavyFormats.checked,
-          maxSizeGb: Number.parseFloat(maxSizeGb.value) > 0 ? Number.parseFloat(maxSizeGb.value) : 0,
-          blockHosts: blockedHosts.value
-            .split(/[,\\n]/)
-            .map((value) => value.trim().toLowerCase())
-            .filter(Boolean)
-            .filter((value, index, values) => values.indexOf(value) === index),
-          preferredAudioLanguage: preferredAudioLanguage.value || null,
-          dedupeMode: dedupeMode.value || 'off',
-          preferHdr: preferHdr.checked,
-          preferH264: preferH264.checked,
-          preferSmallerFiles: preferSmallerFiles.checked,
-          preferDirectHosts: preferDirectHosts.checked,
-          customProxyUrl: customProxyUrl.value.trim() || null
-        },
-        privateProviderSettings: {
-          febboxUiCookie: febboxUiCookie.value.trim()
-        },
-        profileCode: activePresetId && presetDefinitions[activePresetId]?.code
-          ? presetDefinitions[activePresetId].code.toLowerCase()
-          : null
+          providers: ordered.length === 0 || ordered.length === providerData.length ? [] : ordered,
+          qualityPriority: [...qualityPriority],
+          streamOptions: {
+            webReadyOnly: webReadyOnly.checked,
+            hideHeavyFormats: hideHeavyFormats.checked,
+            maxSizeGb: Number.parseFloat(maxSizeGb.value) > 0 ? Number.parseFloat(maxSizeGb.value) : 0,
+            blockHosts: blockedHosts.value.split(/[,\\n]/).map((v) => v.trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i),
+            preferredAudioLanguage: preferredAudioLanguage.value || null,
+            dedupeMode: dedupeMode.value || 'off',
+            preferHdr: preferHdr.checked,
+            preferH264: preferH264.checked,
+            preferSmallerFiles: preferSmallerFiles.checked,
+            preferDirectHosts: preferDirectHosts.checked,
+            customProxyUrl: customProxyUrl.value.trim() || null
+          },
+          privateProviderSettings: { febboxUiCookie: febboxUiCookie.value.trim() },
+          profileCode: activePresetId && presetDefinitions[activePresetId]?.code ? presetDefinitions[activePresetId].code.toLowerCase() : null
         };
       };
 
       const resolveManifestPath = async () => {
-        const privateCookie = febboxUiCookie.value.trim();
-        const configuredProxyUrl = customProxyUrl.value.trim();
-
-        if (!privateCookie && !configuredProxyUrl) {
-          return buildManifestPath();
-        }
-
-        const response = await fetch(origin + '/configure/private-config', {
+        const cookie = febboxUiCookie.value.trim();
+        const proxy = customProxyUrl.value.trim();
+        if (!cookie && !proxy) return buildManifestPath();
+        const r = await fetch(origin + '/configure/private-config', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(buildPrivateConfigPayload())
         });
-
-        if (!response.ok) {
-          throw new Error('Private config request failed');
-        }
-
-        const payload = await response.json();
-
-        if (!payload || typeof payload.manifestPath !== 'string' || !payload.manifestPath) {
-          throw new Error('Private config response was invalid');
-        }
-
-        return payload.manifestPath;
+        if (!r.ok) throw new Error('Private config failed');
+        const p = await r.json();
+        if (!p || typeof p.manifestPath !== 'string' || !p.manifestPath) throw new Error('Invalid response');
+        return p.manifestPath;
       };
 
       const updateProviderSummary = () => {
-        const orderedProviders = getOrderedProviders();
-
+        const ordered = getOrderedProviders();
         if (overviewProviderCount) {
-          overviewProviderCount.textContent = orderedProviders.length === 0
-            ? String(providerData.length)
-            : String(orderedProviders.length);
+          overviewProviderCount.textContent = ordered.length === 0 ? String(providerData.length) : String(ordered.length);
         }
-
-        if (orderedProviders.length === providerData.length) {
-          providerSummary.textContent = 'All providers selected';
+        if (ordered.length === providerData.length) {
+          providerSummary.innerHTML = '✓ All <strong>' + providerData.length + '</strong> providers selected';
           return;
         }
-
-        if (orderedProviders.length === 0) {
-          providerSummary.textContent = 'No providers checked. Falling back to all providers.';
+        if (ordered.length === 0) {
+          providerSummary.textContent = 'No providers checked — falling back to all providers.';
           return;
         }
-
-        providerSummary.textContent = orderedProviders.length + ' provider' + (orderedProviders.length === 1 ? '' : 's') + ' selected: ' + orderedProviders.join(', ');
+        providerSummary.innerHTML = '<strong>' + ordered.length + '</strong> provider' + (ordered.length === 1 ? '' : 's') + ' selected: ' + escapeHtmlClient(ordered.slice(0, 6).join(', ')) + (ordered.length > 6 ? ' +' + (ordered.length - 6) + ' more' : '');
       };
 
       const renderProviderOptions = () => {
-        const filter = providerSearch.value.trim().toLowerCase();
-        const visibleProviders = providerData.filter((providerId) => providerId.includes(filter));
-
-        if (visibleProviders.length === 0) {
-          providerGrid.innerHTML = '<div class="empty-state">No providers match that filter.</div>';
+        const f = providerSearch.value.trim().toLowerCase();
+        const visible = providerData.filter((p) => p.includes(f));
+        if (visible.length === 0) {
+          providerGrid.innerHTML = '<div class="empty-state">No providers match "' + escapeHtmlClient(f) + '"</div>';
           return;
         }
-
-        providerGrid.innerHTML = visibleProviders.map((providerId) =>
+        providerGrid.innerHTML = visible.map((p) =>
           '<label class="provider-option">' +
-            '<input type="checkbox" data-provider-id="' + escapeHtmlClient(providerId) + '" ' + (selectedProviders.has(providerId) ? 'checked' : '') + '>' +
-            '<span class="provider-name">' + escapeHtmlClient(providerId) + '</span>' +
+            '<input type="checkbox" data-provider-id="' + escapeHtmlClient(p) + '" ' + (selectedProviders.has(p) ? 'checked' : '') + '>' +
+            '<span class="provider-name">' + escapeHtmlClient(p) + '</span>' +
           '</label>'
         ).join('');
       };
 
       const renderQualityList = () => {
-        qualityList.innerHTML = qualityPriority.map((quality, index) =>
+        qualityList.innerHTML = qualityPriority.map((q, i) =>
           '<div class="quality-row">' +
-            '<div class="quality-rank">' + (index + 1) + '</div>' +
-            '<div>' + escapeHtmlClient(quality.toUpperCase()) + '</div>' +
+            '<div class="quality-rank">' + (i + 1) + '</div>' +
+            '<div><strong>' + escapeHtmlClient(q.toUpperCase()) + '</strong></div>' +
             '<div class="quality-actions">' +
-              '<button type="button" class="arrow-button" data-quality-index="' + index + '" data-quality-move="-1" ' + (index === 0 ? 'disabled' : '') + '>↑</button>' +
-              '<button type="button" class="arrow-button" data-quality-index="' + index + '" data-quality-move="1" ' + (index === qualityPriority.length - 1 ? 'disabled' : '') + '>↓</button>' +
+              '<button type="button" class="arrow-button" data-quality-index="' + i + '" data-quality-move="-1" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
+              '<button type="button" class="arrow-button" data-quality-index="' + i + '" data-quality-move="1" ' + (i === qualityPriority.length - 1 ? 'disabled' : '') + '>↓</button>' +
             '</div>' +
           '</div>'
         ).join('');
@@ -2381,46 +2025,26 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
 
       const updateManifest = async () => {
         updateProviderSummary();
-        const requestNonce = ++manifestResolveNonce;
-        const fallbackPath = buildManifestPath();
-
-        latestManifestPath = fallbackPath;
-        manifestUrl.textContent = febboxUiCookie.value.trim()
-          ? 'Preparing private manifest...'
-          : origin + fallbackPath;
-
+        const nonce = ++manifestResolveNonce;
+        const fb = buildManifestPath();
+        manifestUrl.textContent = febboxUiCookie.value.trim() ? 'Preparing private manifest...' : origin + fb;
         try {
-          const resolvedPath = await resolveManifestPath();
-
-          if (requestNonce !== manifestResolveNonce) {
-            return;
-          }
-
-          latestManifestPath = resolvedPath;
-          manifestUrl.textContent = origin + resolvedPath;
-        } catch (error) {
-          console.error('Manifest resolution failed', error);
-
-          if (requestNonce !== manifestResolveNonce) {
-            return;
-          }
-
-          latestManifestPath = fallbackPath;
-          manifestUrl.textContent = origin + fallbackPath;
+          const resolved = await resolveManifestPath();
+          if (nonce !== manifestResolveNonce) return;
+          manifestUrl.textContent = origin + resolved;
+        } catch (e) {
+          if (nonce !== manifestResolveNonce) return;
+          manifestUrl.textContent = origin + fb;
           showFlash('Private manifest setup failed.', true);
         }
       };
 
       const buildPreviewPath = async () => {
-        const rawId = previewId.value.trim();
-
-        if (!rawId) {
-          return null;
-        }
-
-        const manifestPath = await resolveManifestPath();
-        const prefix = manifestPath.replace(/\\/manifest\\.json$/u, '');
-        return (prefix || '') + '/preview/' + encodeURIComponent(previewType.value) + '/' + encodeURIComponent(rawId) + '.json';
+        const id = previewId.value.trim();
+        if (!id) return null;
+        const mp = await resolveManifestPath();
+        const prefix = mp.replace(/\\/manifest\\.json$/u, '');
+        return (prefix || '') + '/preview/' + encodeURIComponent(previewType.value) + '/' + encodeURIComponent(id) + '.json';
       };
 
       const renderPreviewResult = (payload) => {
@@ -2428,63 +2052,37 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
           previewResult.innerHTML = '<div class="preview-empty">Preview failed. Check the IMDb id and try again.</div>';
           return;
         }
-
-        const diagnostics = payload.diagnostics || {};
-        const reasons = diagnostics.reasons || {};
-        const examples = diagnostics.examples || {};
-        const finalTotal = Math.max(0, Number(diagnostics.keptTotal || 0) - Number(diagnostics.dedupedTotal || 0));
-        const reasonLabels = {
-          nonHttp: 'Non-HTTP streams',
-          notWebReady: 'Not web-ready',
-          heavyFormat: 'Heavy formats',
-          tooLarge: 'Too large',
-          blockedHost: 'Blocked hosts',
-          languageMismatch: 'Different audio language',
+        const d = payload.diagnostics || {};
+        const reasons = d.reasons || {};
+        const examples = d.examples || {};
+        const finalTotal = Math.max(0, Number(d.inputTotal || 0) - Number(d.filteredTotal || 0) - Number(d.dedupedTotal || 0));
+        const labels = {
+          nonHttp: 'Non-HTTP streams', notWebReady: 'Not web-ready', heavyFormat: 'Heavy formats',
+          tooLarge: 'Too large', blockedHost: 'Blocked hosts', languageMismatch: 'Different audio',
           duplicate: 'Collapsed duplicates'
         };
-        const reasonRows = Object.entries(reasonLabels)
-          .filter(([key]) => Number(reasons[key] || 0) > 0)
-          .sort((left, right) => Number(reasons[right[0]] || 0) - Number(reasons[left[0]] || 0))
-          .map(([key, label]) => {
-            const exampleRows = Array.isArray(examples[key]) && examples[key].length > 0
-              ? '<div class="diagnostic-examples">' + examples[key].map((stream) =>
-                  '<div class="diagnostic-example">' +
-                    '<strong>' + escapeHtmlClient(stream.name || 'Untitled stream') + '</strong>' +
-                    '<div class="diagnostic-meta">' + escapeHtmlClient([
-                      stream.quality || 'Unknown',
-                      stream.host || 'Unknown host',
-                      stream.size || 'Unknown size'
-                    ].join(' • ')) + '</div>' +
-                  '</div>'
-                ).join('') + '</div>'
-              : '';
-
-            return '<div class="diagnostic-group">' +
-              '<div class="reason-row"><span>' + label + '</span><strong>' + Number(reasons[key] || 0) + '</strong></div>' +
-              exampleRows +
-            '</div>';
-          })
-          .join('');
+        const reasonRows = Object.entries(labels)
+          .filter(([k]) => Number(reasons[k] || 0) > 0)
+          .sort((a, b) => Number(reasons[b[0]] || 0) - Number(reasons[a[0]] || 0))
+          .map(([k, l]) => {
+            const ex = Array.isArray(examples[k]) && examples[k].length > 0 ?
+              '<div class="diagnostic-examples">' + examples[k].map((s) =>
+                '<div class="diagnostic-example"><strong>' + escapeHtmlClient(s.name || 'Untitled') + '</strong>' +
+                '<div class="diagnostic-meta">' + escapeHtmlClient([s.quality||'?', s.host||'?', s.size||'?'].join(' • ')) + '</div></div>'
+              ).join('') + '</div>' : '';
+            return '<div class="diagnostic-group"><div class="reason-row"><span>' + l + '</span><strong>' + Number(reasons[k] || 0) + '</strong></div>' + ex + '</div>';
+          }).join('');
         const sampleRows = Array.isArray(payload.sample) && payload.sample.length > 0
-          ? payload.sample.map((stream) =>
-              '<div class="sample-row">' +
-                '<strong>' + escapeHtmlClient(stream.name || 'Untitled stream') + '</strong>' +
-                '<div class="sample-meta">' +
-                  escapeHtmlClient([
-                    stream.quality || 'Unknown',
-                    stream.host || 'Unknown host',
-                    stream.size || 'Unknown size'
-                  ].join(' • ')) +
-                '</div>' +
-              '</div>'
+          ? payload.sample.map((s) =>
+              '<div class="sample-row"><strong>' + escapeHtmlClient(s.name || 'Untitled') + '</strong>' +
+              '<div class="sample-meta">' + escapeHtmlClient([s.quality||'?', s.host||'?', s.size||'?'].join(' • ')) + '</div></div>'
             ).join('')
-          : '<div class="preview-empty">No streams survived the current filters for this title.</div>';
-
+          : '<div class="preview-empty">No streams survived current filters for this title.</div>';
         previewResult.innerHTML =
           '<div class="stat-grid">' +
-            '<div class="stat-card"><p class="stat-label">Before</p><p class="stat-value">' + Number(diagnostics.inputTotal || 0) + '</p></div>' +
-            '<div class="stat-card"><p class="stat-label">Filtered</p><p class="stat-value">' + Number(diagnostics.filteredTotal || 0) + '</p></div>' +
-            '<div class="stat-card"><p class="stat-label">Deduped</p><p class="stat-value">' + Number(diagnostics.dedupedTotal || 0) + '</p></div>' +
+            '<div class="stat-card"><p class="stat-label">Before</p><p class="stat-value">' + Number(d.inputTotal || 0) + '</p></div>' +
+            '<div class="stat-card"><p class="stat-label">Filtered</p><p class="stat-value">' + Number(d.filteredTotal || 0) + '</p></div>' +
+            '<div class="stat-card"><p class="stat-label">Deduped</p><p class="stat-value">' + Number(d.dedupedTotal || 0) + '</p></div>' +
             '<div class="stat-card"><p class="stat-label">Final</p><p class="stat-value">' + finalTotal + '</p></div>' +
           '</div>' +
           (reasonRows ? '<div class="reason-list">' + reasonRows + '</div>' : '<div class="preview-empty" style="margin-top:14px;">No filter or dedupe rules changed this title.</div>') +
@@ -2492,203 +2090,108 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       };
 
       const runPreview = async () => {
-        const previewPath = await buildPreviewPath();
-
-        if (!previewPath) {
-          showFlash('Enter an IMDb id first.', true);
-          return;
-        }
-
-        previewResult.innerHTML = '<div class="preview-empty">Running preview...</div>';
-
+        const path = await buildPreviewPath();
+        if (!path) { showFlash('Enter an IMDb id first.', true); return; }
+        previewResult.innerHTML = '<div class="preview-empty">⏳ Running preview...</div>';
         try {
-          const response = await fetch(origin + previewPath);
-
-          if (!response.ok) {
-            throw new Error('Preview request failed');
-          }
-
-          const payload = await response.json();
-          renderPreviewResult(payload);
-        } catch (error) {
-          console.error('Preview failed', error);
-          previewResult.innerHTML = '<div class="preview-empty">Preview request failed. Try again in a moment.</div>';
+          const r = await fetch(origin + path);
+          if (!r.ok) throw new Error('Preview failed');
+          const p = await r.json();
+          renderPreviewResult(p);
+        } catch (e) {
+          previewResult.innerHTML = '<div class="preview-empty">Preview request failed. Try again.</div>';
         }
       };
 
-      providerSearch.addEventListener('input', () => {
-        renderProviderOptions();
-      });
-
-      providerGrid.addEventListener('change', (event) => {
-        const providerId = event.target?.dataset?.providerId;
-
-        if (!providerId) {
-          return;
-        }
-
-        if (event.target.checked) {
-          selectedProviders.add(providerId);
-        } else {
-          selectedProviders.delete(providerId);
-        }
-
+      providerSearch.addEventListener('input', renderProviderOptions);
+      providerGrid.addEventListener('change', (e) => {
+        const id = e.target?.dataset?.providerId;
+        if (!id) return;
+        if (e.target.checked) selectedProviders.add(id); else selectedProviders.delete(id);
         markPresetAsCustom();
         updateManifest();
       });
 
       selectAllProvidersButton.addEventListener('click', () => {
-        providerData.forEach((providerId) => selectedProviders.add(providerId));
+        providerData.forEach((p) => selectedProviders.add(p));
         markPresetAsCustom();
         renderProviderOptions();
         updateManifest();
       });
-
       clearProvidersButton.addEventListener('click', () => {
         selectedProviders.clear();
         markPresetAsCustom();
         renderProviderOptions();
         updateManifest();
       });
-
       resetQualityOrderButton.addEventListener('click', () => {
         qualityPriority = [...defaultQualityPriority];
         markPresetAsCustom();
         renderQualityList();
         updateManifest();
       });
-
-      qualityList.addEventListener('click', (event) => {
-        const index = Number.parseInt(event.target?.dataset?.qualityIndex || '', 10);
-        const move = Number.parseInt(event.target?.dataset?.qualityMove || '', 10);
-
-        if (!Number.isInteger(index) || !Number.isInteger(move)) {
-          return;
-        }
-
-        const nextIndex = index + move;
-
-        if (nextIndex < 0 || nextIndex >= qualityPriority.length) {
-          return;
-        }
-
-        const reordered = [...qualityPriority];
-        const [movedQuality] = reordered.splice(index, 1);
-        reordered.splice(nextIndex, 0, movedQuality);
-        qualityPriority = reordered;
+      qualityList.addEventListener('click', (e) => {
+        const idx = Number.parseInt(e.target?.dataset?.qualityIndex || '', 10);
+        const mv = Number.parseInt(e.target?.dataset?.qualityMove || '', 10);
+        if (!Number.isInteger(idx) || !Number.isInteger(mv)) return;
+        const ni = idx + mv;
+        if (ni < 0 || ni >= qualityPriority.length) return;
+        const r = [...qualityPriority];
+        const [m] = r.splice(idx, 1);
+        r.splice(ni, 0, m);
+        qualityPriority = r;
         markPresetAsCustom();
         renderQualityList();
         updateManifest();
       });
 
-      const optionInputs = [
-        webReadyOnly,
-        hideHeavyFormats,
-        preferHdr,
-        preferH264,
-        preferSmallerFiles,
-        preferDirectHosts,
-        preferredAudioLanguage,
-        maxSizeGb,
-        dedupeMode
-      ];
-
-      optionInputs.forEach((input) => {
-        input.addEventListener('change', () => {
-          markPresetAsCustom();
-          updateManifest();
-        });
+      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, preferredAudioLanguage, maxSizeGb, dedupeMode].forEach((el) => {
+        el.addEventListener('change', () => { markPresetAsCustom(); updateManifest(); });
+      });
+      [blockedHosts, customProxyUrl, febboxUiCookie].forEach((el) => {
+        el.addEventListener('input', () => { markPresetAsCustom(); updateManifest(); });
       });
 
-      blockedHosts.addEventListener('input', () => {
-        markPresetAsCustom();
-        updateManifest();
-      });
-
-      customProxyUrl.addEventListener('input', () => {
-        markPresetAsCustom();
-        updateManifest();
-      });
-
-      febboxUiCookie.addEventListener('input', () => {
-        markPresetAsCustom();
-        updateManifest();
-      });
-
-      presetButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          applyPreset(button.dataset.presetId);
-        });
-      });
-
+      presetButtons.forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.presetId)));
       runPreviewButton.addEventListener('click', runPreview);
-      previewId.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          runPreview();
-        }
-      });
+      previewId.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runPreview(); } });
 
       installButton.addEventListener('click', async () => {
         try {
-          const manifestPath = await resolveManifestPath();
-          window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(origin + manifestPath);
-        } catch (error) {
-          console.error('Install manifest resolution failed', error);
-          showFlash('Install URL could not be prepared.', true);
-        }
+          const mp = await resolveManifestPath();
+          window.location.href = 'stremio://addon-install?addon=' + encodeURIComponent(origin + mp);
+        } catch (e) { showFlash('Install URL could not be prepared.', true); }
       });
-
       copyButton.addEventListener('click', async () => {
         try {
-          const manifestPath = await resolveManifestPath();
-          copyText(origin + manifestPath, 'Manifest URL copied.');
-        } catch (error) {
-          console.error('Copy manifest resolution failed', error);
-          showFlash('Manifest URL could not be prepared.', true);
-        }
+          const mp = await resolveManifestPath();
+          copyText(origin + mp, 'Manifest URL copied');
+        } catch (e) { showFlash('Manifest URL could not be prepared.', true); }
       });
 
       if (donateToggle && donationWidgetPanel) {
-        donateToggle.addEventListener('click', () => {
-          donationWidgetPanel.classList.toggle('open');
-        });
+        donateToggle.addEventListener('click', () => donationWidgetPanel.classList.toggle('open'));
       }
 
-      navItems.forEach((item) => {
-        item.addEventListener('click', () => {
-          const target = document.getElementById(item.dataset.sectionTarget || '');
-
-          if (!target) {
-            return;
-          }
-
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      navItems.forEach((it) => {
+        it.addEventListener('click', () => {
+          const t = document.getElementById(it.dataset.sectionTarget || '');
+          if (!t) return;
+          t.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
       });
 
-      const sectionObserver = new IntersectionObserver((entries) => {
-        const visibleEntry = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+      const observer = new IntersectionObserver((entries) => {
+        const v = entries.filter((e) => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!v) return;
+        const id = v.target.id;
+        navItems.forEach((it) => it.classList.toggle('is-active', it.dataset.sectionTarget === id));
+      }, { rootMargin: '-18% 0px -55% 0px', threshold: [0.1, 0.35, 0.6] });
 
-        if (!visibleEntry) {
-          return;
-        }
-
-        const activeId = visibleEntry.target.id;
-        navItems.forEach((item) => {
-          item.classList.toggle('is-active', item.dataset.sectionTarget === activeId);
-        });
-      }, {
-        rootMargin: '-18% 0px -55% 0px',
-        threshold: [0.1, 0.35, 0.6]
-      });
-
-      ['support-section', 'overview-section', 'presets-section', 'providers-section', 'sorting-section', 'filters-section', 'preview-section', 'notes-section']
+      ['overview-section','presets-section','providers-section','sorting-section','filters-section','ranking-section','preview-section','support-section','notes-section']
         .map((id) => document.getElementById(id))
         .filter(Boolean)
-        .forEach((section) => sectionObserver.observe(section));
+        .forEach((s) => observer.observe(s));
 
       renderProviderOptions();
       renderQualityList();
@@ -2698,7 +2201,6 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
   </body>
 </html>`;
 };
-
 const renderAdminPage = ({ stats }) => `<!doctype html>
 <html lang="en">
   <head>
