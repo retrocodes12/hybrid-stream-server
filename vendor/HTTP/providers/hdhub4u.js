@@ -68,11 +68,11 @@ var import_cheerio_without_node_native2 = __toESM(require("cheerio-without-node-
 // src/hdhub4u/constants.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var MAIN_URL = "https://new7.hdhub4u.fo";
+var MAIN_URL = "https://new6.hdhub4u.fo";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 var FALLBACK_DOMAINS = [
-  "https://new7.hdhub4u.fo",
   "https://new6.hdhub4u.fo",
+  "https://new7.hdhub4u.fo",
   "https://hdhub4u.tv",
   "https://hdhub4u.global"
 ];
@@ -695,12 +695,54 @@ function loadExtractor(_0) {
 }
 
 // src/hdhub4u/index.js
+function searchByImdbId(imdbId, season) {
+  return __async(this, null, function* () {
+    const domain = yield getCurrentDomain();
+    const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?query_by=imdb_id&q=${encodeURIComponent(imdbId)}`;
+    try {
+      const response = yield fetch(searchUrl, {
+        headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }),
+        signal: AbortSignal.timeout(8e3)
+      });
+      if (!response.ok) return [];
+      const data = yield response.json();
+      if (!data || !data.hits || data.hits.length === 0) return [];
+      return data.hits
+        .filter((hit) => {
+          if (hit.document.imdb_id !== imdbId) return false;
+          if (season) {
+            const title = hit.document.post_title;
+            const sPadded = String(season).padStart(2, "0");
+            return title.includes(`Season ${season}`) || title.includes(`S${season}`) || title.includes(`S${sPadded}`);
+          }
+          return true;
+        })
+        .map((hit) => {
+          const doc = hit.document;
+          const title = doc.post_title;
+          const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
+          const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+          let url = doc.permalink;
+          if (url && url.startsWith("/")) {
+            url = `${domain}${url}`;
+          }
+          return { title, url, poster: doc.post_thumbnail, year };
+        });
+    } catch (e) {
+      console.log(`[HDHub4u] IMDB search failed: ${e.message}`);
+      return [];
+    }
+  });
+}
 function search(query) {
   return __async(this, null, function* () {
-    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-    const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1&analytics_tag=${today}`;
+    const domain = yield getCurrentDomain();
+    const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1`;
     try {
-      const response = yield fetch(searchUrl, { headers: HEADERS, signal: AbortSignal.timeout(8e3) });
+      const response = yield fetch(searchUrl, {
+        headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }),
+        signal: AbortSignal.timeout(8e3)
+      });
       if (response.ok) {
         const data = yield response.json();
         if (data && data.hits && data.hits.length > 0) {
@@ -711,14 +753,14 @@ function search(query) {
             const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
             let url = doc.permalink;
             if (url && url.startsWith("/")) {
-              url = `${MAIN_URL}${url}`;
+              url = `${domain}${url}`;
             }
             return { title, url, poster: doc.post_thumbnail, year };
           });
         }
       }
     } catch (e) {
-      console.log(`[HDHub4u] Typesense search failed: ${e.message}`);
+      console.log(`[HDHub4u] Title search failed: ${e.message}`);
     }
     console.log(`[HDHub4u] Falling back to category scraping for: ${query}`);
     return yield searchByScraping(query);
@@ -912,9 +954,20 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
     console.log(`[HDHub4u] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
     try {
       const mediaInfo = yield getTMDBDetails(tmdbId, mediaType);
-      console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
-      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
-      const searchResults = yield search(searchQuery);
+      console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"}) [IMDB: ${mediaInfo.imdbId || "N/A"}]`);
+      let searchResults = [];
+      if (mediaInfo.imdbId) {
+        console.log(`[HDHub4u] Searching by IMDB ID: ${mediaInfo.imdbId}`);
+        searchResults = yield searchByImdbId(mediaInfo.imdbId, mediaType === "tv" ? season : null);
+        if (searchResults.length > 0) {
+          console.log(`[HDHub4u] IMDB search found ${searchResults.length} result(s)`);
+        }
+      }
+      if (searchResults.length === 0) {
+        console.log(`[HDHub4u] Falling back to title search`);
+        const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
+        searchResults = yield search(searchQuery);
+      }
       if (searchResults.length === 0)
         return [];
       const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);

@@ -6,13 +6,55 @@ import {
 } from './utils.js';
 import { loadExtractor, getRedirectLinks } from './extractors.js';
 
-async function search(query) {
-  // Try new Typesense search first (site now uses Typesense)
-  const today = (new Date()).toISOString().split("T")[0];
-  const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1&analytics_tag=${today}`;
+async function searchByImdbId(imdbId, season) {
+  const domain = await getCurrentDomain();
+  const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?query_by=imdb_id&q=${encodeURIComponent(imdbId)}`;
   
   try {
-    const response = await fetch(searchUrl, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+    const response = await fetch(searchUrl, { 
+      headers: { ...HEADERS, Referer: `${domain}/` },
+      signal: AbortSignal.timeout(8000) 
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (!data || !data.hits || data.hits.length === 0) return [];
+    
+    return data.hits
+      .filter(hit => {
+        if (hit.document.imdb_id !== imdbId) return false;
+        if (season) {
+          const title = hit.document.post_title;
+          const sPadded = String(season).padStart(2, '0');
+          return title.includes(`Season ${season}`) || title.includes(`S${season}`) || title.includes(`S${sPadded}`);
+        }
+        return true;
+      })
+      .map(hit => {
+        const doc = hit.document;
+        const title = doc.post_title;
+        const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
+        const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+        let url = doc.permalink;
+        if (url && url.startsWith("/")) {
+          url = `${domain}${url}`;
+        }
+        return { title, url, poster: doc.post_thumbnail, year };
+      });
+  } catch (e) {
+    console.log(`[HDHub4u] IMDB search failed: ${e.message}`);
+    return [];
+  }
+}
+
+async function search(query) {
+  const domain = await getCurrentDomain();
+  const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1`;
+  
+  try {
+    const response = await fetch(searchUrl, { 
+      headers: { ...HEADERS, Referer: `${domain}/` },
+      signal: AbortSignal.timeout(8000) 
+    });
     if (response.ok) {
       const data = await response.json();
       if (data && data.hits && data.hits.length > 0) {
@@ -23,17 +65,16 @@ async function search(query) {
           const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
           let url = doc.permalink;
           if (url && url.startsWith("/")) {
-            url = `${MAIN_URL}${url}`;
+            url = `${domain}${url}`;
           }
           return { title, url, poster: doc.post_thumbnail, year };
         });
       }
     }
   } catch (e) {
-    console.log(`[HDHub4u] Typesense search failed: ${e.message}`);
+    console.log(`[HDHub4u] Title search failed: ${e.message}`);
   }
   
-  // Fallback: scrape homepage + categories for recent posts
   console.log(`[HDHub4u] Falling back to category scraping for: ${query}`);
   return await searchByScraping(query);
 }
@@ -247,10 +288,25 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
   console.log(`[HDHub4u] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
   try {
     const mediaInfo = await getTMDBDetails(tmdbId, mediaType);
-    console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"})`);
+    console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"}) [IMDB: ${mediaInfo.imdbId || "N/A"}]`);
     
-    const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
-    const searchResults = await search(searchQuery);
+    // Try IMDB ID search first (most reliable via pingora)
+    let searchResults = [];
+    if (mediaInfo.imdbId) {
+      console.log(`[HDHub4u] Searching by IMDB ID: ${mediaInfo.imdbId}`);
+      searchResults = await searchByImdbId(mediaInfo.imdbId, mediaType === "tv" ? season : null);
+      if (searchResults.length > 0) {
+        console.log(`[HDHub4u] IMDB search found ${searchResults.length} result(s)`);
+      }
+    }
+    
+    // Fallback to title search
+    if (searchResults.length === 0) {
+      console.log(`[HDHub4u] Falling back to title search`);
+      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
+      searchResults = await search(searchQuery);
+    }
+    
     if (searchResults.length === 0) return [];
     
     const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
