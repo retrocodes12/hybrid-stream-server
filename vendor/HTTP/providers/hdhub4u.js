@@ -68,9 +68,11 @@ var import_cheerio_without_node_native2 = __toESM(require("cheerio-without-node-
 // src/hdhub4u/constants.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var MAIN_URL = "https://new3.hdhub4u.fo";
+var MAIN_URL = "https://new7.hdhub4u.fo";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 var FALLBACK_DOMAINS = [
+  "https://new7.hdhub4u.fo",
+  "https://new6.hdhub4u.fo",
   "https://hdhub4u.tv",
   "https://hdhub4u.global"
 ];
@@ -697,26 +699,101 @@ function search(query) {
   return __async(this, null, function* () {
     const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
     const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1&analytics_tag=${today}`;
-    const response = yield fetch(searchUrl, { headers: HEADERS });
-    const data = yield response.json();
-    if (!data || !data.hits)
-      return [];
-    return data.hits.map((hit) => {
-      const doc = hit.document;
-      const title = doc.post_title;
-      const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
-      const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
-      let url = doc.permalink;
-      if (url && url.startsWith("/")) {
-        url = `${MAIN_URL}${url}`;
+    try {
+      const response = yield fetch(searchUrl, { headers: HEADERS, signal: AbortSignal.timeout(8e3) });
+      if (response.ok) {
+        const data = yield response.json();
+        if (data && data.hits && data.hits.length > 0) {
+          return data.hits.map((hit) => {
+            const doc = hit.document;
+            const title = doc.post_title;
+            const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
+            const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+            let url = doc.permalink;
+            if (url && url.startsWith("/")) {
+              url = `${MAIN_URL}${url}`;
+            }
+            return { title, url, poster: doc.post_thumbnail, year };
+          });
+        }
       }
-      return {
-        title,
-        url,
-        poster: doc.post_thumbnail,
-        year
-      };
-    });
+    } catch (e) {
+      console.log(`[HDHub4u] Typesense search failed: ${e.message}`);
+    }
+    console.log(`[HDHub4u] Falling back to category scraping for: ${query}`);
+    return yield searchByScraping(query);
+  });
+}
+function searchByScraping(query) {
+  return __async(this, null, function* () {
+    const domain = yield getCurrentDomain();
+    const results = [];
+    const normalizedQuery = query.toLowerCase().replace(/[^\w\s]/g, "");
+    const queryWords = normalizedQuery.split(/\s+/).filter((w) => w.length > 2);
+    const pagesToScrape = [
+      `${domain}/`,
+      `${domain}/category/bollywood-movies/`,
+      `${domain}/category/hollywood-movies/`,
+      `${domain}/category/south-hindi-movies/`,
+      `${domain}/category/action-movies/`,
+      `${domain}/category/web-series/`
+    ];
+    for (const pageUrl of pagesToScrape.slice(0, 3)) {
+      try {
+        const response = yield fetch(pageUrl, {
+          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: `${domain}/` }),
+          signal: AbortSignal.timeout(1e4)
+        });
+        if (!response.ok)
+          continue;
+        const html = yield response.text();
+        const $ = import_cheerio_without_node_native2.default.load(html);
+        $('a[data-wpel-link="internal"], a[href*="-movie/"], a[href*="-series/"]').each((_, el) => {
+          const $el = $(el);
+          let href = $el.attr("href");
+          let titleText = $el.find("p").text().trim() || $el.text().trim() || $el.attr("title") || "";
+          if (!titleText) {
+            const $figure = $el.closest("figure, li, .thumb");
+            if ($figure.length) {
+              titleText = $figure.find("img").attr("alt") || $figure.find("img").attr("title") || "";
+            }
+          }
+          if (!titleText) {
+            titleText = $el.closest("figcaption, .post-title, h2, h3").text().trim();
+          }
+          if (!href || !titleText || href.includes("/category/") || href.includes("/page/"))
+            return;
+          const normalizedTitle = titleText.toLowerCase().replace(/[^\w\s]/g, "");
+          const matches = queryWords.filter((word) => normalizedTitle.includes(word)).length;
+          const matchRatio = queryWords.length > 0 ? matches / queryWords.length : 0;
+          if (matchRatio >= 0.4 || normalizedTitle.includes(normalizedQuery)) {
+            const yearMatch = titleText.match(/\((\d{4})\)|\b(\d{4})\b/);
+            const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+            let fullUrl = href;
+            if (href.startsWith("/")) {
+              fullUrl = `${domain}${href}`;
+            } else if (!href.startsWith("http")) {
+              fullUrl = `${domain}/${href}`;
+            }
+            if (!results.some((r) => r.url === fullUrl)) {
+              const $figure = $el.closest("figure, li, .thumb");
+              results.push({
+                title: titleText,
+                url: fullUrl,
+                poster: $figure.find("img").attr("src") || $el.find("img").attr("src") || "",
+                year,
+                _matchScore: matchRatio
+              });
+            }
+          }
+        });
+      } catch (e) {
+        console.log(`[HDHub4u] Error scraping ${pageUrl}: ${e.message}`);
+      }
+    }
+    results.sort((a, b) => b._matchScore - a._matchScore);
+    console.log(`[HDHub4u] Scraping found ${results.length} potential matches`);
+    return results.slice(0, 10);
   });
 }
 function getDownloadLinks(mediaUrl) {
