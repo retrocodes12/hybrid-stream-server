@@ -7,30 +7,127 @@ import {
 import { loadExtractor, getRedirectLinks } from './extractors.js';
 
 async function search(query) {
+  // Try new Typesense search first (site now uses Typesense)
   const today = (new Date()).toISOString().split("T")[0];
   const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?q=${encodeURIComponent(query)}&query_by=post_title,category&query_by_weights=4,2&sort_by=sort_by_date:desc&limit=15&highlight_fields=none&use_cache=true&page=1&analytics_tag=${today}`;
   
-  const response = await fetch(searchUrl, { headers: HEADERS });
-  const data = await response.json();
-  
-  if (!data || !data.hits) return [];
-  
-  return data.hits.map((hit) => {
-    const doc = hit.document;
-    const title = doc.post_title;
-    const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
-    const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
-    let url = doc.permalink;
-    if (url && url.startsWith("/")) {
-      url = `${MAIN_URL}${url}`;
+  try {
+    const response = await fetch(searchUrl, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.hits && data.hits.length > 0) {
+        return data.hits.map((hit) => {
+          const doc = hit.document;
+          const title = doc.post_title;
+          const yearMatch = title.match(/\((\d{4})\)|\b(\d{4})\b/);
+          const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+          let url = doc.permalink;
+          if (url && url.startsWith("/")) {
+            url = `${MAIN_URL}${url}`;
+          }
+          return { title, url, poster: doc.post_thumbnail, year };
+        });
+      }
     }
-    return {
-      title,
-      url,
-      poster: doc.post_thumbnail,
-      year
-    };
-  });
+  } catch (e) {
+    console.log(`[HDHub4u] Typesense search failed: ${e.message}`);
+  }
+  
+  // Fallback: scrape homepage + categories for recent posts
+  console.log(`[HDHub4u] Falling back to category scraping for: ${query}`);
+  return await searchByScraping(query);
+}
+
+async function searchByScraping(query) {
+  const domain = await getCurrentDomain();
+  const results = [];
+  const normalizedQuery = query.toLowerCase().replace(/[^\w\s]/g, '');
+  const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length > 2);
+  
+  // Pages to scrape: homepage + popular categories
+  const pagesToScrape = [
+    `${domain}/`,
+    `${domain}/category/bollywood-movies/`,
+    `${domain}/category/hollywood-movies/`,
+    `${domain}/category/south-hindi-movies/`,
+    `${domain}/category/action-movies/`,
+    `${domain}/category/web-series/`
+  ];
+  
+  for (const pageUrl of pagesToScrape.slice(0, 3)) { // Limit to first 3 for speed
+    try {
+      const response = await fetch(pageUrl, { 
+        headers: { ...HEADERS, Referer: `${domain}/` },
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok) continue;
+      
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      
+      // hdhub4u DOM: <figure><img alt="TITLE"><a href="URL"></a></figure><figcaption><a><p>TITLE</p></a></figcaption>
+      // Match any internal link to a movie page
+      $('a[data-wpel-link="internal"], a[href*="-movie/"], a[href*="-series/"]').each((_, el) => {
+        const $el = $(el);
+        let href = $el.attr('href');
+        
+        // Get title from adjacent elements (img alt/title, or <p> in figcaption)
+        let titleText = $el.find('p').text().trim() || $el.text().trim() || $el.attr('title') || '';
+        if (!titleText) {
+          // Try getting from sibling/previous img
+          const $figure = $el.closest('figure, li, .thumb');
+          if ($figure.length) {
+            titleText = $figure.find('img').attr('alt') || $figure.find('img').attr('title') || '';
+          }
+        }
+        // Also try parent's text
+        if (!titleText) {
+          titleText = $el.closest('figcaption, .post-title, h2, h3').text().trim();
+        }
+        
+        if (!href || !titleText || href.includes('/category/') || href.includes('/page/')) return;
+        
+        // Normalize title for matching
+        const normalizedTitle = titleText.toLowerCase().replace(/[^\w\s]/g, '');
+        
+        // Check if query words appear in title
+        const matches = queryWords.filter(word => normalizedTitle.includes(word)).length;
+        const matchRatio = queryWords.length > 0 ? matches / queryWords.length : 0;
+        
+        if (matchRatio >= 0.4 || normalizedTitle.includes(normalizedQuery)) {
+          const yearMatch = titleText.match(/\((\d{4})\)|\b(\d{4})\b/);
+          const year = yearMatch ? parseInt(yearMatch[1] || yearMatch[2]) : null;
+          
+          let fullUrl = href;
+          if (href.startsWith('/')) {
+            fullUrl = `${domain}${href}`;
+          } else if (!href.startsWith('http')) {
+            fullUrl = `${domain}/${href}`;
+          }
+          
+          // Avoid duplicates
+          if (!results.some(r => r.url === fullUrl)) {
+            const $figure = $el.closest('figure, li, .thumb');
+            results.push({
+              title: titleText,
+              url: fullUrl,
+              poster: $figure.find('img').attr('src') || $el.find('img').attr('src') || '',
+              year,
+              _matchScore: matchRatio
+            });
+          }
+        }
+      });
+    } catch (e) {
+      console.log(`[HDHub4u] Error scraping ${pageUrl}: ${e.message}`);
+    }
+  }
+  
+  // Sort by match score
+  results.sort((a, b) => b._matchScore - a._matchScore);
+  
+  console.log(`[HDHub4u] Scraping found ${results.length} potential matches`);
+  return results.slice(0, 10); // Return top 10
 }
 
 async function getDownloadLinks(mediaUrl) {
