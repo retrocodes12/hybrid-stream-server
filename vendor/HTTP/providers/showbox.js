@@ -273,19 +273,29 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
         }
 
         // Check for API error messages in response
-        if (data.error || data.message) {
+        if (data.error || (data.message && !data.versions && !data.file)) {
             console.error(`[ShowBox] API Error: ${data.error || data.message}`);
             return streams;
         }
 
-        if (!data.success) {
+        if (data.success === false) {
             console.error(`[ShowBox] API returned unsuccessful response (success=false)`);
             return streams;
         }
 
         if (!data.versions || !Array.isArray(data.versions) || data.versions.length === 0) {
-            console.log(`[ShowBox] No versions found in API response`);
-            return streams;
+            // Try extracting from 'file' array (alternate response format)
+            if (data.file && Array.isArray(data.file) && data.file.length > 0) {
+                console.log(`[ShowBox] No versions but found ${data.file.length} file(s), converting`);
+                data.versions = data.file.map(f => ({
+                    quality: f.quality || f.label || 'Unknown',
+                    size: f.size || f.fsize || '',
+                    links: f.path ? [{ link: f.path }] : (f.links || [])
+                }));
+            } else {
+                console.log(`[ShowBox] No versions or files found in API response`);
+                return streams;
+            }
         }
 
         console.log(`[ShowBox] Processing ${data.versions.length} version(s)`);

@@ -1992,7 +1992,7 @@ export class ProviderService {
             .filter((providerId) => !primaryProviderIds.includes(providerId))
             .slice(0, Math.max(4, Math.min(8, config.STREMIO_FAST_PROVIDER_LIMIT)));
 
-        const defaultProviderParallelTimeoutMs = 12_000;
+        const defaultProviderParallelTimeoutMs = 20_000;
 
         const runProvider = async (providerId) => {
           const providerAbortController = new AbortController();
