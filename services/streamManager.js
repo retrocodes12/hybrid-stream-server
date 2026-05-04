@@ -1551,14 +1551,46 @@ const getTorrentSources = (magnet) => {
 const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_STREAM_OPTIONS) => {
   const streamQuality = stream.quality || 'Unknown';
   const providerLabel = stream.provider ? toTitleCaseLabel(stream.provider) : 'Default';
-  const factsLine = formatStremioCardFacts(stream);
-  const detailedTitle = formatStremioCardTitle(stream);
+  const filename = stream.filename || extractFilenameFromUrl(stream.url) || '';
+  const visualTags = getVisualTags(stream);
+  const encodeTags = getEncodeTags(stream);
+  const audioTags = getAudioTags(stream);
+  const languageLabel = getLanguageLabel(stream);
+  const sourceLabel = getSourceLabel(stream);
+  const sizeLabel = getStreamSizeLabel(stream);
+
+  const qualityLabel = normalizeQualityKey(streamQuality) === '2160p'
+    ? '4K'
+    : normalizeQualityKey(streamQuality) === 'unknown'
+      ? streamQuality.toUpperCase()
+      : normalizeQualityKey(streamQuality).toUpperCase();
+
+  const nameLine = `NebulaStreams ${qualityLabel} | ${providerLabel}`;
+
+  const titleLines = [];
+  if (filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))) {
+    titleLines.push(filename);
+  } else if (stream.title) {
+    titleLines.push(String(stream.title).split('\n')[0]);
+  }
+
+  const metaParts = [];
+  if (visualTags.length > 0) metaParts.push(...visualTags.slice(0, 3));
+  if (encodeTags.length > 0) metaParts.push(...encodeTags.slice(0, 2));
+  if (metaParts.length > 0) titleLines.push(`📺 ${metaParts.join(' · ')}`);
+
+  if (audioTags.length > 0) titleLines.push(`🎧 ${audioTags.slice(0, 3).join(' · ')}`);
+
+  if (sizeLabel) titleLines.push(`💾 ${sizeLabel}`);
+
+  if (languageLabel) titleLines.push(`🌐 ${languageLabel}`);
+
+  titleLines.push(`🔗 ${sourceLabel || providerLabel}`);
+
   const base = {
-    name: factsLine
-      ? `NebulaStreams ${streamQuality} | ${providerLabel}\n${factsLine}`
-      : `NebulaStreams ${streamQuality} | ${providerLabel}`,
-    title: detailedTitle,
-    description: factsLine || detailedTitle,
+    name: nameLine,
+    title: titleLines.join('\n'),
+    description: titleLines.join('\n'),
     behaviorHints: {
       bingeGroup: parsedRequest.mediaType === 'series'
         ? `${parsedRequest.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
@@ -1596,7 +1628,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   return {
     ...base,
     url: streamUrl,
-    ...(stream.filename || extractFilenameFromUrl(streamUrl) ? { filename: stream.filename || extractFilenameFromUrl(streamUrl) } : {}),
+    ...(filename ? { filename } : {}),
     behaviorHints: {
       ...base.behaviorHints,
       notWebReady: !isWebReady,
@@ -3595,7 +3627,7 @@ export class StreamManager {
                   headers: resolvedEntry.headers,
                   transport: 'http',
                   url: resolvedEntry.url,
-                  filename: extractFilenameFromUrl(resolvedEntry.url)
+                  filename: rest.filename || extractFilenameFromUrl(resolvedEntry.url)
                 });
               }
 
@@ -3611,7 +3643,7 @@ export class StreamManager {
             ...(variant.transport === 'http'
               ? {
                   url: normalizedUrl,
-                  filename: extractFilenameFromUrl(normalizedUrl)
+                  filename: rest.filename || extractFilenameFromUrl(normalizedUrl)
                 }
               : {
                   magnet: normalizedMagnet,
