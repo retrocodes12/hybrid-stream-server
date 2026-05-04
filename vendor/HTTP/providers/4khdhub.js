@@ -91,13 +91,13 @@ function getTmdbDetails(tmdbId, type) {
     console.log(`[4KHDHub] Fetching TMDB details from: ${url}`);
     try {
       let response;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
         try {
           response = yield fetch(url, { signal: AbortSignal.timeout(5000) });
           break;
         } catch (retryErr) {
-          if (attempt === 2) throw retryErr;
-          yield new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          if (attempt === 4) throw retryErr;
+          yield new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
       }
       const data = yield response.json();
@@ -627,14 +627,22 @@ function getStreams(tmdbId, type, season, episode) {
             // Line 5: audio (no space after emoji)
             if (cardInfo.audio) lines.push("\uD83C\uDFB5" + cardInfo.audio);
 
+            const sizeLabel = formatBytes(link.meta.bytes || 0);
+            if (sizeLabel) lines.push("\uD83D\uDCBE " + sizeLabel);
+            lines.push("\uD83D\uDD17 " + link.source + " from 4KHDHub");
+
             return {
               name: `4KHDHub - ${link.source}${sourceResult.meta.height ? ` ${sourceResult.meta.height}p` : ""}`,
               title: lines.join("\n"),
               url: link.url,
               quality: sourceResult.meta.height ? `${sourceResult.meta.height}p` : void 0,
-              size: formatBytes(link.meta.bytes || 0),
+              size: sizeLabel,
+              filename: sourceResult.meta.title || void 0,
+              provider: "4khdhub",
               behaviorHints: {
-                bingeGroup: `4khdhub-${link.source}`
+                bingeGroup: `4khdhub-${link.source}`,
+                notWebReady: true,
+                ...(link.meta.bytes ? { videoSize: link.meta.bytes } : {})
               }
             };
           });

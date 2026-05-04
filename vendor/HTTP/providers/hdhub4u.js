@@ -312,7 +312,7 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === "tv" ? "tv" : "movie";
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
     let response;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         response = yield fetch(url, {
           method: "GET",
@@ -321,8 +321,8 @@ function getTMDBDetails(tmdbId, mediaType) {
         });
         break;
       } catch (retryErr) {
-        if (attempt === 2) throw retryErr;
-        yield new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        if (attempt === 4) throw retryErr;
+        yield new Promise(r => setTimeout(r, 300 * (attempt + 1)));
       }
     }
     if (!response.ok)
@@ -1008,14 +1008,26 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         } else if (typeof link.quality === "string") {
           qualityStr = link.quality;
         }
+        const sizeLabel = formatBytes(link.size);
+        const titleLines = [mediaTitle];
+        if (qualityStr !== "Unknown") titleLines[0] += ` ${qualityStr}`;
+        if (sizeLabel) titleLines.push("\uD83D\uDCBE " + sizeLabel);
+        titleLines.push("\uD83D\uDD17 " + serverName + " from HDHub4u");
+
         return {
-          name: `HDHub4u ${serverName}`,
-          title: mediaTitle,
+          name: `HDHub4u ${serverName} ${qualityStr}`,
+          title: titleLines.join("\n"),
           url: link.url,
           quality: qualityStr,
-          size: formatBytes(link.size),
+          size: sizeLabel,
+          filename: link.fileName && link.fileName !== "Unknown" ? link.fileName : void 0,
           headers: HEADERS,
-          provider: "hdhub4u"
+          provider: "hdhub4u",
+          behaviorHints: {
+            bingeGroup: `hdhub4u-${serverName}`,
+            notWebReady: true,
+            ...(link.size ? { videoSize: link.size } : {})
+          }
         };
       });
       const qualityOrder = { "4K": 4, "1080p": 2, "720p": 1, "480p": 0, "Unknown": -2 };

@@ -1591,13 +1591,16 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const streamUrl = proxiedUrl || stream.url;
   const isWebReady = proxiedUrl ? true : isWebReadyHttpStream(stream);
 
+  const videoSize = stream.behaviorHints?.videoSize || parseSizeBytes(stream.size) || undefined;
+
   return {
     ...base,
     url: streamUrl,
-    ...(extractFilenameFromUrl(streamUrl) ? { filename: extractFilenameFromUrl(streamUrl) } : {}),
+    ...(stream.filename || extractFilenameFromUrl(streamUrl) ? { filename: stream.filename || extractFilenameFromUrl(streamUrl) } : {}),
     behaviorHints: {
       ...base.behaviorHints,
       notWebReady: !isWebReady,
+      ...(videoSize ? { videoSize } : {}),
       ...(requestHeaders ? {
         proxyHeaders: {
           request: requestHeaders
