@@ -2182,7 +2182,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 46,
+      version: 47,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2598,16 +2598,16 @@ export class StreamManager {
 
     res.json({
       id: addonPresentation.addonId,
-      version: '1.0.0',
+      version: '1.0.1',
       name: addonPresentation.addonName,
       description: addonPresentation.description,
       resources: [{
         name: 'stream',
         types: ['movie', 'series'],
-        idPrefixes: ['tt']
+        idPrefixes: ['tt', 'tmdb:']
       }],
       types: ['movie', 'series'],
-      idPrefixes: ['tt'],
+      idPrefixes: ['tt', 'tmdb:'],
       catalogs: [],
       behaviorHints: {
         configurable: addonPresentation.configurable
@@ -2632,22 +2632,24 @@ export class StreamManager {
 
     try {
       const parsed = this.parseStremioStreamRequest(req.params.type, req.params.id);
-      let tmdbId;
+      let tmdbId = parsed.tmdbId;
 
-      try {
-        tmdbId = await this.imdbResolver.resolve({
-          imdbId: parsed.imdbId,
-          mediaType: parsed.mediaType
-        });
-      } catch (error) {
-        logger.warn('stremio imdb resolution failed', {
-          imdbId: parsed.imdbId,
-          mediaType: parsed.mediaType,
-          error
-        });
-        clearTimeout(overallTimeout);
-        this.sendStremioStreamsResponse(res, []);
-        return;
+      if (!tmdbId) {
+        try {
+          tmdbId = await this.imdbResolver.resolve({
+            imdbId: parsed.imdbId,
+            mediaType: parsed.mediaType
+          });
+        } catch (error) {
+          logger.warn('stremio imdb resolution failed', {
+            imdbId: parsed.imdbId,
+            mediaType: parsed.mediaType,
+            error
+          });
+          clearTimeout(overallTimeout);
+          this.sendStremioStreamsResponse(res, []);
+          return;
+        }
       }
 
       if (!tmdbId) {
@@ -3693,26 +3695,60 @@ export class StreamManager {
       throw createHttpError(400, 'Unsupported Stremio stream type');
     }
 
+    const parseIdParts = () => {
+      if (normalizedId.startsWith('tmdb:')) {
+        const [, rawTmdbId, rawSeason, rawEpisode] = normalizedId.split(':');
+        const tmdbId = Number.parseInt(rawTmdbId, 10);
+
+        if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
+          throw createHttpError(400, 'TMDB stream id must be in tmdb:id or tmdb:id:season:episode format');
+        }
+
+        return {
+          imdbId: null,
+          tmdbId,
+          rawSeason,
+          rawEpisode
+        };
+      }
+
+      const [imdbId, rawSeason, rawEpisode] = normalizedId.split(':');
+
+      if (!/^tt\d+$/u.test(imdbId || '')) {
+        throw createHttpError(400, 'Stremio stream id must use an IMDb tt prefix or tmdb: prefix');
+      }
+
+      return {
+        imdbId,
+        tmdbId: null,
+        rawSeason,
+        rawEpisode
+      };
+    };
+
+    const parsedId = parseIdParts();
+
     if (normalizedType === 'movie') {
       return {
         mediaType: 'movie',
-        imdbId: normalizedId,
+        imdbId: parsedId.imdbId,
+        tmdbId: parsedId.tmdbId,
         season: null,
         episode: null
       };
     }
 
-    const [imdbId, rawSeason, rawEpisode] = normalizedId.split(':');
-    const season = Number.parseInt(rawSeason, 10);
-    const episode = Number.parseInt(rawEpisode, 10);
+    const season = Number.parseInt(parsedId.rawSeason, 10);
+    const episode = Number.parseInt(parsedId.rawEpisode, 10);
 
-    if (!imdbId || !Number.isInteger(season) || !Number.isInteger(episode)) {
-      throw createHttpError(400, 'Series stream id must be in imdb:season:episode format');
+    if (!Number.isInteger(season) || !Number.isInteger(episode)) {
+      throw createHttpError(400, 'Series stream id must be in imdb:season:episode or tmdb:id:season:episode format');
     }
 
     return {
       mediaType: 'series',
-      imdbId,
+      imdbId: parsedId.imdbId || `tmdb:${parsedId.tmdbId}`,
+      tmdbId: parsedId.tmdbId,
       season,
       episode
     };

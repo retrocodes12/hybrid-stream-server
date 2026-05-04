@@ -29,6 +29,7 @@ const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   hdhub4u: 45_000,
   uhdmovies: 30_000
 });
+const PROVIDER_RESULT_CACHE_SCHEMA_VERSION = 2;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT = 2;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   'enc-dec.app': 1,
@@ -1706,7 +1707,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v2',
+      version: 'two-phase-v3',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2148,6 +2149,7 @@ export class ProviderService {
     const normalizedSeason = toOptionalInteger(season);
     const normalizedEpisode = toOptionalInteger(episode);
     const cacheKey = JSON.stringify({
+      schemaVersion: PROVIDER_RESULT_CACHE_SCHEMA_VERSION,
       version: getProviderCacheVersion(providerId),
       provider: providerId,
       tmdbId: normalizedTmdbId,
