@@ -55,7 +55,7 @@ function fetchLatestDomain() {
     const now = Date.now();
     if (now - domainCache.ts < 36e5) return domainCache.url;
     try {
-      const response = yield fetch(DOMAINS_URL);
+      const response = yield fetch(DOMAINS_URL, { signal: AbortSignal.timeout(5000) });
       const data = yield response.json();
       if (data && data["4khdhub"]) {
         domainCache.url = data["4khdhub"];
@@ -73,7 +73,7 @@ function fetchText(_0) {
       const headers = __spreadValues({
         "User-Agent": USER_AGENT
       }, options.headers);
-      const response = yield fetch(url, { headers });
+      const response = yield fetch(url, { headers, signal: AbortSignal.timeout(10000) });
       return yield response.text();
     } catch (err) {
       console.log(`[4KHDHub] Request failed for ${url}: ${err.message}`);
@@ -90,7 +90,16 @@ function getTmdbDetails(tmdbId, type) {
     const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
     console.log(`[4KHDHub] Fetching TMDB details from: ${url}`);
     try {
-      const response = yield fetch(url);
+      let response;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          response = yield fetch(url, { signal: AbortSignal.timeout(5000) });
+          break;
+        } catch (retryErr) {
+          if (attempt === 2) throw retryErr;
+          yield new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        }
+      }
       const data = yield response.json();
       if (isSeries) {
         return {

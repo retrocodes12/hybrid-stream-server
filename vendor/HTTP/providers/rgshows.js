@@ -35,24 +35,25 @@ function getTmdbInfo(tmdbId, mediaType) {
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
   mediaType = mediaType || "movie";
   
+  var streamHeaders = {
+    "Referer": "https://www.rgshows.ru/",
+    "Origin": "https://www.rgshows.ru",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 15; ALT-NX1 Build/HONORALT-N31; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/146.0.7680.177 Mobile Safari/537.36",
+    "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Android WebView";v="146"',
+    "sec-ch-ua-mobile": "?1",
+    "sec-ch-ua-platform": '"Android"',
+    "Accept": "*/*",
+    "Accept-Encoding": "identity;q=1, *;q=0"
+  };
+
   return getTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
       var url = "https://" + RGSHOWS_BASE + "/main/" + (mediaType === "movie" ? "movie/" + tmdbId : "tv/" + tmdbId + "/" + seasonNum + "/" + episodeNum);
 
-      // Using the specific headers you identified as working
-      var streamHeaders = {
-        "Referer": "https://www.rgshows.ru/",
-        "Origin": "https://www.rgshows.ru",
-        "User-Agent": "Mozilla/5.0 (Linux; Android 15; ALT-NX1 Build/HONORALT-N31; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/146.0.7680.177 Mobile Safari/537.36",
-        "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Android WebView";v="146"',
-        "sec-ch-ua-mobile": "?1",
-        "sec-ch-ua-platform": '"Android"',
-        "Accept": "*/*",
-        "Accept-Encoding": "identity;q=1, *;q=0"
-      };
-
-      return makeRequest(url, { headers: streamHeaders })
-        .then(function(r) { return r.json(); })
+      return Promise.race([
+        makeRequest(url, { headers: streamHeaders }).then(function(r) { return r.json(); }),
+        new Promise(function(_, reject) { setTimeout(function() { reject(new Error("RGShows timeout")); }, 5000); })
+      ])
         .then(function(data) {
           if (!data || !data.stream || !data.stream.url || data.stream.url.includes("vidzee.wtf")) {
             return [];
@@ -67,7 +68,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             title: label,
             url: data.stream.url,
             quality: "Auto",
-            headers: streamHeaders, // Passing the working headers to the player
+            headers: streamHeaders,
             provider: "rgshows"
           }];
         });

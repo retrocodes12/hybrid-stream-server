@@ -347,8 +347,8 @@ async function resolveDirectStreams(media, type, season, episode) {
         : `/embed/${imdbId}/`;
     const ipHeader = randomIp();
 
-    // Try domains in random order to spread load and bypass blocks
-    const domains = shuffle(VSEMBED_DOMAINS);
+    // Try domains in random order — limit to 3 to avoid timeout
+    const domains = shuffle(VSEMBED_DOMAINS).slice(0, 3);
     for (const domain of domains) {
         try {
             const direct = await tryDirectExtraction(domain, embedPath, ipHeader);

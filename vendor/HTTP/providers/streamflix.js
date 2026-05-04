@@ -77,7 +77,7 @@ function sfFetch(url, opts) {
   var fetchOpts = Object.assign({}, opts, { headers: headers });
   // AbortSignal graceful — not all runtimes support it
   if (!fetchOpts.signal) {
-    try { fetchOpts.signal = AbortSignal.timeout(25000); } catch (e) {}
+    try { fetchOpts.signal = AbortSignal.timeout(12000); } catch (e) {}
   }
   return fetch(url, fetchOpts).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url.split('?')[0]);
@@ -90,13 +90,13 @@ function sfGet(url, retries) {
   var attempt = 0;
 
   function tryOnce() {
-    var timeoutMs = 30000 + attempt * 15000;
+    var timeoutMs = 10000 + attempt * 5000;
     var opts = {};
     try { opts.signal = AbortSignal.timeout(timeoutMs); } catch (e) {}
     return sfFetch(url, opts).catch(function (e) {
       attempt++;
       if (attempt >= retries) throw e;
-      return new Promise(function (res) { setTimeout(res, 2000 * attempt); }).then(tryOnce);
+      return new Promise(function (res) { setTimeout(res, 1000 * attempt); }).then(tryOnce);
     });
   }
 

@@ -1,7 +1,7 @@
 const cheerio = require('cheerio-without-node-native');
 
 // Konstanta dari file Adicinemax21Extractor.kt
-const MAIN_URL = "https://kisskh.xyz";
+const MAIN_URL = "https://kisskh.ovh";
 // URL Google Script untuk generate key (PENTING)
 const KISSKH_API = "https://script.google.com/macros/s/AKfycbzn8B31PuDxzaMa9_CQ0VGEDasFqfzI5bXvjaIZH4DM8DNq9q6xj1ALvZNz_JT3jF0suA/exec?id=";
 
@@ -14,7 +14,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=b030404650f279792a8d3287232358e3`; // API Key umum dari source code Kotlin
 
-        fetch(tmdbUrl)
+        fetch(tmdbUrl, { signal: AbortSignal.timeout(4000) })
             .then(res => res.json())
             .then(tmdbData => {
                 const title = tmdbData.title || tmdbData.name || tmdbData.original_title;
@@ -23,7 +23,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 // 1. Cari Drama di Kisskh
                 const searchUrl = `${MAIN_URL}/api/DramaList/Search?q=${encodeURIComponent(title)}&type=0`;
 
-                return fetch(searchUrl)
+                return fetch(searchUrl, { signal: AbortSignal.timeout(6000) })
                     .then(res => res.json())
                     .then(searchList => {
                         // Logika pencarian mirip Kotlin: Cek exact match, lalu fuzzy match
@@ -40,7 +40,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(dramaId => {
                 // 2. Ambil Detail Drama untuk dapat List Episode
-                return fetch(`${MAIN_URL}/api/DramaList/Drama/${dramaId}?isq=false`)
+                return fetch(`${MAIN_URL}/api/DramaList/Drama/${dramaId}?isq=false`, { signal: AbortSignal.timeout(6000) })
                     .then(res => res.json())
                     .then(detail => {
                         const episodes = detail.episodes;
@@ -66,14 +66,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 // Source: invokeKisskh di Kotlin
                 const keyUrl = `${KISSKH_API}${epsId}&version=2.8.10`;
 
-                return fetch(keyUrl)
+                return fetch(keyUrl, { signal: AbortSignal.timeout(6000) })
                     .then(res => res.json())
                     .then(keyData => {
                         if (!keyData.key) throw new Error("Gagal mengambil kunci video");
 
                         // 4. Ambil Source Video
                         const videoApi = `${MAIN_URL}/api/DramaList/Episode/${epsId}.png?err=false&ts=&time=&kkey=${keyData.key}`;
-                        return fetch(videoApi);
+                        return fetch(videoApi, { signal: AbortSignal.timeout(6000) });
                     })
                     .then(res => res.json())
                     .then(sources => {

@@ -24,6 +24,8 @@ const PROVIDER_FETCH_DISPATCHER = new Agent({
   connect: { family: 4 }
 });
 const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
+  '4khdhub': 45_000,
+  '4khdhub_tv': 45_000,
   hdhub4u: 45_000,
   uhdmovies: 30_000
 });
@@ -320,7 +322,10 @@ if (nativeFetch && !globalThis.fetch.__nebulaProviderAbortWrapped) {
     }
 
     if (!nextInit.dispatcher) {
-      nextInit.dispatcher = PROVIDER_FETCH_DISPATCHER;
+      const host = requestUrl?.hostname || '';
+      if (!host.includes('themoviedb.org') && !host.includes('tmdb.org')) {
+        nextInit.dispatcher = PROVIDER_FETCH_DISPATCHER;
+      }
     }
 
     if (!providerFetchContext || !requestUrl || !['http:', 'https:'].includes(requestUrl.protocol)) {
@@ -445,16 +450,18 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   uhdmovies: 55,
   moviebox: 20,
   moviesmod: 40,
-  multivid: 20,
+  multivid: 15,
   nakios: 25,
   vidzee: 20,
   frembed: 25,
   einschalten: 20,
   filmpalast: 25,
-  playimdb: 20,
-  playimdb_v2: 20,
-  rgshows: 20,
-  streamflix: 20,
+  playimdb: 15,
+  playimdb_v2: 15,
+  rgshows: 10,
+  kisskh: 15,
+  onlykdrama: 18,
+  streamflix: 18,
   toflix: 25,
   vidsrc: 20,
   vidlink: 20,
@@ -478,7 +485,12 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   playimdb: 8,
   playimdb_v2: 8,
   uhdmovies: 15,
-  showbox: 8
+  showbox: 8,
+  rgshows: 5,
+  kisskh: 8,
+  multivid: 8,
+  onlykdrama: 10,
+  streamflix: 10
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 6_000,
@@ -486,7 +498,13 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   hdhub4u: 20_000,
   uhdmovies: 20_000,
   moviesmod: 18_000,
-  streamflix: 16_000
+  streamflix: 18_000,
+  multivid: 12_000,
+  playimdb: 12_000,
+  playimdb_v2: 12_000,
+  rgshows: 8_000,
+  kisskh: 12_000,
+  onlykdrama: 15_000
 });
 const getProviderTimeoutSeconds = (providerId, params = null) => {
   if (params?.enforceFastTimeout) {
