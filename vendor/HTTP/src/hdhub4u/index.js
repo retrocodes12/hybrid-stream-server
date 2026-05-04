@@ -292,16 +292,21 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
     
     // Try IMDB ID search first (most reliable via pingora)
     let searchResults = [];
+    let usedImdbSearch = false;
     if (mediaInfo.imdbId) {
       console.log(`[HDHub4u] Searching by IMDB ID: ${mediaInfo.imdbId}`);
       searchResults = await searchByImdbId(mediaInfo.imdbId, mediaType === "tv" ? season : null);
       if (searchResults.length > 0) {
+        usedImdbSearch = true;
         console.log(`[HDHub4u] IMDB search found ${searchResults.length} result(s)`);
       }
     }
     
-    // Fallback to title search
     if (searchResults.length === 0) {
+      if (mediaInfo.imdbId) {
+        console.log(`[HDHub4u] IMDB search found no matching posts`);
+        return [];
+      }
       console.log(`[HDHub4u] Falling back to title search`);
       const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
       searchResults = await search(searchQuery);
@@ -310,11 +315,19 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
     if (searchResults.length === 0) return [];
     
     const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
+    if (!bestMatch && !usedImdbSearch) {
+      console.log(`[HDHub4u] No reliable title match found`);
+      return [];
+    }
     const selectedMedia = bestMatch || searchResults[0];
-    console.log(`[HDHub4u] Selected: "${selectedMedia.title}" (${selectedMedia.url})`);
+    const selectedMediaList = usedImdbSearch ? searchResults : [selectedMedia];
+    console.log(`[HDHub4u] Selected ${selectedMediaList.length} page(s)`);
     
-    const result = await getDownloadLinks(selectedMedia.url);
-    const finalLinks = result.finalLinks;
+    const pageResults = await Promise.all(selectedMediaList.map(async (media) => {
+      console.log(`[HDHub4u] Selected: "${media.title}" (${media.url})`);
+      return await getDownloadLinks(media.url);
+    }));
+    const finalLinks = pageResults.flatMap(result => result.finalLinks);
     let filteredLinks = finalLinks;
     
     if (mediaType === "tv" && episode !== null) {

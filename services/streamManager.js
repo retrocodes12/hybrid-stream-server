@@ -1565,35 +1565,51 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
       ? streamQuality.toUpperCase()
       : normalizeQualityKey(streamQuality).toUpperCase();
 
-  const nameLine = `NebulaStreams ${qualityLabel} | ${providerLabel}`;
+  const nameLine = `NebulaStreams ${qualityLabel}`;
 
-  const titleLines = [];
-  if (filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))) {
-    titleLines.push(filename);
-  } else if (stream.title) {
-    titleLines.push(String(stream.title).split('\n')[0]);
+  const primaryCardTitle = filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))
+    ? filename
+    : String(stream.title || '').split('\n')[0];
+  const webstreamrTitleLines = [];
+
+  if (primaryCardTitle) {
+    webstreamrTitleLines.push(truncateCardLine(primaryCardTitle, 140));
   }
 
-  const metaParts = [];
-  if (visualTags.length > 0) metaParts.push(...visualTags.slice(0, 3));
-  if (encodeTags.length > 0) metaParts.push(...encodeTags.slice(0, 2));
-  if (metaParts.length > 0) titleLines.push(`📺 ${metaParts.join(' · ')}`);
+  const webstreamrDetails = [];
+  if (sizeLabel) webstreamrDetails.push(`💾 ${sizeLabel}`);
+  webstreamrDetails.push(
+    sourceLabel && sourceLabel !== providerLabel
+      ? `🔗 ${sourceLabel} from ${providerLabel}`
+      : `🔗 ${providerLabel}`
+  );
+  webstreamrTitleLines.push(webstreamrDetails.join(' '));
 
-  if (audioTags.length > 0) titleLines.push(`🎧 ${audioTags.slice(0, 3).join(' · ')}`);
+  const webstreamrTech = [
+    ...visualTags.slice(0, 3),
+    ...encodeTags.slice(0, 2)
+  ];
+  if (webstreamrTech.length > 0) {
+    webstreamrTitleLines.push(`📺 ${[...new Set(webstreamrTech)].join(' · ')}`);
+  }
 
-  if (sizeLabel) titleLines.push(`💾 ${sizeLabel}`);
+  const webstreamrAudio = [
+    ...audioTags.slice(0, 3),
+    ...(languageLabel && languageLabel !== 'Unknown' ? [languageLabel] : [])
+  ];
+  if (webstreamrAudio.length > 0) {
+    webstreamrTitleLines.push(`🎧 ${[...new Set(webstreamrAudio)].join(' · ')}`);
+  }
 
-  if (languageLabel) titleLines.push(`🌐 ${languageLabel}`);
-
-  titleLines.push(`🔗 ${sourceLabel || providerLabel}`);
+  const cardTitle = webstreamrTitleLines.filter(Boolean).join('\n');
 
   const base = {
     name: nameLine,
-    title: titleLines.join('\n'),
-    description: titleLines.join('\n'),
+    title: cardTitle,
+    description: cardTitle,
     behaviorHints: {
       bingeGroup: parsedRequest.mediaType === 'series'
-        ? `${parsedRequest.imdbId}:${stream.provider || 'default'}:${stream.quality || 'unknown'}`
+        ? `nebulastreams-${stream.provider || 'default'}-${getStreamHostname(stream) || 'torrent'}-${normalizeQualityKey(stream.quality)}`
         : undefined
     }
   };
@@ -2182,7 +2198,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 47,
+      version: 49,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2598,7 +2614,7 @@ export class StreamManager {
 
     res.json({
       id: addonPresentation.addonId,
-      version: '1.0.1',
+      version: '1.0.3',
       name: addonPresentation.addonName,
       description: addonPresentation.description,
       resources: [{
