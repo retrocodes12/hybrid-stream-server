@@ -562,8 +562,10 @@ function getMirrorStreams(tmdbId, type, season, episode) {
 function getStreams(tmdbId, type, season, episode) {
   return __async(this, null, function* () {
     const tmdbDetails = yield getTmdbDetails(tmdbId, type);
-    if (!tmdbDetails)
-      return [];
+    if (!tmdbDetails) {
+      console.log("[4KHDHub] TMDB failed, trying mirror fallback");
+      return yield getMirrorStreams(tmdbId, type, season, episode);
+    }
     const { title, year } = tmdbDetails;
     console.log(`[4KHDHub] Search: ${title} (${year})`);
     const isSeries = type === "series" || type === "tv";
