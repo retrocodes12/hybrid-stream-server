@@ -311,10 +311,20 @@ function getTMDBDetails(tmdbId, mediaType) {
     var _a;
     const endpoint = mediaType === "tv" ? "tv" : "movie";
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
-    const response = yield fetch(url, {
-      method: "GET",
-      headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-    });
+    let response;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = yield fetch(url, {
+          method: "GET",
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(5000)
+        });
+        break;
+      } catch (retryErr) {
+        if (attempt === 2) throw retryErr;
+        yield new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
     if (!response.ok)
       throw new Error(`TMDB API error: ${response.status}`);
     const data = yield response.json();

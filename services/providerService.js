@@ -479,36 +479,36 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'arabic-cineby': 25
 });
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
-  '4khdhub': 6,
-  '4khdhub_tv': 6,
-  hdhub4u: 15,
-  playimdb: 8,
-  playimdb_v2: 8,
-  uhdmovies: 15,
-  showbox: 8,
-  rgshows: 5,
-  kisskh: 8,
-  multivid: 8,
-  onlykdrama: 10,
-  streamflix: 10
+  '4khdhub': 18,
+  '4khdhub_tv': 18,
+  hdhub4u: 18,
+  playimdb: 10,
+  playimdb_v2: 10,
+  uhdmovies: 18,
+  showbox: 10,
+  rgshows: 6,
+  kisskh: 10,
+  multivid: 10,
+  onlykdrama: 12,
+  streamflix: 12
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
-  '4khdhub': 6_000,
-  '4khdhub_tv': 6_000,
-  hdhub4u: 20_000,
-  uhdmovies: 20_000,
+  '4khdhub': 22_000,
+  '4khdhub_tv': 22_000,
+  hdhub4u: 22_000,
+  uhdmovies: 22_000,
   moviesmod: 18_000,
   streamflix: 18_000,
-  multivid: 12_000,
-  playimdb: 12_000,
-  playimdb_v2: 12_000,
+  multivid: 15_000,
+  playimdb: 15_000,
+  playimdb_v2: 15_000,
   rgshows: 8_000,
-  kisskh: 12_000,
-  onlykdrama: 15_000
+  kisskh: 15_000,
+  onlykdrama: 18_000
 });
 const getProviderTimeoutSeconds = (providerId, params = null) => {
   if (params?.enforceFastTimeout) {
-    const defaultFastTimeout = Math.min(config.PROVIDER_TIMEOUT_SECONDS, 5);
+    const defaultFastTimeout = Math.min(config.PROVIDER_TIMEOUT_SECONDS, 10);
     return PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS[providerId] || defaultFastTimeout;
   }
 
