@@ -2621,6 +2621,15 @@ export class StreamManager {
   }
 
   async handleStremioStreams(req, res, next) {
+    const overallTimeoutMs = 25_000;
+    const overallTimeout = setTimeout(() => {
+      logger.warn('stremio stream request overall timeout', {
+        imdbId: req.params.id,
+        mediaType: req.params.type
+      });
+      this.sendStremioStreamsResponse(res, []);
+    }, overallTimeoutMs);
+
     try {
       const parsed = this.parseStremioStreamRequest(req.params.type, req.params.id);
       let tmdbId;
@@ -2636,11 +2645,13 @@ export class StreamManager {
           mediaType: parsed.mediaType,
           error
         });
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, []);
         return;
       }
 
       if (!tmdbId) {
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, []);
         return;
       }
@@ -2682,6 +2693,7 @@ export class StreamManager {
         : await this.getLastGoodStremioStreams(resultCacheKey);
 
       if (cachedResult?.state === 'fresh') {
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
       }
@@ -2700,6 +2712,7 @@ export class StreamManager {
         });
 
         res.setHeader('X-NebulaStreams-Mode', 'uncached-explicit-provider');
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, uncachedStreams);
         return;
       }
@@ -2724,6 +2737,7 @@ export class StreamManager {
         });
 
         res.setHeader('X-NebulaStreams-Mode', 'configured-degraded');
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, degradedStreams);
         return;
       }
@@ -2742,6 +2756,7 @@ export class StreamManager {
       if (cachedResult?.state === 'stale') {
         this.scheduleStremioBackgroundRefresh(buildInput);
         res.setHeader('X-NebulaStreams-Cache', 'stale');
+        clearTimeout(overallTimeout);
         this.sendStremioStreamsResponse(res, cachedResult.streams);
         return;
       }
@@ -2760,6 +2775,7 @@ export class StreamManager {
           });
           await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
           res.setHeader('X-NebulaStreams-Cache', 'last-good-error');
+          clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, lastGoodStreams);
           return;
         }
@@ -2781,13 +2797,16 @@ export class StreamManager {
           });
           await this.setCachedStremioStreams(resultCacheKey, lastGoodStreams, { weak: true });
           res.setHeader('X-NebulaStreams-Cache', 'last-good-empty');
+          clearTimeout(overallTimeout);
           this.sendStremioStreamsResponse(res, lastGoodStreams);
           return;
         }
       }
 
+      clearTimeout(overallTimeout);
       this.sendStremioStreamsResponse(res, stremioStreams);
     } catch (error) {
+      clearTimeout(overallTimeout);
       next(error);
     }
   }

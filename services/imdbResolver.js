@@ -9,7 +9,7 @@ import { logger } from '../utils/logger.js';
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const STALE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const RETRY_DELAYS_MS = [250, 750, 1500, 3000];
+const RETRY_DELAYS_MS = [200, 500, 1000];
 const { mkdir, readFile, writeFile } = fsPromises;
 
 const sleep = (delayMs) => new Promise((resolve) => {
@@ -45,7 +45,7 @@ export class ImdbResolverService {
     this.cacheDir = path.join(config.CACHE_DIR, 'imdb-resolver');
     this.client = axios.create({
       baseURL: 'https://api.themoviedb.org/3',
-      timeout: 12_000,
+      timeout: 5_000,
       headers: {
         Connection: 'close'
       },
