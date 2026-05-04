@@ -312,17 +312,17 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === "tv" ? "tv" : "movie";
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
     let response;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         response = yield fetch(url, {
           method: "GET",
           headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
-          signal: AbortSignal.timeout(5000)
+          signal: AbortSignal.timeout(3000)
         });
         break;
       } catch (retryErr) {
-        if (attempt === 4) throw retryErr;
-        yield new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+        if (attempt === 2) throw retryErr;
+        yield new Promise(r => setTimeout(r, 200 * (attempt + 1)));
       }
     }
     if (!response.ok)
@@ -445,7 +445,7 @@ function vidStackExtractor(url) {
             if (m3u8) {
               return [{
                 source: "Vidstack Hubstream",
-                quality: "M3U8",
+                quality: 1080,
                 url: m3u8.replace("https:", "http:"),
                 headers: {
                   "Referer": url,
@@ -487,11 +487,11 @@ function pixelDrainExtractor(link) {
       const baseUrl = `${urlObj.protocol}//${urlObj.hostname}`;
       const fileId = ((_a = link.match(/(?:file|u)\/([A-Za-z0-9]+)/)) == null ? void 0 : _a[1]) || link.split("/").pop();
       if (!fileId)
-        return [{ source: "Pixeldrain", quality: 0, url: link }];
+        return [{ source: "Pixeldrain", quality: 1080, url: link }];
       const finalUrl = link.includes("?download") ? link : `${baseUrl}/api/file/${fileId}?download`;
-      return [{ source: "Pixeldrain", quality: 0, url: finalUrl }];
+      return [{ source: "Pixeldrain", quality: 1080, url: finalUrl }];
     } catch (e) {
-      return [{ source: "Pixeldrain", quality: 0, url: link }];
+      return [{ source: "Pixeldrain", quality: 1080, url: link }];
     }
   });
 }
@@ -507,7 +507,7 @@ function streamTapeExtractor(link) {
       if (!videoSrc) {
         videoSrc = (_d = data.match(/'(\/\/streamtape\.com\/get_video[^']+)'/)) == null ? void 0 : _d[1];
       }
-      return videoSrc ? [{ source: "StreamTape", quality: 720, url: "https:" + videoSrc }] : [];
+      return videoSrc ? [{ source: "StreamTape", quality: 720, url: "https:" + videoSrc, headers: { Referer: url } }] : [];
     } catch (e) {
       return [];
     }
@@ -565,7 +565,7 @@ function hubCloudExtractor(url, referer) {
       }
       var $ = import_cheerio_without_node_native.default.load(pageData);
       if (!hubCloudHasValidContent($)) {
-        yield new Promise(function(r) { setTimeout(r, 2500); });
+        yield new Promise(function(r) { setTimeout(r, 1000); });
         var retryResp = yield fetch(currentUrl, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
         var retryData = yield retryResp.text();
         var retryHref = hubCloudExtractRedirectUrl(retryData);
@@ -642,22 +642,23 @@ function hubCloudExtractor(url, referer) {
     }
   });
 }
-function hubCdnExtractor(url, referer) {
+function hubCdnExtractor(url, referer, parentQuality) {
   return __async(this, null, function* () {
     var _a, _b;
+    const q = parentQuality || 1080;
     try {
       const response = yield fetch(url, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
       const data = yield response.text();
       const encoded = (_a = data.match(/r=([A-Za-z0-9+/=]+)/)) == null ? void 0 : _a[1];
       if (encoded) {
         const m3u8Link = atob(encoded).substring(atob(encoded).lastIndexOf("link=") + 5);
-        return [{ source: "HubCdn", quality: 1080, url: m3u8Link }];
+        return [{ source: "HubCdn", quality: q, url: m3u8Link }];
       }
       const scriptEncoded = (_b = data.match(/reurl\s*=\s*["']([^"']+)["']/)) == null ? void 0 : _b[1];
       if (scriptEncoded) {
         const queryPart = scriptEncoded.split("?r=").pop();
         const m3u8Link = atob(queryPart).substring(atob(queryPart).lastIndexOf("link=") + 5);
-        return [{ source: "HubCdn", quality: 1080, url: m3u8Link }];
+        return [{ source: "HubCdn", quality: q, url: m3u8Link }];
       }
       return [];
     } catch (e) {
@@ -689,7 +690,7 @@ function loadExtractor(_0) {
       if (hostname.includes("streamtape"))
         return yield streamTapeExtractor(url);
       if (hostname.includes("hdstream4u"))
-        return [{ source: "HdStream4u", quality: 1080, url }];
+        return [{ source: "HdStream4u", quality: 1080, url, headers: { Referer: referer || url } }];
       if (hostname.includes("hubdrive")) {
         const res = yield fetch(url, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
         const data = yield res.text();

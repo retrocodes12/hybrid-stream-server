@@ -91,13 +91,13 @@ function getTmdbDetails(tmdbId, type) {
     console.log(`[4KHDHub] Fetching TMDB details from: ${url}`);
     try {
       let response;
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          response = yield fetch(url, { signal: AbortSignal.timeout(5000) });
+          response = yield fetch(url, { signal: AbortSignal.timeout(3000) });
           break;
         } catch (retryErr) {
-          if (attempt === 4) throw retryErr;
-          yield new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+          if (attempt === 2) throw retryErr;
+          yield new Promise(r => setTimeout(r, 200 * (attempt + 1)));
         }
       }
       const data = yield response.json();
@@ -447,13 +447,13 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     var redirectHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
     if (!redirectHtml)
       return [];
-    var finalLinksUrl = "";
-    const $first = cheerio2.load(redirectHtml);
-    const downloadBtn = $first("#download");
-    if (downloadBtn.length) {
-      finalLinksUrl = downloadBtn.attr("href") || "";
-    } else {
-      finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml) || "";
+    var finalLinksUrl = extractHubCloudRedirectUrl(redirectHtml) || "";
+    if (!finalLinksUrl) {
+      const $first = cheerio2.load(redirectHtml);
+      const downloadBtn = $first("#download");
+      if (downloadBtn.length) {
+        finalLinksUrl = downloadBtn.attr("href") || "";
+      }
     }
     if (!finalLinksUrl)
       return [];
@@ -472,7 +472,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       return [];
     var $ = cheerio2.load(linksHtml);
     if (!hasValidHubCloudContent($)) {
-      yield new Promise(function (r) { setTimeout(r, 2500); });
+      yield new Promise(function (r) { setTimeout(r, 1000); });
       var retryHtml = yield fetchText(hubCloudUrl, { headers: { Referer: hubCloudUrl } });
       if (retryHtml) {
         var retryUrl = "";
@@ -527,11 +527,14 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
           meta: currentMeta
         });
       } else if (text.includes("PixelServer")) {
-        const pixelUrl = href.replace("/u/", "/api/file/");
+        const userUrl = href.replace("/api/file/", "/u/");
+        let pixelUrl = userUrl.replace("/u/", "/api/file/");
+        try { const u = new URL(pixelUrl); u.searchParams.set("download", ""); pixelUrl = u.href; } catch (_) {}
         results.push({
           source: "PixelServer",
           url: pixelUrl,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: { Referer: userUrl }
         });
       }
     });
@@ -639,6 +642,7 @@ function getStreams(tmdbId, type, season, episode) {
               size: sizeLabel,
               filename: sourceResult.meta.title || void 0,
               provider: "4khdhub",
+              ...(link.headers ? { headers: link.headers } : {}),
               behaviorHints: {
                 bingeGroup: `4khdhub-${link.source}`,
                 notWebReady: true,
