@@ -1410,6 +1410,9 @@ const getStreamFilenameLabel = (stream) => {
   return titleLine || null;
 };
 
+const isGenericStreamTitle = (value) =>
+  /^(?:stream|download|watch|play|video|link|file)$/iu.test(String(value || '').trim());
+
 const getStreamSizeLabel = (stream) => {
   const explicitSize = truncateCardLine(stream.size || '');
 
@@ -1662,6 +1665,19 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const primaryCardTitle = filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))
     ? filename
     : String(stream.title || '').split('\n')[0];
+  const fallbackCardTitle = [
+    sourceLabel || providerLabel,
+    qualityLabel,
+    ...visualTags.slice(0, 2),
+    ...encodeTags.slice(0, 2),
+    ...audioTags.slice(0, 2),
+    languageLabel && languageLabel !== 'Unknown' ? languageLabel : null
+  ].filter(Boolean).join(' ');
+  const behaviorFilename = filename && !isGenericStreamTitle(filename)
+    ? filename
+    : primaryCardTitle && !isGenericStreamTitle(primaryCardTitle)
+      ? primaryCardTitle
+      : fallbackCardTitle;
   let cardTitle = '';
   const videoSize = stream.behaviorHints?.videoSize || getStreamSizeBytes(stream) || undefined;
 
@@ -1677,8 +1693,10 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   } else {
     const cleanTitleLines = [];
 
-    if (primaryCardTitle) {
+    if (primaryCardTitle && !isGenericStreamTitle(primaryCardTitle)) {
       cleanTitleLines.push(truncateCardLine(primaryCardTitle, 140));
+    } else if (fallbackCardTitle) {
+      cleanTitleLines.push(truncateCardLine(fallbackCardTitle, 140));
     }
 
     const cleanDetails = [];
@@ -1717,7 +1735,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
       bingeGroup: parsedRequest.mediaType === 'series'
         ? `nebulastreams-${stream.provider || 'default'}-${getStreamHostname(stream) || 'torrent'}-${normalizeQualityKey(stream.quality)}`
         : undefined,
-      ...(filename ? { filename } : {}),
+      ...(behaviorFilename ? { filename: behaviorFilename } : {}),
       ...(videoSize ? { videoSize } : {})
     }
   };
@@ -1750,7 +1768,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   return {
     ...base,
     url: streamUrl,
-    ...(filename ? { filename } : {}),
+    ...(behaviorFilename ? { filename: behaviorFilename } : {}),
     behaviorHints: {
       ...base.behaviorHints,
       notWebReady: !isWebReady,
@@ -2304,7 +2322,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 59,
+      version: 60,
       tmdbId,
       mediaType,
       season: season ?? null,
