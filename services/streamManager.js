@@ -543,8 +543,23 @@ const normalizeQualityKey = (quality) => {
   return 'unknown';
 };
 
+const getStreamQualityKey = (stream) => {
+  const explicitQuality = normalizeQualityKey(stream.quality);
+
+  if (explicitQuality !== 'unknown') {
+    return explicitQuality;
+  }
+
+  return normalizeQualityKey([
+    stream.name,
+    stream.title,
+    stream.filename,
+    stream.url
+  ].map((value) => String(value || '')).join(' '));
+};
+
 const getQualityPriorityScore = (stream, qualityPriority) => {
-  const normalizedQuality = normalizeQualityKey(stream.quality);
+  const normalizedQuality = getStreamQualityKey(stream);
   const index = qualityPriority.indexOf(normalizedQuality);
 
   if (index === -1) {
@@ -636,6 +651,25 @@ const parseSizeBytes = (value) => {
   }
 
   return Math.round(amount * multiplier);
+};
+
+const formatSizeBytes = (value) => {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let amount = bytes;
+  let unitIndex = 0;
+
+  while (amount >= 1024 && unitIndex < units.length - 1) {
+    amount /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${amount >= 10 || unitIndex === 0 ? amount.toFixed(0) : amount.toFixed(2)} ${units[unitIndex]}`;
 };
 
 const getStreamSizeBytes = (stream) => {
@@ -1411,13 +1445,21 @@ const getStreamFilenameLabel = (stream) => {
 };
 
 const isGenericStreamTitle = (value) =>
-  /^(?:stream|download|watch|play|video|link|file)$/iu.test(String(value || '').trim());
+  /^(?:stream|download|watch|play|video|link|file|master\s*m3u8|m3u8|playlist|index)$/iu.test(String(value || '').trim())
+    || /^[a-z0-9_-]{8,}\s*(?:lo|la|ll|==)?\s*=\s*m3u8$/iu.test(String(value || '').trim())
+    || /^[a-z0-9_-]{12,}$/iu.test(String(value || '').trim());
 
 const getStreamSizeLabel = (stream) => {
   const explicitSize = truncateCardLine(stream.size || '');
 
   if (explicitSize) {
     return explicitSize;
+  }
+
+  const hintedSize = formatSizeBytes(stream.behaviorHints?.videoSize);
+
+  if (hintedSize) {
+    return hintedSize;
   }
 
   const sizeMatch = `${String(stream.title || '')}\n${String(stream.name || '')}`.match(/\b\d+(?:\.\d+)?\s*(?:tb|gb|mb|kb)\b/iu);
@@ -1654,11 +1696,10 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const sizeLabel = getStreamSizeLabel(stream);
   const formatterStyle = normalizeFormatterStyle(streamOptions.formatterStyle);
 
-  const qualityLabel = normalizeQualityKey(streamQuality) === '2160p'
-    ? '4K'
-    : normalizeQualityKey(streamQuality) === 'unknown'
-      ? streamQuality.toUpperCase()
-      : normalizeQualityKey(streamQuality).toUpperCase();
+  const qualityKey = getStreamQualityKey(stream);
+  const qualityLabel = qualityKey === 'unknown'
+    ? streamQuality.toUpperCase()
+    : qualityKey;
 
   let nameLine = ['NebulaStreams', ...languageFlags, qualityLabel].filter(Boolean).join(' ');
 
@@ -1668,6 +1709,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const fallbackCardTitle = [
     sourceLabel || providerLabel,
     qualityLabel,
+    sizeLabel,
     ...visualTags.slice(0, 2),
     ...encodeTags.slice(0, 2),
     ...audioTags.slice(0, 2),
@@ -2322,7 +2364,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 60,
+      version: 61,
       tmdbId,
       mediaType,
       season: season ?? null,
