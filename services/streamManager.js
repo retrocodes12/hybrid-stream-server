@@ -1474,6 +1474,28 @@ const getLanguageLabel = (stream) => {
   return [...new Set(languages)].join(' + ');
 };
 
+const LANGUAGE_FLAG_MAP = Object.freeze({
+  Arabic: '🇸🇦',
+  English: '🇺🇸',
+  French: '🇫🇷',
+  German: '🇩🇪',
+  Hindi: '🇮🇳',
+  Italian: '🇮🇹',
+  Japanese: '🇯🇵',
+  Kannada: '🇮🇳',
+  Korean: '🇰🇷',
+  Latino: '🇲🇽',
+  Malayalam: '🇮🇳',
+  Portuguese: '🇵🇹',
+  Spanish: '🇪🇸',
+  Tamil: '🇮🇳',
+  Telugu: '🇮🇳',
+  Turkish: '🇹🇷'
+});
+
+const getStreamLanguageFlags = (stream) =>
+  [...new Set(getStreamLanguages(stream).map((language) => LANGUAGE_FLAG_MAP[language]).filter(Boolean))];
+
 const getSourceLabel = (stream) => {
   if (stream.sourceSite) {
     return stream.sourceSite;
@@ -1624,6 +1646,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const encodeTags = getEncodeTags(stream);
   const audioTags = getAudioTags(stream);
   const languageLabel = getLanguageLabel(stream);
+  const languageFlags = getStreamLanguageFlags(stream);
   const sourceLabel = getSourceLabel(stream);
   const sizeLabel = getStreamSizeLabel(stream);
   const formatterStyle = normalizeFormatterStyle(streamOptions.formatterStyle);
@@ -1634,19 +1657,20 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
       ? streamQuality.toUpperCase()
       : normalizeQualityKey(streamQuality).toUpperCase();
 
-  let nameLine = `NebulaStreams ${qualityLabel}`;
+  let nameLine = ['NebulaStreams', ...languageFlags, qualityLabel].filter(Boolean).join(' ');
 
   const primaryCardTitle = filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))
     ? filename
     : String(stream.title || '').split('\n')[0];
   let cardTitle = '';
+  const videoSize = stream.behaviorHints?.videoSize || getStreamSizeBytes(stream) || undefined;
 
   if (formatterStyle === 'detailed') {
     cardTitle = formatStremioCardTitle(stream);
   } else if (formatterStyle === 'compact') {
     cardTitle = formatStremioCardFacts(stream);
   } else if (formatterStyle === 'minimal') {
-    nameLine = `NS ${qualityLabel}`;
+    nameLine = ['NS', ...languageFlags, qualityLabel].filter(Boolean).join(' ');
     cardTitle = [providerLabel, sizeLabel, languageLabel && languageLabel !== 'Unknown' ? languageLabel : null]
       .filter(Boolean)
       .join(' • ');
@@ -1692,7 +1716,9 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
     behaviorHints: {
       bingeGroup: parsedRequest.mediaType === 'series'
         ? `nebulastreams-${stream.provider || 'default'}-${getStreamHostname(stream) || 'torrent'}-${normalizeQualityKey(stream.quality)}`
-        : undefined
+        : undefined,
+      ...(filename ? { filename } : {}),
+      ...(videoSize ? { videoSize } : {})
     }
   };
 
@@ -1721,8 +1747,6 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const streamUrl = proxiedUrl || stream.url;
   const isWebReady = proxiedUrl ? true : isWebReadyHttpStream(stream);
 
-  const videoSize = stream.behaviorHints?.videoSize || parseSizeBytes(stream.size) || undefined;
-
   return {
     ...base,
     url: streamUrl,
@@ -1730,7 +1754,6 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
     behaviorHints: {
       ...base.behaviorHints,
       notWebReady: !isWebReady,
-      ...(videoSize ? { videoSize } : {}),
       ...(requestHeaders ? {
         proxyHeaders: {
           request: requestHeaders
@@ -2281,7 +2304,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 58,
+      version: 59,
       tmdbId,
       mediaType,
       season: season ?? null,
