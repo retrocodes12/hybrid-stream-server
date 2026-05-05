@@ -11,6 +11,11 @@ const HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json"
 };
+const DIRECT_FALLBACK_PROVIDERS = mediaType => (
+    mediaType === 'tv'
+        ? ['./4khdhub.js', './hdhub4u.js']
+        : []
+);
 
 function detectQualityLabel(value) {
     const text = String(value || "");
@@ -71,6 +76,44 @@ async function fetchFirstWorkingPayload(urls) {
     return null;
 }
 
+async function fetchDirectFallbackStreams(tmdbId, mediaType, season, episode) {
+    const fallbackStreams = [];
+
+    for (const modulePath of DIRECT_FALLBACK_PROVIDERS(mediaType)) {
+        try {
+            const provider = require(modulePath);
+            if (!provider || typeof provider.getStreams !== 'function') continue;
+            const streams = await provider.getStreams(tmdbId, mediaType, season, episode);
+            if (Array.isArray(streams) && streams.length > 0) {
+                fallbackStreams.push(...streams);
+            }
+        } catch (error) {
+            console.log(`[CineStream] Direct fallback failed for ${modulePath}: ${error.message}`);
+        }
+    }
+
+    return fallbackStreams;
+}
+
+function dedupeStreams(streams) {
+    const output = [];
+    const seen = new Set();
+
+    for (const stream of Array.isArray(streams) ? streams : []) {
+        const key = JSON.stringify({
+            url: String(stream?.url || '').trim() || null,
+            magnet: String(stream?.magnet || stream?.torrent || '').trim() || null,
+            quality: String(stream?.quality || '').trim().toLowerCase() || null
+        });
+
+        if (seen.has(key)) continue;
+        seen.add(key);
+        output.push(stream);
+    }
+
+    return output;
+}
+
 /**
  * Get IMDB ID from TMDB
  */
@@ -89,19 +132,25 @@ async function getIMDBId(tmdbId, mediaType) {
  */
 async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = null) {
     try {
-        const info = await getIMDBId(tmdbId, mediaType);
-        if (!info.imdbId) return [];
+        let info = null;
+        try {
+            info = await getIMDBId(tmdbId, mediaType);
+        } catch (error) {
+            console.log(`[CineStream] TMDB lookup failed: ${error.message}`);
+        }
 
         let urls = [];
-        if (mediaType === 'movie') {
+        if (info?.imdbId && mediaType === 'movie') {
             urls = [`${API_BASE}/stream/movie/${info.imdbId}.json`];
-        } else {
+        } else if (info?.imdbId) {
             urls = buildSeriesCandidateUrls(API_BASE, info.imdbId, tmdbId, season, episode);
         }
 
-        const data = await fetchFirstWorkingPayload(urls);
-        if (!data) return [];
-        const streams = data.streams || [];
+        const data = urls.length > 0 ? await fetchFirstWorkingPayload(urls) : null;
+        const upstreamStreams = data?.streams || [];
+        const directFallbackStreams = await fetchDirectFallbackStreams(tmdbId, mediaType, season, episode);
+        const streams = dedupeStreams([...upstreamStreams, ...directFallbackStreams]);
+        if (streams.length === 0) return [];
 
         return streams.map(s => {
             const quality = detectQualityLabel(`${s.name || ''} ${s.title || ''}`);

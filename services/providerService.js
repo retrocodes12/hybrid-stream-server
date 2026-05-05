@@ -138,7 +138,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '49';
+    return '50';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -2016,6 +2016,7 @@ export class ProviderService {
             .slice(0, Math.max(4, Math.min(8, config.STREMIO_FAST_PROVIDER_LIMIT)));
 
         const defaultProviderParallelTimeoutMs = 20_000;
+        const explicitProviderParallelTimeoutCapMs = 22_000;
 
         const runProvider = async (providerId) => {
           const providerAbortController = new AbortController();
@@ -2023,12 +2024,15 @@ export class ProviderService {
 
           try {
             const providerParallelTimeoutMs = hasExplicitProviders
-              ? Math.max(
-                PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs,
-                (getProviderTimeoutSeconds(providerId, {
-                  privateProviderSettings: rest.privateProviderSettings,
-                  enforceFastTimeout: false
-                }) * 1000) + 5_000
+              ? Math.min(
+                explicitProviderParallelTimeoutCapMs,
+                Math.max(
+                  PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs,
+                  (getProviderTimeoutSeconds(providerId, {
+                    privateProviderSettings: rest.privateProviderSettings,
+                    enforceFastTimeout: false
+                  }) * 1000) + 5_000
+                )
               )
               : (PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs);
             const streamPromise = this.getStreams({

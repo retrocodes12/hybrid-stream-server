@@ -392,13 +392,13 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
     if (mediaType === 'tv' && seasonNum && episodeNum) {
         // TV format: /api/media/tv/:tmdbId/oss=:ossGroup/:season/:episode?cookie=:cookie
         if (ossGroup) {
-            apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+            apiUrl = `${SHOWBOX_API_BASE}/media/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
         } else {
-            apiUrl = `${SHOWBOX_API_BASE}/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+            apiUrl = `${SHOWBOX_API_BASE}/media/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
         }
     } else {
         // Movie format: /api/media/movie/:tmdbId?cookie=:cookie
-        apiUrl = `${SHOWBOX_API_BASE}/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
+        apiUrl = `${SHOWBOX_API_BASE}/media/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
     }
 
     // Debug log with redacted cookie (show first/last 10 chars only)
