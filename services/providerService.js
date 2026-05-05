@@ -176,7 +176,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '50';
+    return '51';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -192,7 +192,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '32';
+    return '33';
   }
 
   if (providerId === 'allyoucanwatch') {
@@ -1147,6 +1147,58 @@ const sanitizeHeaders = (headers) => {
   return Object.keys(sanitized).length > 0 ? sanitized : null;
 };
 
+const parseProviderSizeBytes = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  const match = String(value || '').match(/([0-9]+(?:\.[0-9]+)?)\s*(tb|gb|mb|kb)/iu);
+  if (!match) {
+    return 0;
+  }
+
+  const amount = Number.parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+  const multipliers = {
+    kb: 1024,
+    mb: 1024 ** 2,
+    gb: 1024 ** 3,
+    tb: 1024 ** 4
+  };
+
+  return amount * (multipliers[unit] || 0);
+};
+
+const inferProviderStreamQuality = (stream) => {
+  const explicitQuality = String(stream?.quality || '').trim();
+  const qualityText = [
+    explicitQuality,
+    stream?.name,
+    stream?.title,
+    stream?.filename,
+    stream?.fileName,
+    stream?.url
+  ].map((value) => String(value || '')).join(' ');
+  const qualityMatch = qualityText.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p|240p)\b/iu);
+
+  if (qualityMatch) {
+    const normalized = qualityMatch[1].toLowerCase();
+    return normalized === '4k' ? '2160p' : normalized;
+  }
+
+  if (explicitQuality && explicitQuality.toLowerCase() !== 'unknown') {
+    return explicitQuality;
+  }
+
+  const sizeBytes = parseProviderSizeBytes(`${String(stream?.size || '')} ${String(stream?.title || '')} ${String(stream?.name || '')}`);
+  if (sizeBytes >= 14 * 1024 ** 3) return '2160p';
+  if (sizeBytes >= 3 * 1024 ** 3) return '1080p';
+  if (sizeBytes >= 1 * 1024 ** 3) return '720p';
+  if (sizeBytes >= 350 * 1024 ** 2) return '480p';
+
+  return explicitQuality || 'Unknown';
+};
+
 const sanitizeProviderStream = (stream) => {
   if (!stream || typeof stream !== 'object') {
     return null;
@@ -1189,12 +1241,19 @@ const sanitizeProviderStream = (stream) => {
     ...rest
   } = stream;
 
-  return {
+  const sanitizedStream = {
     ...rest,
     ...(parsedUrl ? { url: parsedUrl.toString() } : {}),
     ...(normalizedMagnet ? { magnet: normalizedMagnet } : {}),
     headers: sanitizeHeaders(stream.headers)
   };
+
+  sanitizedStream.quality = inferProviderStreamQuality({
+    ...stream,
+    ...sanitizedStream
+  });
+
+  return sanitizedStream;
 };
 
 const toQualityScore = (quality) => {

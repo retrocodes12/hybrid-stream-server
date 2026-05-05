@@ -15,9 +15,7 @@ const HEADERS = {
     "Accept": "application/json"
 };
 const DIRECT_FALLBACK_PROVIDERS = mediaType => (
-    mediaType === 'tv' || mediaType === 'series'
-        ? ['./4khdhub.js', './hdhub4u.js']
-        : []
+    ['./4khdhub.js', './hdhub4u.js']
 );
 
 function detectQualityLabel(value) {
@@ -26,6 +24,20 @@ function detectQualityLabel(value) {
     if (!match) return "Auto";
     const normalized = match[1].toLowerCase();
     return normalized === "4k" ? "2160p" : normalized;
+}
+
+function getQualityRank(value) {
+    const quality = detectQualityLabel(value);
+    const rank = {
+        "2160p": 6,
+        "1440p": 5,
+        "1080p": 4,
+        "720p": 3,
+        "480p": 2,
+        "360p": 1,
+        "Auto": 0
+    };
+    return rank[quality] || 0;
 }
 
 function rewriteUpstreamLabel(value) {
@@ -270,6 +282,18 @@ function dedupeStreams(streams) {
     return output;
 }
 
+function sortStreamsByQuality(streams) {
+    return [...streams].sort((a, b) => {
+        const qualityDiff = getQualityRank(`${b.name || ''} ${b.title || ''} ${b.quality || ''}`)
+            - getQualityRank(`${a.name || ''} ${a.title || ''} ${a.quality || ''}`);
+        if (qualityDiff !== 0) return qualityDiff;
+
+        const sizeA = Number(a?.behaviorHints?.videoSize || a?.videoSize || 0);
+        const sizeB = Number(b?.behaviorHints?.videoSize || b?.videoSize || 0);
+        return sizeB - sizeA;
+    });
+}
+
 /**
  * Get IMDB ID from TMDB
  */
@@ -320,7 +344,7 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
         );
         if (streams.length === 0) return [];
 
-        return streams.map(s => {
+        return sortStreamsByQuality(streams).map(s => {
             const quality = detectQualityLabel(`${s.name || ''} ${s.title || ''}`);
             const upstreamName = rewriteUpstreamLabel(s.name || '');
             const fallbackName = quality === 'Auto' ? 'NebulaStreams' : `NebulaStreams ${quality}`;

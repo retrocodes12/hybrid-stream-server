@@ -1,6 +1,6 @@
 /**
  * cinestream - Built from src/cinestream/
- * Generated: 2026-05-05T11:44:45.763Z
+ * Generated: 2026-05-05T13:56:29.150Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -53,13 +53,26 @@ var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json"
 };
-var DIRECT_FALLBACK_PROVIDERS = (mediaType) => mediaType === "tv" || mediaType === "series" ? ["./4khdhub.js", "./hdhub4u.js"] : [];
+var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js"];
 function detectQualityLabel(value) {
   const text = String(value || "");
   const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
   if (!match) return "Auto";
   const normalized = match[1].toLowerCase();
   return normalized === "4k" ? "2160p" : normalized;
+}
+function getQualityRank(value) {
+  const quality = detectQualityLabel(value);
+  const rank = {
+    "2160p": 6,
+    "1440p": 5,
+    "1080p": 4,
+    "720p": 3,
+    "480p": 2,
+    "360p": 1,
+    "Auto": 0
+  };
+  return rank[quality] || 0;
 }
 function rewriteUpstreamLabel(value) {
   return String(value || "").replace(/WebStreamrMBG/gi, "NebulaStreams").replace(/\s+/g, " ").trim();
@@ -259,6 +272,16 @@ function dedupeStreams(streams) {
   }
   return output;
 }
+function sortStreamsByQuality(streams) {
+  return [...streams].sort((a, b) => {
+    var _a, _b;
+    const qualityDiff = getQualityRank(`${b.name || ""} ${b.title || ""} ${b.quality || ""}`) - getQualityRank(`${a.name || ""} ${a.title || ""} ${a.quality || ""}`);
+    if (qualityDiff !== 0) return qualityDiff;
+    const sizeA = Number(((_a = a == null ? void 0 : a.behaviorHints) == null ? void 0 : _a.videoSize) || (a == null ? void 0 : a.videoSize) || 0);
+    const sizeB = Number(((_b = b == null ? void 0 : b.behaviorHints) == null ? void 0 : _b.videoSize) || (b == null ? void 0 : b.videoSize) || 0);
+    return sizeB - sizeA;
+  });
+}
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
@@ -302,7 +325,7 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         info
       );
       if (streams.length === 0) return [];
-      return streams.map((s) => {
+      return sortStreamsByQuality(streams).map((s) => {
         var _a, _b;
         const quality = detectQualityLabel(`${s.name || ""} ${s.title || ""}`);
         const upstreamName = rewriteUpstreamLabel(s.name || "");

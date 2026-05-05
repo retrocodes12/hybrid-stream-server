@@ -164,6 +164,36 @@ function getQualityFromName(qualityStr) {
     return 'Unknown';
 }
 
+function parseSizeBytes(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const match = String(value || '').match(/([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|MB|KB)/i);
+    if (!match) return 0;
+    const amount = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    const multipliers = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+    return amount * (multipliers[unit] || 0);
+}
+
+function getQualityFromSize(value) {
+    const bytes = parseSizeBytes(value);
+    if (!bytes) return 'Unknown';
+    const gb = bytes / (1024 ** 3);
+    if (gb >= 14) return '4K';
+    if (gb >= 3) return '1080p';
+    if (gb >= 1) return '720p';
+    if (gb >= 0.35) return '480p';
+    return '360p';
+}
+
+function getBestQuality() {
+    const values = Array.prototype.slice.call(arguments);
+    for (const value of values) {
+        const quality = getQualityFromName(value);
+        if (quality !== 'Unknown') return quality;
+    }
+    return getQualityFromSize(values.find(value => parseSizeBytes(value)) || '');
+}
+
 function formatFileSize(sizeStr) {
     if (!sizeStr) return 'Unknown';
 
@@ -339,8 +369,19 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
                 version.links.forEach(function (link) {
                     if (!link.url) return;
 
-                    const normalizedQuality = getQualityFromName(link.quality || 'Unknown');
                     const linkSize = link.size || versionSize;
+                    const normalizedQuality = getBestQuality(
+                        link.quality,
+                        link.label,
+                        link.name,
+                        link.fileName,
+                        link.filename,
+                        link.url,
+                        version.quality,
+                        version.name,
+                        version.label,
+                        linkSize
+                    );
                     const linkName = link.name || `${normalizedQuality}`;
 
                     // Create stream name - use version number if multiple versions exist
@@ -356,6 +397,7 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
                         url: link.url,
                         quality: normalizedQuality,
                         size: formatFileSize(linkSize),
+                        filename: link.fileName || link.filename || linkName || versionName,
                         provider: 'showbox',
                         speed: link.speed || null
                     });
