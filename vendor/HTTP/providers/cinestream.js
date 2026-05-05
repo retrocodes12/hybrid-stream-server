@@ -45,6 +45,47 @@ function rewriteUpstreamLabel(value) {
     .replace(/\s+/g, " ")
     .trim();
 }
+function pad2(value) {
+  return String(Number(value) || 0).padStart(2, "0");
+}
+function buildSeriesCandidateUrls(apiBase, imdbId, tmdbId, season, episode) {
+  const seasonValue = Number(season) || 0;
+  const episodeValue = Number(episode) || 0;
+  const seasonPadded = pad2(seasonValue);
+  const episodePadded = pad2(episodeValue);
+  const ids = [
+    `${imdbId}:${seasonValue}:${episodeValue}`,
+    `${imdbId}:${seasonPadded}:${episodePadded}`,
+    `tmdb:${tmdbId}:${seasonValue}:${episodeValue}`,
+    `tmdb:${tmdbId}:${seasonPadded}:${episodePadded}`
+  ];
+  const candidates = [];
+  for (const route of ["series", "tv"]) {
+    for (const id of ids) {
+      candidates.push(`${apiBase}/stream/${route}/${id}.json`);
+    }
+  }
+  return candidates;
+}
+function fetchFirstWorkingPayload(urls) {
+  return __async(this, null, function* () {
+    for (const url of urls) {
+      console.log(`[CineStream] Fetching: ${url}`);
+      try {
+        const res = yield fetch(url, { headers: HEADERS });
+        if (!res.ok)
+          continue;
+        const data = yield res.json();
+        if (Array.isArray(data == null ? void 0 : data.streams) && data.streams.length > 0) {
+          return data;
+        }
+      } catch (error) {
+        console.log(`[CineStream] Candidate failed: ${error.message}`);
+      }
+    }
+    return null;
+  });
+}
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
@@ -63,17 +104,15 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       const info = yield getIMDBId(tmdbId, mediaType);
       if (!info.imdbId)
         return [];
-      let apiUrl = "";
+      let urls = [];
       if (mediaType === "movie") {
-        apiUrl = `${API_BASE}/stream/movie/${info.imdbId}.json`;
+        urls = [`${API_BASE}/stream/movie/${info.imdbId}.json`];
       } else {
-        apiUrl = `${API_BASE}/stream/series/${info.imdbId}:${season}:${episode}.json`;
+        urls = buildSeriesCandidateUrls(API_BASE, info.imdbId, tmdbId, season, episode);
       }
-      console.log(`[CineStream] Fetching: ${apiUrl}`);
-      const res = yield fetch(apiUrl, { headers: HEADERS });
-      if (!res.ok)
+      const data = yield fetchFirstWorkingPayload(urls);
+      if (!data)
         return [];
-      const data = yield res.json();
       const streams = data.streams || [];
       return streams.map((s) => {
         var _a, _b;

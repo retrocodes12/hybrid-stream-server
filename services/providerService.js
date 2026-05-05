@@ -154,7 +154,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '25';
+    return '26';
   }
 
   if (providerId === 'allyoucanwatch') {
