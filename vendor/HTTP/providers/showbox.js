@@ -30,26 +30,43 @@ function getEnvString(name) {
     return '';
 }
 
+function normalizeUiToken(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    const cookieLikeMatch = raw.match(/(?:^|[;\s])(uiToken|showbox|token|ui)=([^;]+)/i);
+    if (cookieLikeMatch && cookieLikeMatch[2]) {
+        return decodeURIComponent(cookieLikeMatch[2].trim());
+    }
+
+    const jwtLikeMatch = raw.match(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+    if (jwtLikeMatch) {
+        return jwtLikeMatch[0];
+    }
+
+    return raw;
+}
+
 // UI token (cookie) is provided by the host app via per-scraper settings (Plugin Screen)
 function getUiToken(scraperSettings = null) {
     if (scraperSettings && scraperSettings.uiToken) {
-        return String(scraperSettings.uiToken).trim();
+        return normalizeUiToken(scraperSettings.uiToken);
     }
 
     try {
         // Prefer sandbox-injected globals
         if (typeof global !== 'undefined' && global.SCRAPER_SETTINGS && global.SCRAPER_SETTINGS.uiToken) {
-            return String(global.SCRAPER_SETTINGS.uiToken);
+            return normalizeUiToken(global.SCRAPER_SETTINGS.uiToken);
         }
         if (typeof window !== 'undefined' && window.SCRAPER_SETTINGS && window.SCRAPER_SETTINGS.uiToken) {
-            return String(window.SCRAPER_SETTINGS.uiToken);
+            return normalizeUiToken(window.SCRAPER_SETTINGS.uiToken);
         }
     } catch (e) {
         // ignore and fall through
     }
     const envToken = getEnvString('SHOWBOX_UI_TOKEN') || getEnvString('SHOWBOX_COOKIE');
     if (envToken) {
-        return envToken;
+        return normalizeUiToken(envToken);
     }
     return '';
 }

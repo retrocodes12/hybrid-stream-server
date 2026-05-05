@@ -138,7 +138,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '48';
+    return '49';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -154,7 +154,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '26';
+    return '27';
   }
 
   if (providerId === 'allyoucanwatch') {
