@@ -20,6 +20,8 @@ const providerFetchContextStorage = new AsyncLocalStorage();
 const nativeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
 const providerFetchHostInflight = new Map();
 const PROVIDER_FETCH_MAX_RETRIES = 2;
+const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
+const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
 const PROVIDER_FETCH_DISPATCHER = new Agent({
   connect: { family: 4 }
 });
@@ -60,6 +62,42 @@ const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = nul
 
   return crypto.createHash('sha1').update(uiToken).digest('hex');
 };
+
+const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
+  try {
+    const parsedUrl = new URL(String(url || '').trim());
+    const token = parsedUrl.searchParams.get('token');
+
+    if (!/^\d{10,13}$/u.test(String(token || ''))) {
+      return null;
+    }
+
+    const rawExpiry = Number(token);
+    const expiryMs = rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
+    const ttlSeconds = Math.floor((expiryMs - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+
+    return Number.isFinite(ttlSeconds)
+      ? Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS, ttlSeconds)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const getProviderResultCacheTtlSeconds = (streams, providerId = null) => {
+  if (!Array.isArray(streams) || streams.length === 0) {
+    return PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
+      ? config.PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
+      : config.PROVIDER_EMPTY_CACHE_TTL_SECONDS;
+  }
+
+  const now = Date.now();
+  return streams.reduce((ttlSeconds, stream) => {
+    const signedTtl = getSignedUrlExpiryTtlSeconds(stream?.url, now);
+    return signedTtl === null ? ttlSeconds : Math.min(ttlSeconds, signedTtl);
+  }, config.PROVIDER_CACHE_TTL_SECONDS);
+};
+
 const getProviderCacheVersion = (providerId) => {
   if (providerId === '4khdhub' || providerId === '4khdhub_tv') {
     return '42';
@@ -154,7 +192,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '27';
+    return '29';
   }
 
   if (providerId === 'allyoucanwatch') {
@@ -2776,15 +2814,12 @@ export class ProviderService {
       return;
     }
 
+    const cacheTtlSeconds = getProviderResultCacheTtlSeconds(streams, providerId);
     const serializedStreams = serializeStreams(streams);
     const entry = {
       serializedStreams,
       approxBytes: getSerializedApproxBytes(serializedStreams),
-      expiresAt: Date.now() + (streams.length === 0
-        ? PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
-          ? config.PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
-          : config.PROVIDER_EMPTY_CACHE_TTL_SECONDS
-        : config.PROVIDER_CACHE_TTL_SECONDS) * 1000
+      expiresAt: Date.now() + (cacheTtlSeconds * 1000)
     };
 
     touchMapEntry(this.resultCache, cacheKey, entry);

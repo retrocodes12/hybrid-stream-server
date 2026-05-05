@@ -37,6 +37,43 @@ const detectSourceType = (source) => {
   return null;
 };
 
+const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
+const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
+
+const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
+  try {
+    const parsedUrl = new URL(String(url || '').trim());
+    const token = parsedUrl.searchParams.get('token');
+
+    if (!/^\d{10,13}$/u.test(String(token || ''))) {
+      return null;
+    }
+
+    const rawExpiry = Number(token);
+    const expiryMs = rawExpiry > 1_000_000_000_000 ? rawExpiry : rawExpiry * 1000;
+    const ttlSeconds = Math.floor((expiryMs - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+
+    return Number.isFinite(ttlSeconds)
+      ? Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS, ttlSeconds)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const getSignedStreamCacheLimit = (streams, nowMs = Date.now()) => {
+  let ttlSeconds = null;
+
+  for (const stream of Array.isArray(streams) ? streams : []) {
+    const signedTtl = getSignedUrlExpiryTtlSeconds(stream?.url, nowMs);
+    if (signedTtl !== null) {
+      ttlSeconds = ttlSeconds === null ? signedTtl : Math.min(ttlSeconds, signedTtl);
+    }
+  }
+
+  return ttlSeconds;
+};
+
 const normalizeRequestedType = (type) => {
   if (typeof type !== 'string' || !type.trim()) {
     return null;
@@ -544,6 +581,25 @@ const isTrustedDirectHttpStream = (stream) =>
   Boolean(stream.url) &&
   !hasForwardHeaders(stream.headers) &&
   isHighValueCacheStream(stream);
+
+const needsRegisteredPlaybackProxy = (stream) => {
+  if (stream?.transport !== 'http' || !stream.url) {
+    return false;
+  }
+
+  const providerId = String(stream.provider || '').trim().toLowerCase();
+
+  if (providerId !== 'cinestream' || !hasForwardHeaders(stream.headers)) {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(stream.url).hostname.toLowerCase();
+    return hostname === '87d6a6ef6b58-webstreamrmbg.baby-beamup.club';
+  } catch {
+    return false;
+  }
+};
 
 const hasHeavyFormatTraits = (stream) => {
   const text = `${String(stream.name || '')} ${String(stream.title || '')}`.toLowerCase();
@@ -2198,7 +2254,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 54,
+      version: 57,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2344,14 +2400,20 @@ export class StreamManager {
 
   async setCachedStremioStreams(cacheKey, streams, { weak = false } = {}) {
     const now = Date.now();
+    const signedTtlSeconds = getSignedStreamCacheLimit(streams, now);
     const freshTtlSeconds = streams.length === 0
       ? config.STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
       : weak
         ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, config.STREMIO_RESULT_CACHE_TTL_SECONDS)
         : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
-    const freshTtlMs = freshTtlSeconds * 1000;
+    const cappedFreshTtlSeconds = signedTtlSeconds === null
+      ? freshTtlSeconds
+      : Math.min(freshTtlSeconds, signedTtlSeconds);
+    const freshTtlMs = cappedFreshTtlSeconds * 1000;
     const staleTtlMs = streams.length === 0 || weak
       ? freshTtlMs
+      : signedTtlSeconds !== null
+        ? freshTtlMs
       : Math.max(
         freshTtlMs,
         config.STREMIO_RESULT_STALE_TTL_SECONDS * 1000
@@ -3037,8 +3099,44 @@ export class StreamManager {
         requestedProviders
       })
     );
-    const useWeakCache = shouldUseWeakResultCache(dedupedStreams);
-    const stremioStreams = dedupedStreams
+    const playbackStreams = await Promise.all(dedupedStreams.map(async (stream) => {
+      if (!needsRegisteredPlaybackProxy(stream)) {
+        return stream;
+      }
+
+      try {
+        const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
+          type: 'http',
+          source: stream.url,
+          headers: stream.headers,
+          metadata: {
+            provider: stream.provider,
+            title: stream.title,
+            quality: stream.quality
+          },
+          deferValidation: true
+        });
+
+        return {
+          ...stream,
+          url: streamUrl.toString(),
+          headers: null,
+          behaviorHints: {
+            ...stream.behaviorHints,
+            notWebReady: false
+          }
+        };
+      } catch (error) {
+        logger.warn('failed to register playback proxy for stream', {
+          provider: stream.provider,
+          url: stream.url,
+          error
+        });
+        return stream;
+      }
+    }));
+    const useWeakCache = shouldUseWeakResultCache(playbackStreams);
+    const stremioStreams = playbackStreams
       .map((stream) => toStremioStreamObject(stream, parsed, streamOptions))
       .filter(Boolean);
 

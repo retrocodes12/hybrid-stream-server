@@ -32,6 +32,24 @@ function rewriteUpstreamLabel(value) {
         .trim();
 }
 
+function normalizeStreamUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    try {
+        const parsedUrl = new URL(raw);
+        const apiBaseUrl = new URL(API_BASE);
+
+        if (parsedUrl.hostname === '87d6a6ef6b58-webstreamrmbg') {
+            parsedUrl.hostname = apiBaseUrl.hostname;
+        }
+
+        return parsedUrl.toString();
+    } catch (error) {
+        return raw;
+    }
+}
+
 function pad2(value) {
     return String(Number(value) || 0).padStart(2, '0');
 }
@@ -160,7 +178,7 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
             return {
                 name: `CS [${upstreamName || fallbackName}]`,
                 title: rewriteUpstreamLabel(s.title.split('\n')[0]),
-                url: s.url,
+                url: normalizeStreamUrl(s.url),
                 quality,
                 headers: s.behaviorHints?.proxyHeaders?.request || { "Referer": API_BASE }
             };
