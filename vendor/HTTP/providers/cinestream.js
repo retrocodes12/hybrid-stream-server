@@ -31,7 +31,7 @@ var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json"
 };
-var DIRECT_FALLBACK_PROVIDERS = (mediaType) => mediaType === "tv" ? ["./4khdhub.js", "./hdhub4u.js"] : [];
+var DIRECT_FALLBACK_PROVIDERS = (mediaType) => mediaType === "tv" || mediaType === "series" ? ["./4khdhub.js", "./hdhub4u.js"] : [];
 function detectQualityLabel(value) {
   const text = String(value || "");
   const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
@@ -63,6 +63,13 @@ function normalizeStreamUrl(value) {
 }
 function pad2(value) {
   return String(Number(value) || 0).padStart(2, "0");
+}
+function normalizeMediaType(mediaType) {
+  const normalized = String(mediaType || "movie").trim().toLowerCase();
+  return normalized === "series" ? "tv" : normalized;
+}
+function toStreamContentType(mediaType) {
+  return normalizeMediaType(mediaType) === "tv" ? "series" : "movie";
 }
 function buildSeriesCandidateUrls(apiBase, imdbId, tmdbId, season, episode) {
   const seasonValue = Number(season) || 0;
@@ -140,34 +147,45 @@ function dedupeStreams(streams) {
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
-    const url = `${TMDB_BASE_URL}/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
+    const normalizedMediaType = normalizeMediaType(mediaType);
+    const url = `${TMDB_BASE_URL}/${normalizedMediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
     const res = yield fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) {
+      throw new Error(`TMDB lookup failed with ${res.status}`);
+    }
     const data = yield res.json();
     return {
       imdbId: (_a = data.external_ids) == null ? void 0 : _a.imdb_id,
-      title: mediaType === "tv" ? data.name : data.title
+      title: normalizedMediaType === "tv" ? data.name : data.title
     };
   });
 }
 function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) {
   return __async(this, null, function* () {
     try {
+      const normalizedMediaType = normalizeMediaType(mediaType);
+      const streamContentType = toStreamContentType(normalizedMediaType);
       let info = null;
       try {
-        info = yield getIMDBId(tmdbId, mediaType);
+        info = yield getIMDBId(tmdbId, normalizedMediaType);
       } catch (error) {
         console.log(`[CineStream] TMDB lookup failed: ${error.message}`);
       }
       let urls = [];
-      if ((info == null ? void 0 : info.imdbId) && mediaType === "movie") {
-        urls = [`${API_BASE}/stream/movie/${info.imdbId}.json`];
+      if (normalizedMediaType === "movie") {
+        urls = [
+          ...((info == null ? void 0 : info.imdbId) ? [`${API_BASE}/stream/movie/${info.imdbId}.json`] : []),
+          `${API_BASE}/stream/movie/tmdb:${tmdbId}.json`
+        ];
       } else if (info == null ? void 0 : info.imdbId) {
         urls = buildSeriesCandidateUrls(API_BASE, info.imdbId, tmdbId, season, episode);
+      } else {
+        urls = [`${API_BASE}/stream/${streamContentType}/tmdb:${tmdbId}:${Number(season) || 0}:${Number(episode) || 0}.json`];
       }
       const data = urls.length > 0 ? yield fetchFirstWorkingPayload(urls) : null;
       const upstreamStreams = (data == null ? void 0 : data.streams) || [];
-      const directFallbackStreams = yield fetchDirectFallbackStreams(tmdbId, mediaType, season, episode);
-      const streams = dedupeStreams([...upstreamStreams, ...directFallbackStreams]);
+      const directFallbackStreams = yield fetchDirectFallbackStreams(tmdbId, normalizedMediaType, season, episode);
+      const streams = dedupeStreams([...upstreamStreams, ...directFallbackStreams]).filter((s) => normalizeStreamUrl(s == null ? void 0 : s.url));
       if (streams.length === 0)
         return [];
       return streams.map((s) => {
@@ -175,9 +193,10 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         const quality = detectQualityLabel(`${s.name || ""} ${s.title || ""}`);
         const upstreamName = rewriteUpstreamLabel(s.name || "");
         const fallbackName = quality === "Auto" ? "NebulaStreams" : `NebulaStreams ${quality}`;
+        const title = String(s.title || s.name || fallbackName);
         return {
           name: `CS [${upstreamName || fallbackName}]`,
-          title: rewriteUpstreamLabel(s.title.split("\n")[0]),
+          title: rewriteUpstreamLabel(title.split("\n")[0]),
           url: normalizeStreamUrl(s.url),
           quality,
           headers: ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE }
