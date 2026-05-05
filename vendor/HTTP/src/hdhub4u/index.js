@@ -6,6 +6,91 @@ import {
 } from './utils.js';
 import { loadExtractor, getRedirectLinks } from './extractors.js';
 
+const PLAYABLE_CHECK_TIMEOUT_MS = 7000;
+const PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
+const HTML_WRAPPER_HOSTS = new Set(['hubcdn.fans']);
+
+function normalizeStreamUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).toString();
+  } catch {
+    return '';
+  }
+}
+
+function isKnownHtmlWrapperUrl(value) {
+  try {
+    return HTML_WRAPPER_HOSTS.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function hasPlayableExtension(value) {
+  return PLAYABLE_EXTENSION_PATTERN.test(String(value || ''));
+}
+
+async function resolvePlayableLink(link) {
+  const url = normalizeStreamUrl(link?.url);
+  if (!url || isKnownHtmlWrapperUrl(url)) return null;
+
+  if (hasPlayableExtension(url)) {
+    return { ...link, url, headers: link.headers || null };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PLAYABLE_CHECK_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        ...(link?.headers || {}),
+        Range: 'bytes=0-1023'
+      },
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+    const contentLength = Number.parseInt(res.headers.get('content-length') || '0', 10);
+    const contentRange = String(res.headers.get('content-range') || '');
+    const finalUrl = normalizeStreamUrl(res.url || url);
+    await res.body?.cancel?.();
+
+    if (!res.ok && res.status !== 206) return null;
+    if (contentType.includes('text/html')) return null;
+
+    const videoLike = contentType.startsWith('video/')
+      || contentType.includes('mpegurl')
+      || contentType.includes('application/vnd.apple.mpegurl')
+      || (contentType.includes('application/octet-stream') && (hasPlayableExtension(finalUrl) || contentLength > 1048576))
+      || Boolean(contentRange);
+
+    return videoLike ? { ...link, url: finalUrl, headers: link.headers || null } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function filterPlayableLinks(links) {
+  const output = [];
+  const seen = new Set();
+
+  for (const link of Array.isArray(links) ? links : []) {
+    const playable = await resolvePlayableLink(link);
+    if (!playable) continue;
+    const key = normalizeStreamUrl(playable.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(playable);
+  }
+
+  return output;
+}
+
 async function searchByImdbId(imdbId, season) {
   const domain = await getCurrentDomain();
   const searchUrl = `https://search.pingora.fyi/collections/post/documents/search?query_by=imdb_id&q=${encodeURIComponent(imdbId)}`;
@@ -333,6 +418,8 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
     if (mediaType === "tv" && episode !== null) {
       filteredLinks = finalLinks.filter(link => link.episode === episode);
     }
+
+    filteredLinks = await filterPlayableLinks(filteredLinks);
     
     const streams = filteredLinks.map(link => {
       let mediaTitle = link.fileName && link.fileName !== "Unknown" ? link.fileName : mediaInfo.title;
@@ -357,7 +444,7 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
         url: link.url,
         quality: qualityStr,
         size: formatBytes(link.size),
-        headers: HEADERS,
+        headers: link.headers || null,
         provider: "hdhub4u"
       };
     });

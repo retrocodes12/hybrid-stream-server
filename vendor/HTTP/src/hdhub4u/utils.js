@@ -231,10 +231,24 @@ export function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) 
 export async function getTMDBDetails(tmdbId, mediaType) {
   const endpoint = mediaType === "tv" ? "tv" : "movie";
   const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
-  const response = await fetch(url, {
-    method: "GET",
-    headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-  });
+  let response = null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        method: "GET",
+        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(8000)
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 250 * attempt));
+      }
+    }
+  }
+  if (!response) throw lastError || new Error("TMDB API request failed");
   if (!response.ok) throw new Error(`TMDB API error: ${response.status}`);
   const data = await response.json();
   const title = mediaType === "tv" ? data.name : data.title;

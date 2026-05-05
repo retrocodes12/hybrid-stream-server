@@ -47,6 +47,78 @@ var BASE_URL = "https://4khdhub.click";
 var TMDB_API_KEY = process.env.TMDB_API_KEY || "439c478a771f35c05022f9feabcca01c";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
+var PLAYABLE_CHECK_TIMEOUT_MS = 7e3;
+var PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
+var HTML_WRAPPER_HOSTS = /* @__PURE__ */ new Set(["hubcdn.fans"]);
+function normalizeStreamUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).toString();
+  } catch {
+    return "";
+  }
+}
+function isKnownHtmlWrapperUrl(value) {
+  try {
+    return HTML_WRAPPER_HOSTS.has(new URL(value).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+function hasPlayableExtension(value) {
+  return PLAYABLE_EXTENSION_PATTERN.test(String(value || ""));
+}
+function resolvePlayableStream(stream) {
+  return __async(this, null, function* () {
+    const url = normalizeStreamUrl(stream == null ? void 0 : stream.url);
+    if (!url || isKnownHtmlWrapperUrl(url)) return null;
+    if (hasPlayableExtension(url)) {
+      return __spreadProps(__spreadValues({}, stream), { url, headers: stream.headers || null });
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PLAYABLE_CHECK_TIMEOUT_MS);
+    try {
+      const res = yield fetch(url, {
+        headers: __spreadValues(__spreadValues({}, stream.headers || {}), {
+          Range: "bytes=0-1023"
+        }),
+        redirect: "follow",
+        signal: controller.signal
+      });
+      const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+      const contentLength = Number.parseInt(res.headers.get("content-length") || "0", 10);
+      const contentRange = String(res.headers.get("content-range") || "");
+      const finalUrl = normalizeStreamUrl(res.url || url);
+      if (res.body && typeof res.body.cancel === "function") {
+        yield res.body.cancel();
+      }
+      if (!res.ok && res.status !== 206) return null;
+      if (contentType.includes("text/html")) return null;
+      const videoLike = contentType.startsWith("video/") || contentType.includes("mpegurl") || contentType.includes("application/vnd.apple.mpegurl") || contentType.includes("application/octet-stream") && (hasPlayableExtension(finalUrl) || contentLength > 1048576) || Boolean(contentRange);
+      return videoLike ? __spreadProps(__spreadValues({}, stream), { url: finalUrl, headers: stream.headers || null }) : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+}
+function filterPlayableStreams(streams) {
+  return __async(this, null, function* () {
+    const output = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const stream of Array.isArray(streams) ? streams : []) {
+      const playable = yield resolvePlayableStream(stream);
+      if (!playable) continue;
+      const key = normalizeStreamUrl(playable.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.push(playable);
+    }
+    return output;
+  });
+}
 
 // src/4khdhub/utils.js
 var domainCache = { url: BASE_URL, ts: 0 };
@@ -93,7 +165,7 @@ function getTmdbDetails(tmdbId, type) {
       let response;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          response = yield fetch(url, { signal: AbortSignal.timeout(3000) });
+          response = yield fetch(url, { signal: AbortSignal.timeout(8000) });
           break;
         } catch (retryErr) {
           if (attempt === 2) throw retryErr;
@@ -664,8 +736,9 @@ function getStreams(tmdbId, type, season, episode) {
     }));
     const results = yield Promise.all(streamPromises);
     const streams = results.reduce((acc, val) => acc.concat(val), []);
-    if (streams.length > 0) {
-      return streams;
+    const playableStreams = yield filterPlayableStreams(streams);
+    if (playableStreams.length > 0) {
+      return playableStreams;
     }
     console.log("[4KHDHub] No direct streams found, trying mirror fallback");
     return yield getMirrorStreams(tmdbId, type, season, episode);

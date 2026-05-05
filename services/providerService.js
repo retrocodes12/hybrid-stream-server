@@ -100,7 +100,7 @@ const getProviderResultCacheTtlSeconds = (streams, providerId = null) => {
 
 const getProviderCacheVersion = (providerId) => {
   if (providerId === '4khdhub' || providerId === '4khdhub_tv') {
-    return '42';
+    return '43';
   }
 
   if (providerId === 'rgshows') {
@@ -164,7 +164,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'hdhub4u') {
-    return '34';
+    return '35';
   }
 
   if (providerId === 'hdmovie2') {
@@ -192,7 +192,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '30';
+    return '32';
   }
 
   if (providerId === 'allyoucanwatch') {
