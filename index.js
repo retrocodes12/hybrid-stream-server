@@ -1561,6 +1561,17 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
                 </div>
 
                 <div class="field">
+                  <label class="field-label" for="formatter-style">Stream card formatter</label>
+                  <select id="formatter-style" class="field-input">
+                    <option value="clean">Clean</option>
+                    <option value="detailed">Detailed</option>
+                    <option value="compact">Compact</option>
+                    <option value="minimal">Minimal</option>
+                  </select>
+                  <div class="field-help">Choose how stream cards are displayed in Stremio.</div>
+                </div>
+
+                <div class="field">
                   <label class="field-label" for="preferred-audio-language">Preferred audio language</label>
                   <select id="preferred-audio-language" class="field-input">
                     <option value="">Any language</option>
@@ -1799,6 +1810,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
       const customProxyUrl = $('custom-proxy-url');
       const febboxUiCookie = $('febbox-ui-cookie');
       const dedupeMode = $('dedupe-mode');
+      const formatterStyle = $('formatter-style');
       const overviewProviderCount = $('overview-provider-count');
       const presetStatus = $('preset-status');
       const presetButtons = Array.from(document.querySelectorAll('[data-preset-id]'));
@@ -1850,7 +1862,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         qualityPriority.every((q, i) => q === defaultQualityPriority[i]);
 
       const presetDefinitions = {
-        'web-fast': { label: 'Web Fast', code: 'WF', providers: 'all', qualityPriority: ['1080p','720p','480p','360p','2160p','1440p','auto','unknown'], webReadyOnly: true, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '5', blockedHosts: '', dedupeMode: 'host-quality' },
+        'web-fast': { label: 'Web Fast', code: 'WF', providers: 'all', qualityPriority: ['1080p','720p','480p','360p','2160p','1440p','auto','unknown'], webReadyOnly: true, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '5', blockedHosts: '', dedupeMode: 'host-quality', formatterStyle: 'clean' },
         'mobile-data': { label: 'Mobile Data', code: 'MD', providers: 'all', qualityPriority: ['720p','480p','360p','1080p','2160p','1440p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: true, preferHdr: false, preferH264: true, preferSmallerFiles: true, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '3', blockedHosts: '', dedupeMode: 'host-quality' },
         '4k-hdr': { label: '4K HDR', code: '4K', providers: 'all', qualityPriority: ['2160p','1440p','1080p','720p','480p','360p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: true, preferH264: false, preferSmallerFiles: false, preferDirectHosts: false, customProxyUrl: '', preferredAudioLanguage: '', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'smart' },
         'anime': { label: 'Anime', code: 'AN', providers: ['anime-sama','animekai','animesalt','animeworld','4khdhub_tv','4khdhub','hdhub4u','kisskh','vidlink','videasy'], qualityPriority: ['1080p','720p','1440p','2160p','480p','360p','auto','unknown'], webReadyOnly: false, hideHeavyFormats: false, preferHdr: false, preferH264: false, preferSmallerFiles: false, preferDirectHosts: true, customProxyUrl: '', preferredAudioLanguage: 'Japanese', maxSizeGb: '0', blockedHosts: '', dedupeMode: 'smart' },
@@ -1904,6 +1916,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         maxSizeGb.value = p.maxSizeGb || '0';
         blockedHosts.value = p.blockedHosts || '';
         dedupeMode.value = p.dedupeMode || 'off';
+        formatterStyle.value = p.formatterStyle || 'clean';
         activePresetId = id;
         renderProviderOptions();
         renderQualityList();
@@ -1924,6 +1937,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         if (preferDirectHosts.checked) tokens.push('prefer-direct-hosts');
         if (preferredAudioLanguage.value) tokens.push('preferred-audio=' + preferredAudioLanguage.value.toLowerCase());
         if (dedupeMode.value && dedupeMode.value !== 'off') tokens.push('dedupe=' + dedupeMode.value);
+        if (formatterStyle.value && formatterStyle.value !== 'clean') tokens.push('formatter=' + formatterStyle.value);
         if (Number.parseFloat(maxSizeGb.value) > 0) tokens.push('max-size-gb=' + Number.parseFloat(maxSizeGb.value));
         const blocked = blockedHosts.value.split(/[,\\n]/).map((v) => v.trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
         if (blocked.length > 0) tokens.push('block-hosts=' + blocked.join('|'));
@@ -1953,6 +1967,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
             blockHosts: blockedHosts.value.split(/[,\\n]/).map((v) => v.trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i),
             preferredAudioLanguage: preferredAudioLanguage.value || null,
             dedupeMode: dedupeMode.value || 'off',
+            formatterStyle: formatterStyle.value || 'clean',
             preferHdr: preferHdr.checked,
             preferH264: preferH264.checked,
             preferSmallerFiles: preferSmallerFiles.checked,
@@ -2145,7 +2160,7 @@ const renderConfigurePage = ({ baseUrl, providers }) => {
         updateManifest();
       });
 
-      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, preferredAudioLanguage, maxSizeGb, dedupeMode].forEach((el) => {
+      [webReadyOnly, hideHeavyFormats, preferHdr, preferH264, preferSmallerFiles, preferDirectHosts, preferredAudioLanguage, maxSizeGb, dedupeMode, formatterStyle].forEach((el) => {
         el.addEventListener('change', () => { markPresetAsCustom(); updateManifest(); });
       });
       [blockedHosts, customProxyUrl, febboxUiCookie].forEach((el) => {

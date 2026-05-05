@@ -185,6 +185,13 @@ const DEFAULT_QUALITY_PRIORITY = Object.freeze([
   'unknown'
 ]);
 
+const FORMATTER_STYLES = new Set(['clean', 'detailed', 'compact', 'minimal']);
+
+const normalizeFormatterStyle = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return FORMATTER_STYLES.has(normalized) ? normalized : 'clean';
+};
+
 const DEFAULT_STREAM_OPTIONS = Object.freeze({
   webReadyOnly: false,
   hideHeavyFormats: false,
@@ -196,6 +203,7 @@ const DEFAULT_STREAM_OPTIONS = Object.freeze({
   preferH264: false,
   preferSmallerFiles: false,
   preferDirectHosts: false,
+  formatterStyle: 'clean',
   customProxyUrl: null
 });
 const DEFAULT_PRIVATE_PROVIDER_SETTINGS = Object.freeze({
@@ -908,7 +916,11 @@ const summarizeStreamOptions = (streamOptions) => {
     parts.push('Custom proxy');
   }
 
-  return parts.length > 0 ? parts.join(', ') : 'Default HTTP playback';
+  if (normalizeFormatterStyle(streamOptions.formatterStyle) !== 'clean') {
+    parts.push(`Formatter: ${toTitleCaseLabel(streamOptions.formatterStyle)}`);
+  }
+
+  return parts.length > 0 ? parts.join(' • ') : 'Default stream settings';
 };
 
 const normalizePrivateCookie = (value) => {
@@ -1614,6 +1626,7 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
   const languageLabel = getLanguageLabel(stream);
   const sourceLabel = getSourceLabel(stream);
   const sizeLabel = getStreamSizeLabel(stream);
+  const formatterStyle = normalizeFormatterStyle(streamOptions.formatterStyle);
 
   const qualityLabel = normalizeQualityKey(streamQuality) === '2160p'
     ? '4K'
@@ -1621,43 +1634,56 @@ const toStremioStreamObject = (stream, parsedRequest, streamOptions = DEFAULT_ST
       ? streamQuality.toUpperCase()
       : normalizeQualityKey(streamQuality).toUpperCase();
 
-  const nameLine = `NebulaStreams ${qualityLabel}`;
+  let nameLine = `NebulaStreams ${qualityLabel}`;
 
   const primaryCardTitle = filename && !/^[a-f0-9]{20,}$/i.test(filename.replace(/\.[^.]+$/, ''))
     ? filename
     : String(stream.title || '').split('\n')[0];
-  const webstreamrTitleLines = [];
+  let cardTitle = '';
 
-  if (primaryCardTitle) {
-    webstreamrTitleLines.push(truncateCardLine(primaryCardTitle, 140));
+  if (formatterStyle === 'detailed') {
+    cardTitle = formatStremioCardTitle(stream);
+  } else if (formatterStyle === 'compact') {
+    cardTitle = formatStremioCardFacts(stream);
+  } else if (formatterStyle === 'minimal') {
+    nameLine = `NS ${qualityLabel}`;
+    cardTitle = [providerLabel, sizeLabel, languageLabel && languageLabel !== 'Unknown' ? languageLabel : null]
+      .filter(Boolean)
+      .join(' • ');
+  } else {
+    const cleanTitleLines = [];
+
+    if (primaryCardTitle) {
+      cleanTitleLines.push(truncateCardLine(primaryCardTitle, 140));
+    }
+
+    const cleanDetails = [];
+    if (sizeLabel) cleanDetails.push(`💾 ${sizeLabel}`);
+    cleanDetails.push(
+      sourceLabel && sourceLabel !== providerLabel
+        ? `🔗 ${sourceLabel} from ${providerLabel}`
+        : `🔗 ${providerLabel}`
+    );
+    cleanTitleLines.push(cleanDetails.join(' '));
+
+    const cleanTech = [
+      ...visualTags.slice(0, 3),
+      ...encodeTags.slice(0, 2)
+    ];
+    if (cleanTech.length > 0) {
+      cleanTitleLines.push(`📺 ${[...new Set(cleanTech)].join(' · ')}`);
+    }
+
+    const cleanAudio = [
+      ...audioTags.slice(0, 3),
+      ...(languageLabel && languageLabel !== 'Unknown' ? [languageLabel] : [])
+    ];
+    if (cleanAudio.length > 0) {
+      cleanTitleLines.push(`🎧 ${[...new Set(cleanAudio)].join(' · ')}`);
+    }
+
+    cardTitle = cleanTitleLines.filter(Boolean).join('\n');
   }
-
-  const webstreamrDetails = [];
-  if (sizeLabel) webstreamrDetails.push(`💾 ${sizeLabel}`);
-  webstreamrDetails.push(
-    sourceLabel && sourceLabel !== providerLabel
-      ? `🔗 ${sourceLabel} from ${providerLabel}`
-      : `🔗 ${providerLabel}`
-  );
-  webstreamrTitleLines.push(webstreamrDetails.join(' '));
-
-  const webstreamrTech = [
-    ...visualTags.slice(0, 3),
-    ...encodeTags.slice(0, 2)
-  ];
-  if (webstreamrTech.length > 0) {
-    webstreamrTitleLines.push(`📺 ${[...new Set(webstreamrTech)].join(' · ')}`);
-  }
-
-  const webstreamrAudio = [
-    ...audioTags.slice(0, 3),
-    ...(languageLabel && languageLabel !== 'Unknown' ? [languageLabel] : [])
-  ];
-  if (webstreamrAudio.length > 0) {
-    webstreamrTitleLines.push(`🎧 ${[...new Set(webstreamrAudio)].join(' · ')}`);
-  }
-
-  const cardTitle = webstreamrTitleLines.filter(Boolean).join('\n');
 
   const base = {
     name: nameLine,
@@ -2139,6 +2165,7 @@ export class StreamManager {
       preferH264: Boolean(baseStreamOptions.preferH264),
       preferSmallerFiles: Boolean(baseStreamOptions.preferSmallerFiles),
       preferDirectHosts: Boolean(baseStreamOptions.preferDirectHosts),
+      formatterStyle: normalizeFormatterStyle(baseStreamOptions.formatterStyle),
       customProxyUrl: normalizeCustomProxyUrl(baseStreamOptions.customProxyUrl)
     };
     const privateProviderSettings = normalizePrivateProviderSettings(payload.privateProviderSettings);
@@ -2254,7 +2281,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 57,
+      version: 58,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2535,6 +2562,7 @@ export class StreamManager {
         blockHosts: Array.isArray(privateConfig.streamOptions?.blockHosts)
           ? [...privateConfig.streamOptions.blockHosts]
           : [],
+        formatterStyle: normalizeFormatterStyle(privateConfig.streamOptions?.formatterStyle),
         customProxyUrl: normalizeCustomProxyUrl(privateConfig.streamOptions?.customProxyUrl)
       };
     }
@@ -2559,6 +2587,7 @@ export class StreamManager {
     let blockHosts = [];
     let preferredAudioLanguage = null;
     let dedupeMode = 'off';
+    let formatterStyle = 'clean';
 
     for (const token of tokens) {
       if (token.startsWith('max-size-gb=')) {
@@ -2585,6 +2614,10 @@ export class StreamManager {
       if (token.startsWith('dedupe=')) {
         dedupeMode = normalizeDedupeMode(token.slice('dedupe='.length));
       }
+
+      if (token.startsWith('formatter=')) {
+        formatterStyle = normalizeFormatterStyle(token.slice('formatter='.length));
+      }
     }
 
     return {
@@ -2598,6 +2631,7 @@ export class StreamManager {
       preferH264: tokens.includes('prefer-h264'),
       preferSmallerFiles: tokens.includes('prefer-smaller-files'),
       preferDirectHosts: tokens.includes('prefer-direct-hosts'),
+      formatterStyle,
       customProxyUrl: null
     };
   }
