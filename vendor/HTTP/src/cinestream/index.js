@@ -115,6 +115,14 @@ function isApiBaseUrl(value) {
     }
 }
 
+function shouldTrustStreamUrl(stream, url) {
+    const text = `${stream?.name || ''} ${stream?.title || ''} ${stream?.quality || ''}`;
+    return hasPlayableExtension(url)
+        || Boolean(stream?.behaviorHints?.videoSize)
+        || Boolean(stream?.headers || stream?.behaviorHints?.proxyHeaders?.request)
+        || /\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i.test(text);
+}
+
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -144,7 +152,7 @@ async function resolvePlayableStream(stream) {
     const url = normalizeStreamUrl(stream?.url);
     if (!url || isKnownHtmlWrapperUrl(url)) return null;
 
-    if (hasPlayableExtension(url)) {
+    if (shouldTrustStreamUrl(stream, url)) {
         return { ...stream, url };
     }
 

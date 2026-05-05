@@ -28,6 +28,7 @@ const PROVIDER_FETCH_DISPATCHER = new Agent({
 const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 45_000,
   '4khdhub_tv': 45_000,
+  cinestream: 45_000,
   hdhub4u: 45_000,
   uhdmovies: 30_000
 });
@@ -192,7 +193,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '33';
+    return '34';
   }
 
   if (providerId === 'allyoucanwatch') {
@@ -484,7 +485,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   allyoucanwatch: 30,
   animepahe: 25,
   brazucaplay: 20,
-  cinestream: 20,
+  cinestream: 35,
   'dahmermovies-4k': 25,
   fmovies: 20,
   // These providers often require multi-hop extraction / CF redirects.
@@ -524,6 +525,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
+  cinestream: 25,
   hdhub4u: 18,
   playimdb: 10,
   playimdb_v2: 10,
@@ -538,6 +540,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 22_000,
   '4khdhub_tv': 22_000,
+  cinestream: 30_000,
   hdhub4u: 22_000,
   uhdmovies: 22_000,
   moviesmod: 18_000,

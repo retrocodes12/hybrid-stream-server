@@ -1,6 +1,6 @@
 /**
  * cinestream - Built from src/cinestream/
- * Generated: 2026-05-05T13:56:29.150Z
+ * Generated: 2026-05-05T14:50:13.071Z
  */
 var __defProp = Object.defineProperty;
 var __defProps = Object.defineProperties;
@@ -128,6 +128,11 @@ function isApiBaseUrl(value) {
     return false;
   }
 }
+function shouldTrustStreamUrl(stream, url) {
+  var _a, _b, _c;
+  const text = `${(stream == null ? void 0 : stream.name) || ""} ${(stream == null ? void 0 : stream.title) || ""} ${(stream == null ? void 0 : stream.quality) || ""}`;
+  return hasPlayableExtension(url) || Boolean((_a = stream == null ? void 0 : stream.behaviorHints) == null ? void 0 : _a.videoSize) || Boolean((stream == null ? void 0 : stream.headers) || ((_c = (_b = stream == null ? void 0 : stream.behaviorHints) == null ? void 0 : _b.proxyHeaders) == null ? void 0 : _c.request)) || /\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i.test(text);
+}
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -156,7 +161,7 @@ function resolvePlayableStream(stream) {
     var _a, _b;
     const url = normalizeStreamUrl(stream == null ? void 0 : stream.url);
     if (!url || isKnownHtmlWrapperUrl(url)) return null;
-    if (hasPlayableExtension(url)) {
+    if (shouldTrustStreamUrl(stream, url)) {
       return __spreadProps(__spreadValues({}, stream), { url });
     }
     const controller = new AbortController();
