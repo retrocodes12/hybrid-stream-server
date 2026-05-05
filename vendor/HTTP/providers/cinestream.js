@@ -26,11 +26,19 @@ var __async = (__this, __arguments, generator) => {
 // src/cinestream/index.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var API_BASE = "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/";
+var API_BASE = "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club";
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json"
 };
+function detectQualityLabel(value) {
+  const text = String(value || "");
+  const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
+  if (!match)
+    return "Auto";
+  const normalized = match[1].toLowerCase();
+  return normalized === "4k" ? "2160p" : normalized;
+}
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
@@ -63,11 +71,12 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       const streams = data.streams || [];
       return streams.map((s) => {
         var _a, _b;
+        const quality = detectQualityLabel(`${s.name || ""} ${s.title || ""}`);
         return {
           name: `CS [${s.name.split("|").pop().trim()}]`,
           title: s.title.split("\n")[0],
           url: s.url,
-          quality: s.title.includes("1080p") ? "1080p" : s.title.includes("720p") ? "720p" : "Auto",
+          quality,
           headers: ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE }
         };
       });

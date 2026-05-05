@@ -62,7 +62,7 @@ const getPrivateProviderSettingsKey = (providerId, privateProviderSettings = nul
 };
 const getProviderCacheVersion = (providerId) => {
   if (providerId === '4khdhub' || providerId === '4khdhub_tv') {
-    return '41';
+    return '42';
   }
 
   if (providerId === 'rgshows') {
@@ -151,6 +151,10 @@ const getProviderCacheVersion = (providerId) => {
 
   if (providerId === 'uhdmovies') {
     return '34';
+  }
+
+  if (providerId === 'cinestream') {
+    return '24';
   }
 
   if (providerId === 'allyoucanwatch') {

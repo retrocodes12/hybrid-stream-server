@@ -186,13 +186,17 @@ function formatBytes(val) {
     i = 0;
   return parseFloat((val / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
+function sanitizeSearchTitle(value) {
+  return String(value || "").replace(/[""'`]+/g, " ").replace(/\s+/g, " ").trim();
+}
 
 // src/4khdhub/search.js
 var cheerio = require("cheerio-without-node-native");
 function fetchPageUrl(name, year, isSeries) {
   return __async(this, null, function* () {
     const domain = yield fetchLatestDomain();
-    const searchUrl = `${domain}/?s=${encodeURIComponent(name + " " + year)}`;
+    const sanitizedName = sanitizeSearchTitle(name);
+    const searchUrl = `${domain}/?s=${encodeURIComponent(sanitizedName + " " + year)}`;
     console.log(`[4KHDHub] Search Request URL: ${searchUrl}`);
     const html = yield fetchText(searchUrl);
     if (!html) {
@@ -216,10 +220,10 @@ function fetchPageUrl(name, year, isSeries) {
       }
       return yearMatch;
     }).filter((_, el) => {
-      const movieCardTitle = $(el).find(".movie-card-title").text().replace(/\[.*?]/g, "").trim();
-      const distance = levenshteinDistance(movieCardTitle.toLowerCase(), name.toLowerCase());
+      const movieCardTitle = sanitizeSearchTitle($(el).find(".movie-card-title").text().replace(/\[.*?]/g, "").trim());
+      const distance = levenshteinDistance(movieCardTitle.toLowerCase(), sanitizedName.toLowerCase());
       const match = distance < 5;
-      console.log(`[4KHDHub] Checking: "${movieCardTitle}" (Dist: ${distance}) vs "${name}"`);
+      console.log(`[4KHDHub] Checking: "${movieCardTitle}" (Dist: ${distance}) vs "${sanitizedName}"`);
       return match;
     }).map((_, el) => {
       let href = $(el).attr("href");
@@ -439,9 +443,10 @@ function getStreams(tmdbId, type, season, episode) {
     if (!tmdbDetails)
       return [];
     const { title, year } = tmdbDetails;
-    console.log(`[4KHDHub] Search: ${title} (${year})`);
+    const normalizedTitle = sanitizeSearchTitle(title);
+    console.log(`[4KHDHub] Search: ${normalizedTitle} (${year})`);
     const isSeries = type === "series" || type === "tv";
-    const pageUrl = yield fetchPageUrl(title, year, isSeries);
+    const pageUrl = yield fetchPageUrl(normalizedTitle, year, isSeries);
     if (!pageUrl) {
       console.log("[4KHDHub] Page not found");
       return [];
