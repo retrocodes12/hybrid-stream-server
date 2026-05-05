@@ -39,6 +39,12 @@ function detectQualityLabel(value) {
   const normalized = match[1].toLowerCase();
   return normalized === "4k" ? "2160p" : normalized;
 }
+function rewriteUpstreamLabel(value) {
+  return String(value || "")
+    .replace(/WebStreamrMBG/gi, "NebulaStreams")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 function getIMDBId(tmdbId, mediaType) {
   return __async(this, null, function* () {
     var _a;
@@ -72,9 +78,11 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       return streams.map((s) => {
         var _a, _b;
         const quality = detectQualityLabel(`${s.name || ""} ${s.title || ""}`);
+        const upstreamName = rewriteUpstreamLabel(s.name || "");
+        const fallbackName = quality === "Auto" ? "NebulaStreams" : `NebulaStreams ${quality}`;
         return {
-          name: `CS [${s.name.split("|").pop().trim()}]`,
-          title: s.title.split("\n")[0],
+          name: `CS [${upstreamName || fallbackName}]`,
+          title: rewriteUpstreamLabel(s.title.split("\n")[0]),
           url: s.url,
           quality,
           headers: ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE }
