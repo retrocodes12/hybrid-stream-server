@@ -2390,6 +2390,10 @@ export class StreamManager {
   }
 
   sendStremioStreamsResponse(res, streams) {
+    if (res.headersSent) {
+      return;
+    }
+
     const normalizedStreams = Array.isArray(streams) ? streams : [];
 
     if (normalizedStreams.length === 0) {
@@ -2826,7 +2830,10 @@ export class StreamManager {
   }
 
   async handleStremioStreams(req, res, next) {
-    const overallTimeoutMs = 25_000;
+    const overallTimeoutMs = Math.max(
+      config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
+      config.STREMIO_FAST_MAX_WAIT_MS + 10_000
+    );
     const overallTimeout = setTimeout(() => {
       logger.warn('stremio stream request overall timeout', {
         imdbId: req.params.id,
