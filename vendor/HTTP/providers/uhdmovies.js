@@ -2,9 +2,11 @@
 
 // src/uhdmovies/index.js
 var DOMAIN_CANDIDATES = [
+  "https://uhdmovies.pink",
   "https://www.uhdmovies.rip",
   "https://uhdmovies.rip",
   "https://uhdmovies.cs.in",
+  "https://uhdmovies.cat",
   "http://uhdmovies.club"
 ];
 var DOMAIN = DOMAIN_CANDIDATES[0];
@@ -62,6 +64,44 @@ function fixUrl(url, domain) {
   if (url.indexOf("//") === 0) return "https:" + url;
   if (url.indexOf("/") === 0) return domain + url;
   return domain + "/" + url;
+}
+function normalizeDirectStreamUrl(value) {
+  try {
+    return new URL(String(value || "").trim()).toString();
+  } catch (e) {
+    return "";
+  }
+}
+function parseSizeBytes(value) {
+  var match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)$/i);
+  if (!match) return 0;
+  var amount = parseFloat(match[1]);
+  var unit = match[2].toUpperCase();
+  var multiplier = unit === "TB" ? Math.pow(1024, 4) : unit === "GB" ? Math.pow(1024, 3) : unit === "MB" ? Math.pow(1024, 2) : 1024;
+  return Math.round(amount * multiplier);
+}
+function dedupeAndSanitizeStreams(streams) {
+  var output = [];
+  var seen = {};
+  (Array.isArray(streams) ? streams : []).forEach(function(stream) {
+    var url = normalizeDirectStreamUrl(stream && stream.url);
+    if (!url || seen[url]) return;
+    seen[url] = true;
+    var title = String(stream.title || stream.name || "");
+    var sizeMatch = title.match(/(\d+(?:\.\d+)?\s*(?:TB|GB|MB|KB))/i);
+    var sizeBytes = sizeMatch ? parseSizeBytes(sizeMatch[1]) : 0;
+    var quality = stream.quality && stream.quality !== "Unknown" ? stream.quality : buildQualityLabel(title);
+    output.push(Object.assign({}, stream, {
+      name: stream.name || "UHDMovies",
+      title: title || "UHDMovies",
+      url,
+      quality,
+      size: stream.size || (sizeMatch ? sizeMatch[1] : void 0),
+      sourceSite: "UHDMovies",
+      behaviorHints: Object.assign({}, stream.behaviorHints || {}, sizeBytes ? { videoSize: sizeBytes } : {})
+    }));
+  });
+  return output;
 }
 function toFormEncoded(obj) {
   return Object.keys(obj).map(function(k) {
@@ -648,6 +688,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         else if (/hdrip|dvdrip|hdtv/i.test(q)) sScore = 1;
         return rScore * 10 + sScore;
       }
+      streams = dedupeAndSanitizeStreams(streams);
       streams.sort(function(a, b) { return scoreStream(b) - scoreStream(a); });
       return streams;
     });

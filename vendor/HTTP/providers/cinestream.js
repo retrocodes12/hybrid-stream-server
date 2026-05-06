@@ -53,7 +53,7 @@ var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json"
 };
-var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js"];
+var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js", "./uhdmovies.js"];
 function detectQualityLabel(value) {
   const text = String(value || "");
   const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
@@ -246,20 +246,18 @@ function fetchFirstWorkingPayload(urls) {
 }
 function fetchDirectFallbackStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
-    const fallbackStreams = [];
-    for (const modulePath of DIRECT_FALLBACK_PROVIDERS(mediaType)) {
+    const results = yield Promise.all(DIRECT_FALLBACK_PROVIDERS(mediaType).map((modulePath) => __async(this, null, function* () {
       try {
         const provider = require(modulePath);
-        if (!provider || typeof provider.getStreams !== "function") continue;
+        if (!provider || typeof provider.getStreams !== "function") return [];
         const streams = yield provider.getStreams(tmdbId, mediaType, season, episode);
-        if (Array.isArray(streams) && streams.length > 0) {
-          fallbackStreams.push(...streams);
-        }
+        return Array.isArray(streams) ? streams : [];
       } catch (error) {
         console.log(`[CineStream] Direct fallback failed for ${modulePath}: ${error.message}`);
+        return [];
       }
-    }
-    return fallbackStreams;
+    })));
+    return results.flat();
   });
 }
 function dedupeStreams(streams) {

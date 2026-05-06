@@ -15,7 +15,7 @@ const HEADERS = {
     "Accept": "application/json"
 };
 const DIRECT_FALLBACK_PROVIDERS = mediaType => (
-    ['./4khdhub.js', './hdhub4u.js']
+    ['./4khdhub.js', './hdhub4u.js', './uhdmovies.js']
 );
 
 function detectQualityLabel(value) {
@@ -253,22 +253,19 @@ async function fetchFirstWorkingPayload(urls) {
 }
 
 async function fetchDirectFallbackStreams(tmdbId, mediaType, season, episode) {
-    const fallbackStreams = [];
-
-    for (const modulePath of DIRECT_FALLBACK_PROVIDERS(mediaType)) {
+    const results = await Promise.all(DIRECT_FALLBACK_PROVIDERS(mediaType).map(async modulePath => {
         try {
             const provider = require(modulePath);
-            if (!provider || typeof provider.getStreams !== 'function') continue;
+            if (!provider || typeof provider.getStreams !== 'function') return [];
             const streams = await provider.getStreams(tmdbId, mediaType, season, episode);
-            if (Array.isArray(streams) && streams.length > 0) {
-                fallbackStreams.push(...streams);
-            }
+            return Array.isArray(streams) ? streams : [];
         } catch (error) {
             console.log(`[CineStream] Direct fallback failed for ${modulePath}: ${error.message}`);
+            return [];
         }
-    }
+    }));
 
-    return fallbackStreams;
+    return results.flat();
 }
 
 function dedupeStreams(streams) {

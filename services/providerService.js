@@ -29,9 +29,9 @@ const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 45_000,
   '4khdhub_tv': 45_000,
   cinestream: 60_000,
-  hdhub4u: 45_000,
+  hdhub4u: 60_000,
   showbox: 60_000,
-  uhdmovies: 30_000
+  uhdmovies: 60_000
 });
 const PROVIDER_RESULT_CACHE_SCHEMA_VERSION = 2;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT = 2;
@@ -178,7 +178,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '52';
+    return '51';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -194,7 +194,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '35';
+    return '34';
   }
 
   if (providerId === 'allyoucanwatch') {
@@ -528,10 +528,10 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
   cinestream: 45,
-  hdhub4u: 18,
+  hdhub4u: 45,
   playimdb: 10,
   playimdb_v2: 10,
-  uhdmovies: 18,
+  uhdmovies: 45,
   showbox: 35,
   rgshows: 6,
   kisskh: 10,
@@ -543,8 +543,8 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 22_000,
   '4khdhub_tv': 22_000,
   cinestream: 55_000,
-  hdhub4u: 22_000,
-  uhdmovies: 22_000,
+  hdhub4u: 55_000,
+  uhdmovies: 55_000,
   moviesmod: 18_000,
   streamflix: 18_000,
   multivid: 15_000,
@@ -649,7 +649,7 @@ const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
   config.PROVIDER_CACHE_TTL_SECONDS * 12 * 1000
 );
 const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies', 'vidsrc']);
-const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'cinestream', 'vidsrc']);
+const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'cinestream', 'uhdmovies', 'hdhub4u', 'vidsrc']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
   'animekai',
   'animepahe',
