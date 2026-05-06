@@ -28,8 +28,9 @@ const PROVIDER_FETCH_DISPATCHER = new Agent({
 const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 45_000,
   '4khdhub_tv': 45_000,
-  cinestream: 45_000,
+  cinestream: 60_000,
   hdhub4u: 45_000,
+  showbox: 60_000,
   uhdmovies: 30_000
 });
 const PROVIDER_RESULT_CACHE_SCHEMA_VERSION = 2;
@@ -177,7 +178,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '51';
+    return '52';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -193,7 +194,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'cinestream') {
-    return '34';
+    return '35';
   }
 
   if (providerId === 'allyoucanwatch') {
@@ -485,7 +486,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   allyoucanwatch: 30,
   animepahe: 25,
   brazucaplay: 20,
-  cinestream: 35,
+  cinestream: 60,
   'dahmermovies-4k': 25,
   fmovies: 20,
   // These providers often require multi-hop extraction / CF redirects.
@@ -502,6 +503,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   filmpalast: 25,
   playimdb: 15,
   playimdb_v2: 15,
+  showbox: 50,
   rgshows: 10,
   kisskh: 15,
   onlykdrama: 18,
@@ -525,12 +527,12 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
-  cinestream: 25,
+  cinestream: 45,
   hdhub4u: 18,
   playimdb: 10,
   playimdb_v2: 10,
   uhdmovies: 18,
-  showbox: 10,
+  showbox: 35,
   rgshows: 6,
   kisskh: 10,
   multivid: 10,
@@ -540,7 +542,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 22_000,
   '4khdhub_tv': 22_000,
-  cinestream: 30_000,
+  cinestream: 55_000,
   hdhub4u: 22_000,
   uhdmovies: 22_000,
   moviesmod: 18_000,
@@ -550,7 +552,8 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   playimdb_v2: 15_000,
   rgshows: 8_000,
   kisskh: 15_000,
-  onlykdrama: 18_000
+  onlykdrama: 18_000,
+  showbox: 45_000
 });
 const getProviderTimeoutSeconds = (providerId, params = null) => {
   if (params?.enforceFastTimeout) {
@@ -562,7 +565,7 @@ const getProviderTimeoutSeconds = (providerId, params = null) => {
     providerId === 'showbox' &&
     String(params?.privateProviderSettings?.febboxUiCookie || '').trim()
   ) {
-    return 25;
+    return 60;
   }
 
   return PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
@@ -646,7 +649,7 @@ const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
   config.PROVIDER_CACHE_TTL_SECONDS * 12 * 1000
 );
 const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies', 'vidsrc']);
-const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'vidsrc']);
+const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'cinestream', 'vidsrc']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
   'animekai',
   'animepahe',
@@ -2116,7 +2119,7 @@ export class ProviderService {
             .slice(0, Math.max(4, Math.min(8, config.STREMIO_FAST_PROVIDER_LIMIT)));
 
         const defaultProviderParallelTimeoutMs = 20_000;
-        const explicitProviderParallelTimeoutCapMs = 22_000;
+        const explicitProviderParallelTimeoutCapMs = 65_000;
 
         const runProvider = async (providerId) => {
           const providerAbortController = new AbortController();

@@ -7,8 +7,8 @@ const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // ShowBox API Configuration
 const SHOWBOX_API_BASE = 'https://febapi.nuvioapp.space/api';
-const TMDB_REQUEST_TIMEOUT_MS = 4000;
-const SHOWBOX_API_TIMEOUT_MS = 22000;
+const TMDB_REQUEST_TIMEOUT_MS = 8000;
+const SHOWBOX_API_TIMEOUT_MS = 45000;
 
 // Working headers for ShowBox API
 const WORKING_HEADERS = {
