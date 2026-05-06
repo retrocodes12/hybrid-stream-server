@@ -39,7 +39,8 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
-const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 2 * 60 * 60;
+const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
 
 const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
@@ -2511,23 +2512,25 @@ export class StreamManager {
   }
 
   async setCachedStremioStreams(cacheKey, streams, { weak = false, hasCinestream = false, hasShowbox = false } = {}) {
+    if (!Array.isArray(streams) || streams.length === 0) {
+      return;
+    }
+
     const now = Date.now();
     const signedTtlSeconds = getSignedStreamCacheLimit(streams, now);
-    const defaultResultTtlSeconds = streams.length > 0 && hasShowbox
+    const defaultResultTtlSeconds = hasShowbox
       ? SHOWBOX_RESULT_CACHE_TTL_SECONDS
-      : hasCinestream && streams.length > 0
+      : hasCinestream
         ? CINESTREAM_RESULT_CACHE_TTL_SECONDS
-        : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
-    const freshTtlSeconds = streams.length === 0
-      ? config.STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
-      : weak
-        ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, defaultResultTtlSeconds)
-        : defaultResultTtlSeconds;
+        : DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS;
+    const freshTtlSeconds = weak
+      ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, defaultResultTtlSeconds)
+      : defaultResultTtlSeconds;
     const cappedFreshTtlSeconds = signedTtlSeconds === null
       ? freshTtlSeconds
       : Math.min(freshTtlSeconds, signedTtlSeconds);
     const freshTtlMs = cappedFreshTtlSeconds * 1000;
-    const staleTtlMs = streams.length === 0 || weak
+    const staleTtlMs = weak
       ? freshTtlMs
       : signedTtlSeconds !== null
         ? freshTtlMs
