@@ -39,6 +39,8 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
+const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 2 * 60 * 60;
+const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
 
 const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
   try {
@@ -2508,14 +2510,19 @@ export class StreamManager {
     }
   }
 
-  async setCachedStremioStreams(cacheKey, streams, { weak = false } = {}) {
+  async setCachedStremioStreams(cacheKey, streams, { weak = false, hasCinestream = false, hasShowbox = false } = {}) {
     const now = Date.now();
     const signedTtlSeconds = getSignedStreamCacheLimit(streams, now);
+    const defaultResultTtlSeconds = streams.length > 0 && hasShowbox
+      ? SHOWBOX_RESULT_CACHE_TTL_SECONDS
+      : hasCinestream && streams.length > 0
+        ? CINESTREAM_RESULT_CACHE_TTL_SECONDS
+        : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
     const freshTtlSeconds = streams.length === 0
       ? config.STREMIO_EMPTY_RESULT_CACHE_TTL_SECONDS
       : weak
-        ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, config.STREMIO_RESULT_CACHE_TTL_SECONDS)
-        : config.STREMIO_RESULT_CACHE_TTL_SECONDS;
+        ? Math.min(config.STREMIO_WEAK_RESULT_CACHE_TTL_SECONDS, defaultResultTtlSeconds)
+        : defaultResultTtlSeconds;
     const cappedFreshTtlSeconds = signedTtlSeconds === null
       ? freshTtlSeconds
       : Math.min(freshTtlSeconds, signedTtlSeconds);
@@ -3253,12 +3260,18 @@ export class StreamManager {
       }
     }));
     const useWeakCache = shouldUseWeakResultCache(playbackStreams);
+    const hasCinestream = playbackStreams.some((stream) =>
+      String(stream?.provider || '').trim().toLowerCase() === 'cinestream'
+    );
+    const hasShowbox = playbackStreams.some((stream) =>
+      String(stream?.provider || '').trim().toLowerCase() === 'showbox'
+    );
     const stremioStreams = playbackStreams
       .map((stream) => toStremioStreamObject(stream, parsed, streamOptions))
       .filter(Boolean);
 
     if (cacheResult) {
-      await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache });
+      await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache, hasCinestream, hasShowbox });
     }
 
     return stremioStreams;
