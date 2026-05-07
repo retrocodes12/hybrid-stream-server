@@ -653,6 +653,7 @@ const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uh
 const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'animepahe', 'moviebox']);
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
+const ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS = Object.freeze(['kisskh', 'onlykdrama', 'hdhub4u', '4khdhub_tv', '4khdhub', 'moviebox', 'vidlink', 'vixsrc', 'vidsrc', 'cinestream', 'showbox']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
 const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama']);
@@ -697,14 +698,24 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     'anime-sama': 40
   }),
   asian_drama: Object.freeze({
-    kisskh: 205,
-    onlykdrama: 70,
-    showbox: 45
+    kisskh: 225,
+    onlykdrama: 210,
+    moviebox: 145,
+    vidlink: 130,
+    vixsrc: 115,
+    vidsrc: 110,
+    cinestream: 95,
+    showbox: 80
   }),
   kdrama: Object.freeze({
-    kisskh: 190,
-    onlykdrama: 180,
-    showbox: 40
+    kisskh: 230,
+    onlykdrama: 220,
+    moviebox: 145,
+    vidlink: 130,
+    vixsrc: 115,
+    vidsrc: 110,
+    cinestream: 95,
+    showbox: 80
   }),
   indian: Object.freeze({
     '4khdhub': 230,
@@ -1827,7 +1838,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v5',
+      version: 'two-phase-v6',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -1933,7 +1944,11 @@ export class ProviderService {
   }
 
   buildFastPhaseProviders(providers, contentProfile, privateProviderSettings, hasExplicitProviders) {
-    const orderedProviders = reprioritizeProviders(providers, OLD_TITLE_PRIORITY_PROVIDERS);
+    const contentTags = Array.isArray(contentProfile?.tags) ? contentProfile.tags : [];
+    const priorityProviders = contentTags.includes('kdrama') || contentTags.includes('asian_drama')
+      ? ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS
+      : OLD_TITLE_PRIORITY_PROVIDERS;
+    const orderedProviders = reprioritizeProviders(providers, priorityProviders);
     const phaseOneLimit = this.getFastPhaseOneLimit(orderedProviders, hasExplicitProviders);
     const phaseOneProviders = orderedProviders.slice(0, phaseOneLimit);
     const phaseTwoCandidates = orderedProviders.slice(phaseOneLimit);

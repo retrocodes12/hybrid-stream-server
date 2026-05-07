@@ -623,9 +623,14 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   const providerId = String(stream.provider || '').trim().toLowerCase();
+  const forwardHeaders = getProviderForwardHeaders(stream);
 
-  if (providerId !== 'cinestream' || !hasForwardHeaders(stream.headers)) {
+  if (!hasForwardHeaders(forwardHeaders)) {
     return false;
+  }
+
+  if (providerId !== 'cinestream') {
+    return true;
   }
 
   try {
@@ -1209,6 +1214,19 @@ const stripHtml = (html) =>
     .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number.parseInt(code, 10)))
     .replace(/\s+/g, ' ')
     .trim();
+
+const extractHubCloudRedirectHref = (html) => {
+  const markup = String(html || '');
+  const match = markup.match(/var url ?= ?['"]([^'"]+)['"]/i)
+    || markup.match(/id=["']download["'][^>]*href=["']([^"']+)["']/i)
+    || markup.match(/href=["']([^"']+)["'][^>]*id=["']download["']/i)
+    || markup.match(/window\.location(?:\.href)? ?= ?['"]([^'"]+)['"]/i)
+    || markup.match(/location\.replace\(['"]([^'"]+)['"]\)/i)
+    || markup.match(/document\.location(?:\.href)? ?= ?['"]([^'"]+)['"]/i)
+    || markup.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
+
+  return match?.[1] ? stripHtml(match[1]) : null;
+};
 
 const extractHubCloudAnchorCandidates = (html) => {
   const candidates = [];
@@ -2379,7 +2397,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 63,
+      version: 64,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3306,7 +3324,7 @@ export class StreamManager {
         const streamUrl = await this.createRegisteredStreamUrl(baseUrl, {
           type: 'http',
           source: stream.url,
-          headers: stream.headers,
+          headers: getProviderForwardHeaders(stream),
           metadata: {
             provider: stream.provider,
             title: stream.title,
@@ -3787,10 +3805,9 @@ export class StreamManager {
           Referer: normalizedUrl
         };
         const initialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
-        const redirectMatch = initialHtml.match(/var url ?= ?'([^']+)'/i)
-          || initialHtml.match(/id=["']download["'][^>]*href=["']([^"']+)["']/i);
+        const redirectHref = extractHubCloudRedirectHref(initialHtml);
 
-        if (!redirectMatch?.[1]) {
+        if (!redirectHref) {
           touchMapEntry(this.hubCloudCache, normalizedUrl, {
             expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
             value: [],
@@ -3801,7 +3818,7 @@ export class StreamManager {
           return [];
         }
 
-        const redirectUrl = new URL(redirectMatch[1], normalizedUrl).toString();
+        const redirectUrl = new URL(redirectHref, normalizedUrl).toString();
         const linksHtml = await fetchTextWithTimeout(redirectUrl, {
           headers: {
             'User-Agent': HUBCLOUD_USER_AGENT,

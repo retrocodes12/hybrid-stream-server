@@ -85,6 +85,7 @@ var HEADERS = {
 var PLAYABLE_CHECK_TIMEOUT_MS = 7e3;
 var PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
 var HTML_WRAPPER_HOSTS = /* @__PURE__ */ new Set(["hubcdn.fans"]);
+var RESOLVABLE_WRAPPER_HOST_PATTERNS = [/hubcloud/i];
 function normalizeStreamUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -103,6 +104,22 @@ function isKnownHtmlWrapperUrl(value) {
 }
 function hasPlayableExtension(value) {
   return PLAYABLE_EXTENSION_PATTERN.test(String(value || ""));
+}
+function isResolvableWrapperLink(link) {
+  const rawUrl = normalizeStreamUrl(link == null ? void 0 : link.url);
+  if (!rawUrl) return false;
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    return RESOLVABLE_WRAPPER_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+  } catch {
+    return false;
+  }
+}
+function isTrustedExtractorLink(link) {
+  const url = normalizeStreamUrl(link == null ? void 0 : link.url);
+  if (!url || isKnownHtmlWrapperUrl(url)) return false;
+  const source = String(link == null ? void 0 : link.source || "").toLowerCase();
+  return source.startsWith("hubcloud") || source.startsWith("pixeldrain") || source.startsWith("streamtape") || source.startsWith("hdstream4u") || source.startsWith("hblinks") || source.startsWith("hubstream") || source.startsWith("hubcdn");
 }
 function resolvePlayableLink(link) {
   return __async(this, null, function* () {
@@ -143,8 +160,24 @@ function filterPlayableLinks(links) {
   return __async(this, null, function* () {
     const output = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const link of Array.isArray(links) ? links : []) {
-      const playable = yield resolvePlayableLink(link);
+    const resolvedLinks = yield Promise.all((Array.isArray(links) ? links : []).map((link) => __async(this, null, function* () {
+      if (isResolvableWrapperLink(link)) {
+        const wrapperUrl = normalizeStreamUrl(link.url);
+        return __spreadProps(__spreadValues({}, link), {
+          url: wrapperUrl,
+          headers: link.headers || null,
+          behaviorHints: __spreadProps(__spreadValues({}, link.behaviorHints || {}), { notWebReady: true })
+        });
+      }
+      if (isTrustedExtractorLink(link)) {
+        return __spreadProps(__spreadValues({}, link), {
+          url: normalizeStreamUrl(link.url),
+          headers: link.headers || null
+        });
+      }
+      return yield resolvePlayableLink(link);
+    })));
+    for (const playable of resolvedLinks) {
       if (!playable) continue;
       const key = normalizeStreamUrl(playable.url);
       if (seen.has(key)) continue;
@@ -772,8 +805,14 @@ function loadExtractor(_0) {
         const res = yield fetch(url, { headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: referer }) });
         const data = yield res.text();
         const href = import_cheerio_without_node_native.default.load(data)(".btn.btn-primary.btn-user.btn-success1.m-1").attr("href");
-        if (href)
-          return yield loadExtractor(href, url);
+        if (href) {
+          const extracted = yield loadExtractor(href, url);
+          if (extracted.length > 0)
+            return extracted;
+          if (href.includes("hubcloud")) {
+            return [{ source: "HubCloud", quality: 1080, url: href, headers: { Referer: url }, behaviorHints: { notWebReady: true } }];
+          }
+        }
       }
       return [];
     } catch (e) {
@@ -1135,6 +1174,7 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
           behaviorHints: {
             bingeGroup: `hdhub4u-${serverName}`,
             notWebReady: false,
+            ...((link.behaviorHints && typeof link.behaviorHints === "object") ? link.behaviorHints : {}),
             ...(link.size ? { videoSize: link.size } : {})
           }
         };

@@ -9,6 +9,7 @@ import { loadExtractor, getRedirectLinks } from './extractors.js';
 const PLAYABLE_CHECK_TIMEOUT_MS = 7000;
 const PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
 const HTML_WRAPPER_HOSTS = new Set(['hubcdn.fans']);
+const RESOLVABLE_WRAPPER_HOST_PATTERNS = [/hubcloud/i];
 
 function normalizeStreamUrl(value) {
   const raw = String(value || '').trim();
@@ -30,6 +31,30 @@ function isKnownHtmlWrapperUrl(value) {
 
 function hasPlayableExtension(value) {
   return PLAYABLE_EXTENSION_PATTERN.test(String(value || ''));
+}
+
+function isResolvableWrapperLink(link) {
+  const rawUrl = normalizeStreamUrl(link?.url);
+  if (!rawUrl) return false;
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    return RESOLVABLE_WRAPPER_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedExtractorLink(link) {
+  const url = normalizeStreamUrl(link?.url);
+  if (!url || isKnownHtmlWrapperUrl(url)) return false;
+  const source = String(link?.source || "").toLowerCase();
+  return source.startsWith("hubcloud")
+    || source.startsWith("pixeldrain")
+    || source.startsWith("streamtape")
+    || source.startsWith("hdstream4u")
+    || source.startsWith("hblinks")
+    || source.startsWith("hubstream")
+    || source.startsWith("hubcdn");
 }
 
 async function resolvePlayableLink(link) {
@@ -78,9 +103,29 @@ async function resolvePlayableLink(link) {
 async function filterPlayableLinks(links) {
   const output = [];
   const seen = new Set();
+  const resolvedLinks = await Promise.all((Array.isArray(links) ? links : []).map(async (link) => {
+    if (isResolvableWrapperLink(link)) {
+      const wrapperUrl = normalizeStreamUrl(link.url);
+      return {
+        ...link,
+        url: wrapperUrl,
+        headers: link.headers || null,
+        behaviorHints: { ...(link.behaviorHints || {}), notWebReady: true }
+      };
+    }
 
-  for (const link of Array.isArray(links) ? links : []) {
-    const playable = await resolvePlayableLink(link);
+    if (isTrustedExtractorLink(link)) {
+      return {
+        ...link,
+        url: normalizeStreamUrl(link.url),
+        headers: link.headers || null
+      };
+    }
+
+    return await resolvePlayableLink(link);
+  }));
+
+  for (const playable of resolvedLinks) {
     if (!playable) continue;
     const key = normalizeStreamUrl(playable.url);
     if (seen.has(key)) continue;
@@ -465,7 +510,10 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
         quality: qualityStr,
         size: formatBytes(link.size),
         headers: link.headers || null,
-        provider: "hdhub4u"
+        provider: "hdhub4u",
+        behaviorHints: {
+          ...(link.behaviorHints && typeof link.behaviorHints === "object" ? link.behaviorHints : {})
+        }
       };
     });
     

@@ -269,7 +269,13 @@ export async function loadExtractor(url, referer = MAIN_URL) {
         const res = await fetch(url, { headers: { ...HEADERS, Referer: referer } });
         const data = await res.text();
         const href = cheerio.load(data)(".btn.btn-primary.btn-user.btn-success1.m-1").attr("href");
-        if (href) return await loadExtractor(href, url);
+        if (href) {
+          const extracted = await loadExtractor(href, url);
+          if (extracted.length > 0) return extracted;
+          if (href.includes("hubcloud")) {
+            return [{ source: "HubCloud", quality: 1080, url: href, headers: { Referer: url }, behaviorHints: { notWebReady: true } }];
+          }
+        }
     }
     
     return [];
