@@ -1,6 +1,15 @@
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
-const EMBED_DOMAINS = ['https://vidsrc-embed.ru', 'https://vsembed.ru', 'https://vidsrc-embed.su'];
+const EMBED_DOMAINS = [
+  'https://vsembed.ru',
+  'https://vidsrc-embed.ru',
+  'https://vidsrc-embed.su',
+  'https://vidsrcme.ru',
+  'https://vidsrcme.su',
+  'https://vidsrc-me.ru',
+  'https://vidsrc-me.su',
+  'https://vsrc.su'
+];
 const REQUEST_TIMEOUT_MS = 10000;
 const REQUEST_RETRIES = 3;
 const FLARESOLVERR_ENDPOINT = String(process.env.FLARESOLVERR_ENDPOINT || '').trim().replace(/\/+$/, '');
@@ -393,6 +402,23 @@ function buildStreams(validatedPlaylists, title, playbackReferer) {
   });
 }
 
+function buildUnvalidatedStreams(candidateUrls, title, playbackReferer) {
+  return candidateUrls.map(function(url, index) {
+    return {
+      name: 'VidSrc' + (candidateUrls.length > 1 ? ' Server ' + (index + 1) : ''),
+      title: title + '\nVidSrc Auto',
+      url: url,
+      quality: 'Auto',
+      headers: {
+        Referer: playbackReferer,
+        Origin: 'https://cloudnestra.com',
+        'User-Agent': REQUEST_HEADERS['User-Agent']
+      },
+      provider: 'vidsrc'
+    };
+  });
+}
+
 function fetchEmbedHtml(media, season, episode) {
   var domains = EMBED_DOMAINS.slice();
 
@@ -498,7 +524,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                   var playlists = validated.filter(Boolean);
 
                   if (!playlists.length) {
-                    return [];
+                    return buildUnvalidatedStreams(candidateUrls, extractTitle(embedResult.html), playerUrl);
                   }
 
                   return buildStreams(playlists, extractTitle(embedResult.html), playerUrl);

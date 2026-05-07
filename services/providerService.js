@@ -118,7 +118,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'vidsrc') {
-    return '25';
+    return '26';
   }
 
   if (providerId === 'animepahe') {
