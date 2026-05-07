@@ -68,6 +68,57 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 18000) {
   }
 }
 
+async function readTextWithIdleTimeout(response, totalTimeoutMs = 14000, idleTimeoutMs = 1500) {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    return response.text();
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let idleTimer = null;
+  let totalTimer = null;
+  let timedOut = false;
+
+  const resetIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      timedOut = true;
+      reader.cancel().catch(() => {});
+    }, idleTimeoutMs);
+    idleTimer.unref?.();
+  };
+
+  totalTimer = setTimeout(() => {
+    timedOut = true;
+    reader.cancel().catch(() => {});
+  }, totalTimeoutMs);
+  totalTimer.unref?.();
+  resetIdleTimer();
+
+  try {
+    while (!timedOut) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      chunks.push(decoder.decode(value, { stream: true }));
+      resetIdleTimer();
+    }
+  } catch (error) {
+    if (!timedOut) {
+      throw error;
+    }
+  } finally {
+    clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join('');
+}
+
 function parseSsePayloads(rawText) {
   const payloads = [];
   const chunks = String(rawText || '').split(/\n\n+/);
@@ -356,7 +407,7 @@ async function tryFetchStreams(baseUrl, tmdbId, mediaType, season, episode, expe
     throw new Error(`HTTP ${response.status}`);
   }
 
-  const rawText = await response.text();
+  const rawText = await readTextWithIdleTimeout(response);
   const payloads = parseSsePayloads(rawText);
   if (payloads.length === 0) {
     return [];

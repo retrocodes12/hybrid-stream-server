@@ -206,7 +206,11 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'allyoucanwatch') {
-    return '41';
+    return '42';
+  }
+
+  if (providerId === 'fmovies') {
+    return '24';
   }
 
   if (providerId === 'netmirror') {
@@ -491,7 +495,7 @@ const EXPLICIT_PROVIDER_HOST_LANE_BONUS = 10;
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
-  allyoucanwatch: 30,
+  allyoucanwatch: 45,
   animepahe: 25,
   brazucaplay: 20,
   cinestream: 60,
