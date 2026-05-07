@@ -596,6 +596,15 @@ const shouldCacheEmptyFastResult = (result) =>
 const hasForwardHeaders = (headers) =>
   Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
 
+const getProviderForwardHeaders = (stream) => {
+  if (hasForwardHeaders(stream?.headers)) {
+    return { ...stream.headers };
+  }
+
+  const proxyHeaders = stream?.behaviorHints?.proxyHeaders?.request;
+  return hasForwardHeaders(proxyHeaders) ? { ...proxyHeaders } : null;
+};
+
 const isWebReadyHttpStream = (stream) =>
   stream.transport === 'http' &&
   Boolean(stream.url) &&
@@ -620,8 +629,11 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   try {
-    const hostname = new URL(stream.url).hostname.toLowerCase();
-    return hostname === '87d6a6ef6b58-webstreamrmbg.baby-beamup.club';
+    const parsedUrl = new URL(stream.url);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    return hostname.includes('webstreamrmbg')
+      || hostname.endsWith('baby-beamup.club')
+      || parsedUrl.pathname.startsWith('/extract/');
   } catch {
     return false;
   }
@@ -2367,7 +2379,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 61,
+      version: 62,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2834,12 +2846,58 @@ export class StreamManager {
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
       config.STREMIO_FAST_MAX_WAIT_MS + 10_000
     );
+    let timeoutFallbackContext = null;
     const overallTimeout = setTimeout(() => {
-      logger.warn('stremio stream request overall timeout', {
-        imdbId: req.params.id,
-        mediaType: req.params.type
+      void (async () => {
+        if (res.headersSent) {
+          return;
+        }
+
+        logger.warn('stremio stream request overall timeout', {
+          imdbId: req.params.id,
+          mediaType: req.params.type
+        });
+
+        const cachedStreams = timeoutFallbackContext?.cachedResult?.state === 'stale'
+          ? timeoutFallbackContext.cachedResult.streams
+          : null;
+        let fallbackStreams = Array.isArray(cachedStreams) && cachedStreams.length > 0
+          ? cachedStreams
+          : (Array.isArray(timeoutFallbackContext?.lastGoodStreams) && timeoutFallbackContext.lastGoodStreams.length > 0
+              ? timeoutFallbackContext.lastGoodStreams
+              : null);
+        let fallbackSource = fallbackStreams === cachedStreams ? 'stale-timeout' : 'last-good-timeout';
+
+        if (!fallbackStreams && timeoutFallbackContext?.resultCacheKey) {
+          const fallbackCachedResult = await this.getCachedStremioStreams(timeoutFallbackContext.resultCacheKey, { allowStale: true });
+          const fallbackLastGood = await this.getLastGoodStremioStreams(timeoutFallbackContext.resultCacheKey);
+
+          if (fallbackCachedResult?.streams?.length) {
+            fallbackStreams = fallbackCachedResult.streams;
+            fallbackSource = `${fallbackCachedResult.state}-timeout`;
+          } else if (fallbackLastGood?.length) {
+            fallbackStreams = fallbackLastGood;
+            fallbackSource = 'last-good-timeout';
+          }
+        }
+
+        if (Array.isArray(fallbackStreams) && fallbackStreams.length > 0) {
+          logger.warn('serving cached stremio streams after overall timeout', {
+            imdbId: req.params.id,
+            mediaType: req.params.type,
+            cacheSource: fallbackSource,
+            resultCount: fallbackStreams.length
+          });
+          res.setHeader('X-NebulaStreams-Cache', fallbackSource);
+          this.sendStremioStreamsResponse(res, fallbackStreams);
+          return;
+        }
+
+        this.sendStremioStreamsResponse(res, []);
+      })().catch((error) => {
+        logger.warn('stremio timeout fallback failed', { error });
+        this.sendStremioStreamsResponse(res, []);
       });
-      this.sendStremioStreamsResponse(res, []);
     }, overallTimeoutMs);
 
     try {
@@ -2905,6 +2963,11 @@ export class StreamManager {
       const lastGoodStreams = bypassStremioResultCache
         ? null
         : await this.getLastGoodStremioStreams(resultCacheKey);
+      timeoutFallbackContext = {
+        resultCacheKey,
+        cachedResult,
+        lastGoodStreams
+      };
 
       if (cachedResult?.state === 'fresh') {
         clearTimeout(overallTimeout);
@@ -3175,6 +3238,7 @@ export class StreamManager {
     const result = await this.providerService.getFastStreams({
       providers: requestedProviders.length > 0 ? requestedProviders : null,
       tmdbId,
+      imdbId: parsed.imdbId,
       mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
       season: parsed.season,
       episode: parsed.episode,
@@ -3494,6 +3558,7 @@ export class StreamManager {
       const result = await this.providerService.getFastStreams({
         providers: requestedProviders.length > 0 ? requestedProviders : null,
         tmdbId,
+        imdbId: parsed.imdbId,
         mediaType: parsed.mediaType === 'series' ? 'tv' : 'movie',
         season: parsed.season,
         episode: parsed.episode,
@@ -3863,10 +3928,12 @@ export class StreamManager {
           : '';
 
       if (normalizedUrl) {
+        const headers = getProviderForwardHeaders(stream);
+
         variants.push({
           transport: 'http',
           source: normalizedUrl,
-          headers: stream.headers
+          headers
         });
       }
 

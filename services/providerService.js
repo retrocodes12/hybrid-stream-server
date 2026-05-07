@@ -654,6 +654,7 @@ const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdh
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'animepahe', 'moviebox']);
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
+const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'cinestream']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama']);
 const FAST_PROVIDER_STAGGER_DELAYS_MS = Object.freeze([100, 200, 300]);
 const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
@@ -1826,7 +1827,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v3',
+      version: 'two-phase-v4',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2180,18 +2181,80 @@ export class ProviderService {
           }
         };
 
-        let settledResults = await Promise.all(primaryProviderIds.map(runProvider));
+        const collectProviderResults = async (providerIds) => {
+          if (hasExplicitProviders) {
+            return Promise.all(providerIds.map(runProvider));
+          }
 
-        if (!settledResults.some((result) => result.streams.length > 0) && fallbackProviderIds.length > 0) {
-          logger.info('fast provider search expanding after empty primary phase', {
+          const pending = new Map(providerIds.map((providerId, index) => [
+            index,
+            runProvider(providerId).then((result) => ({ index, result }))
+          ]));
+          const results = [];
+          const deadline = Date.now() + config.STREMIO_FAST_MAX_WAIT_MS;
+          const minCompletedProviders = Math.min(config.STREMIO_FAST_MIN_COMPLETED_PROVIDERS, providerIds.length);
+
+          while (pending.size > 0) {
+            const remainingMs = Math.max(0, deadline - Date.now());
+
+            if (remainingMs <= 0) {
+              break;
+            }
+
+            const winner = await Promise.race([
+              ...pending.values(),
+              waitForProviderSlot(remainingMs).then(() => null)
+            ]);
+
+            if (!winner) {
+              break;
+            }
+
+            pending.delete(winner.index);
+            results.push(winner.result);
+
+            const streamCount = results.reduce((count, result) => count + result.streams.length, 0);
+            const pendingHighValueProviders = [...pending.keys()]
+              .map((index) => providerIds[index])
+              .filter((providerId) => DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS.has(providerId));
+
+            if (
+              results.length >= minCompletedProviders &&
+              streamCount >= config.STREMIO_FAST_EARLY_RETURN_STREAMS &&
+              pendingHighValueProviders.length === 0
+            ) {
+              break;
+            }
+          }
+
+          if (pending.size > 0) {
+            logger.warn('fast provider search returning partial results before slow providers finished', {
+              tmdbId: rest.tmdbId,
+              mediaType: rest.mediaType,
+              completedProviders: results.map((result) => result.provider),
+              pendingProviders: [...pending.keys()].map((index) => providerIds[index]),
+              resultCount: results.reduce((count, result) => count + result.streams.length, 0)
+            });
+          }
+
+          return results;
+        };
+
+        let settledResults = await collectProviderResults(primaryProviderIds);
+        const primaryStreamCount = settledResults.reduce((count, result) => count + result.streams.length, 0);
+        const minimumUsefulDefaultStreams = Math.min(3, config.STREMIO_FAST_EARLY_RETURN_STREAMS);
+
+        if (!hasExplicitProviders && fallbackProviderIds.length > 0 && primaryStreamCount < minimumUsefulDefaultStreams) {
+          logger.info('fast provider search expanding after weak primary phase', {
             tmdbId: rest.tmdbId,
             mediaType: rest.mediaType,
             primaryProviders: primaryProviderIds,
-            fallbackProviders: fallbackProviderIds
+            fallbackProviders: fallbackProviderIds,
+            primaryStreamCount
           });
           settledResults = [
             ...settledResults,
-            ...await Promise.all(fallbackProviderIds.map(runProvider))
+            ...await collectProviderResults(fallbackProviderIds)
           ];
         }
 
@@ -2233,7 +2296,35 @@ export class ProviderService {
 
     this.fastSearchInFlight.set(requestKey, searchPromise);
 
-    const result = await searchPromise;
+    let result;
+    try {
+      result = await searchPromise;
+    } catch (error) {
+      const lastGood = await this.getFastLastGoodResult(requestKey);
+      if (lastGood?.streams?.length) {
+        logger.warn('serving fast last-good result after search failure', {
+          tmdbId: rest.tmdbId,
+          mediaType: rest.mediaType,
+          resultCount: lastGood.streams.length,
+          error
+        });
+        return lastGood;
+      }
+      throw error;
+    }
+
+    if (!result.streams.length) {
+      const lastGood = await this.getFastLastGoodResult(requestKey);
+      if (lastGood?.streams?.length) {
+        logger.warn('serving fast last-good result after empty search', {
+          tmdbId: rest.tmdbId,
+          mediaType: rest.mediaType,
+          resultCount: lastGood.streams.length
+        });
+        return lastGood;
+      }
+    }
+
     await this.setFastLastGoodResult(requestKey, result);
     return result;
   }
