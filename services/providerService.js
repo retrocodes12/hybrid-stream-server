@@ -674,6 +674,7 @@ const TMDB_METADATA_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const TMDB_METADATA_RETRY_DELAYS_MS = Object.freeze([250, 750]);
 const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   anime: Object.freeze({
+    animekai: 220,
     animeworld: 190,
     animepahe: 185,
     animesalt: 180,
@@ -688,8 +689,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     'arabic-animecloud': 100,
     'arabic-cineby': 95,
     kisskh: 92,
-    'anime-sama': 40,
-    animekai: 35
+    'anime-sama': 40
   }),
   asian_drama: Object.freeze({
     kisskh: 205,
