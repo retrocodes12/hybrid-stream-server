@@ -740,8 +740,8 @@ function getStreams(tmdbId, type, season, episode) {
     if (playableStreams.length > 0) {
       return playableStreams;
     }
-    console.log("[4KHDHub] No direct streams found, trying mirror fallback");
-    return yield getMirrorStreams(tmdbId, type, season, episode);
+    console.log("[4KHDHub] No direct streams found");
+    return [];
   });
 }
 module.exports = { getStreams };

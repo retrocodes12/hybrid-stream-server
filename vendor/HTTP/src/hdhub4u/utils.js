@@ -196,6 +196,8 @@ export function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) 
     }
     if (mediaType === "tv" && season) {
       const titleLower = result.title.toLowerCase();
+      const normalizedMediaTitle = normalizeTitle(mediaInfo.title);
+      const normalizedResultTitle = normalizeTitle(result.title);
       const seasonPatterns = [
           `season ${season}`, 
           `s${season}`, 
@@ -215,6 +217,10 @@ export function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) 
 
       if (hasSeason) score += 0.5;
       else score -= 0.3;
+
+      if (hasSeason && normalizedMediaTitle && normalizedResultTitle.includes(normalizedMediaTitle)) {
+        score = Math.max(score, 0.85);
+      }
     }
     if (result.title.toLowerCase().includes("2160p") || result.title.toLowerCase().includes("4k")) {
       score += 0.05;

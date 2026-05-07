@@ -347,6 +347,8 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
     }
     if (mediaType === "tv" && season) {
       const titleLower = result.title.toLowerCase();
+      const normalizedMediaTitle = normalizeTitle(mediaInfo.title);
+      const normalizedResultTitle = normalizeTitle(result.title);
       const seasonPatterns = [
         `season ${season}`,
         `s${season}`,
@@ -365,6 +367,9 @@ function findBestTitleMatch(mediaInfo, searchResults, mediaType, season) {
         score += 0.5;
       else
         score -= 0.3;
+      if (hasSeason && normalizedMediaTitle && normalizedResultTitle.includes(normalizedMediaTitle)) {
+        score = Math.max(score, 0.85);
+      }
     }
     if (result.title.toLowerCase().includes("2160p") || result.title.toLowerCase().includes("4k")) {
       score += 0.05;
@@ -1051,11 +1056,27 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       if (searchResults.length === 0) {
         if (mediaInfo.imdbId) {
           console.log(`[HDHub4u] IMDB search found no matching posts`);
-          return [];
         }
         console.log(`[HDHub4u] Falling back to title search`);
-        const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
-        searchResults = yield search(searchQuery);
+        const searchQueries = [
+          mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title,
+          mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : null,
+          mediaInfo.title
+        ].filter(Boolean);
+        const seenResultUrls = /* @__PURE__ */ new Set();
+        for (const searchQuery of searchQueries) {
+          const queryResults = yield search(searchQuery);
+          for (const result of queryResults) {
+            if (!(result == null ? void 0 : result.url) || seenResultUrls.has(result.url)) {
+              continue;
+            }
+            seenResultUrls.add(result.url);
+            searchResults.push(result);
+          }
+          if (findBestTitleMatch(mediaInfo, searchResults, mediaType, season)) {
+            break;
+          }
+        }
       }
       if (searchResults.length === 0)
         return [];
@@ -1120,18 +1141,6 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       });
       const qualityOrder = { "4K": 4, "1080p": 2, "720p": 1, "480p": 0, "Unknown": -2 };
       const sortedStreams = streams.sort((a, b) => (qualityOrder[b.quality] || -3) - (qualityOrder[a.quality] || -3));
-      if (sortedStreams.length === 0 && mediaType === "tv") {
-        try {
-          const fallbackProvider = require("./4khdhub.js");
-          const fallbackStreams = yield fallbackProvider.getStreams(tmdbId, mediaType, season, episode);
-          return (Array.isArray(fallbackStreams) ? fallbackStreams : []).map((stream) => __spreadProps(__spreadValues({}, stream), {
-            name: String(stream.name || "4KHDHub").replace(/^4KHDHub/i, "HDHub4u Mirror"),
-            provider: "hdhub4u"
-          }));
-        } catch (fallbackError) {
-          console.log(`[HDHub4u] TV fallback failed: ${fallbackError.message}`);
-        }
-      }
       return sortedStreams;
     } catch (error) {
       console.error(`[HDHub4u] Scraping error: ${error.message}`);

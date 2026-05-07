@@ -390,11 +390,31 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
     if (searchResults.length === 0) {
       if (mediaInfo.imdbId) {
         console.log(`[HDHub4u] IMDB search found no matching posts`);
-        return [];
       }
       console.log(`[HDHub4u] Falling back to title search`);
-      const searchQuery = mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title;
-      searchResults = await search(searchQuery);
+      const searchQueries = [
+        mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title,
+        mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : null,
+        mediaInfo.title
+      ].filter(Boolean);
+      const seenResultUrls = new Set();
+
+      for (const searchQuery of searchQueries) {
+        const queryResults = await search(searchQuery);
+
+        for (const result of queryResults) {
+          if (!result?.url || seenResultUrls.has(result.url)) {
+            continue;
+          }
+
+          seenResultUrls.add(result.url);
+          searchResults.push(result);
+        }
+
+        if (findBestTitleMatch(mediaInfo, searchResults, mediaType, season)) {
+          break;
+        }
+      }
     }
     
     if (searchResults.length === 0) return [];
