@@ -50,6 +50,7 @@ var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/
 var PLAYABLE_CHECK_TIMEOUT_MS = 7e3;
 var PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
 var HTML_WRAPPER_HOSTS = /* @__PURE__ */ new Set(["hubcdn.fans"]);
+var RESOLVABLE_WRAPPER_HOST_PATTERNS = [/hubcloud/i];
 function normalizeStreamUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -68,6 +69,30 @@ function isKnownHtmlWrapperUrl(value) {
 }
 function hasPlayableExtension(value) {
   return PLAYABLE_EXTENSION_PATTERN.test(String(value || ""));
+}
+function isResolvableWrapperStream(stream) {
+  const rawUrl = normalizeStreamUrl(stream == null ? void 0 : stream.url);
+  if (!rawUrl) return false;
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    return RESOLVABLE_WRAPPER_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+  } catch {
+    return false;
+  }
+}
+function isTrustedExtractorStream(stream) {
+  const url = normalizeStreamUrl(stream == null ? void 0 : stream.url);
+  if (!url || isKnownHtmlWrapperUrl(url)) return false;
+  const source = String(stream == null ? void 0 : stream.source || "").toLowerCase();
+  return source.includes("fsl")
+    || source.includes("pixel")
+    || source.includes("pdl")
+    || source.includes("10gbps")
+    || source.includes("buzz")
+    || source.includes("hubcdn")
+    || source.includes("s3")
+    || source.includes("mega")
+    || source.includes("download");
 }
 function resolvePlayableStream(stream) {
   return __async(this, null, function* () {
@@ -108,8 +133,23 @@ function filterPlayableStreams(streams) {
   return __async(this, null, function* () {
     const output = [];
     const seen = /* @__PURE__ */ new Set();
-    for (const stream of Array.isArray(streams) ? streams : []) {
-      const playable = yield resolvePlayableStream(stream);
+    const resolvedStreams = yield Promise.all((Array.isArray(streams) ? streams : []).map((stream) => __async(this, null, function* () {
+      if (isResolvableWrapperStream(stream)) {
+        return __spreadProps(__spreadValues({}, stream), {
+          url: normalizeStreamUrl(stream.url),
+          headers: stream.headers || null,
+          behaviorHints: __spreadProps(__spreadValues({}, stream.behaviorHints || {}), { notWebReady: true })
+        });
+      }
+      if (isTrustedExtractorStream(stream)) {
+        return __spreadProps(__spreadValues({}, stream), {
+          url: normalizeStreamUrl(stream.url),
+          headers: stream.headers || null
+        });
+      }
+      return yield resolvePlayableStream(stream);
+    })));
+    for (const playable of resolvedStreams) {
       if (!playable) continue;
       const key = normalizeStreamUrl(playable.url);
       if (seen.has(key)) continue;
@@ -584,6 +624,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
       const href = $(el).attr("href");
       if (!href)
         return;
+      const lowerText = text.toLowerCase();
       if (text.includes("FSL") && !text.includes("FSLv2")) {
         results.push({
           source: "FSL",
@@ -601,6 +642,43 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
           source: "FSL",
           url: href,
           meta: currentMeta
+        });
+      } else if (lowerText.includes("10gbps")) {
+        results.push({
+          source: "10Gbps",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (lowerText.includes("pdl") || href.includes("workers.dev")) {
+        results.push({
+          source: "PDL",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (lowerText.includes("buzzserver")) {
+        results.push({
+          source: "BuzzServer",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (lowerText.includes("s3 server")) {
+        results.push({
+          source: "S3",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (lowerText.includes("mega server")) {
+        results.push({
+          source: "Mega",
+          url: href,
+          meta: currentMeta
+        });
+      } else if (href.toLowerCase().includes("hubcdn")) {
+        results.push({
+          source: "HubCdn",
+          url: href,
+          meta: currentMeta,
+          headers: { Referer: finalLinksUrl, "User-Agent": USER_AGENT }
         });
       } else if (text.includes("PixelServer")) {
         const userUrl = href.replace("/api/file/", "/u/");

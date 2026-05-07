@@ -2,7 +2,7 @@ import cheerio from 'cheerio-without-node-native';
 import { HEADERS, MAIN_URL } from './constants.js';
 import { 
   getCurrentDomain, getTMDBDetails, findBestTitleMatch, 
-  extractServerName, formatBytes 
+  extractServerName, formatBytes, sanitizeSearchQueryTitle
 } from './utils.js';
 import { loadExtractor, getRedirectLinks } from './extractors.js';
 
@@ -437,10 +437,12 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
         console.log(`[HDHub4u] IMDB search found no matching posts`);
       }
       console.log(`[HDHub4u] Falling back to title search`);
+      const searchTitle = sanitizeSearchQueryTitle(mediaInfo.title);
+      const searchMediaInfo = { ...mediaInfo, title: searchTitle || mediaInfo.title };
       const searchQueries = [
-        mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title,
-        mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : null,
-        mediaInfo.title
+        mediaType === "tv" && season ? `${searchMediaInfo.title} Season ${season}` : searchMediaInfo.title,
+        mediaInfo.year ? `${searchMediaInfo.title} ${mediaInfo.year}` : null,
+        searchMediaInfo.title
       ].filter(Boolean);
       const seenResultUrls = new Set();
 
@@ -456,9 +458,13 @@ async function getStreams(tmdbId, mediaType = "movie", season = null, episode = 
           searchResults.push(result);
         }
 
-        if (findBestTitleMatch(mediaInfo, searchResults, mediaType, season)) {
+        if (findBestTitleMatch(searchMediaInfo, searchResults, mediaType, season)) {
           break;
         }
+      }
+
+      if (searchMediaInfo.title !== mediaInfo.title) {
+        mediaInfo.title = searchMediaInfo.title;
       }
     }
     

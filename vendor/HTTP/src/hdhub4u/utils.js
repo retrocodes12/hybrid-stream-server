@@ -162,6 +162,10 @@ export function normalizeTitle(title) {
   return title.toLowerCase().replace(/\b(the|a|an)\b/g, "").replace(/[:\-_]/g, " ").replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim();
 }
 
+export function sanitizeSearchQueryTitle(title) {
+  return String(title || "").replace(/["'“”‘’]/g, "").replace(/\s+/g, " ").trim();
+}
+
 export function calculateTitleSimilarity(title1, title2) {
   const norm1 = normalizeTitle(title1);
   const norm2 = normalizeTitle(title2);

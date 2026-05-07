@@ -617,6 +617,18 @@ const isTrustedDirectHttpStream = (stream) =>
   !hasForwardHeaders(stream.headers) &&
   isHighValueCacheStream(stream);
 
+const getStremioRequestBaseUrl = (req) => {
+  if (config.PUBLIC_BASE_URL) {
+    return config.PUBLIC_BASE_URL;
+  }
+
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim();
+  const proto = forwardedProto || req.protocol || 'https';
+  const host = forwardedHost || req.get('host');
+  return `${proto}://${host}`;
+};
+
 const needsRegisteredPlaybackProxy = (stream) => {
   if (stream?.transport !== 'http' || !stream.url) {
     return false;
@@ -625,12 +637,14 @@ const needsRegisteredPlaybackProxy = (stream) => {
   const providerId = String(stream.provider || '').trim().toLowerCase();
   const forwardHeaders = getProviderForwardHeaders(stream);
 
-  if (!hasForwardHeaders(forwardHeaders)) {
-    return false;
-  }
-
-  if (providerId !== 'cinestream') {
+  if (hasForwardHeaders(forwardHeaders)) {
+    if (providerId !== 'cinestream') {
+      return true;
+    }
+  } else if (isHighValueCacheStream(stream) && stream.behaviorHints?.notWebReady !== false) {
     return true;
+  } else {
+    return false;
   }
 
   try {
@@ -2397,7 +2411,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 64,
+      version: 65,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2832,7 +2846,7 @@ export class StreamManager {
   }
 
   async handleStremioManifest(req, res) {
-    const baseUrl = config.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const baseUrl = getStremioRequestBaseUrl(req);
     const addonPresentation = this.getAddonPresentation(req);
 
     res.json({
@@ -2946,7 +2960,7 @@ export class StreamManager {
         return;
       }
 
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const baseUrl = getStremioRequestBaseUrl(req);
       const requestedProviders = this.getRequestedProviders(req);
       const qualityPriority = this.getRequestedQualityPriority(req);
       const streamOptions = this.getRequestedStreamOptions(req);

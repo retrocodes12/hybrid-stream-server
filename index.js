@@ -3103,7 +3103,7 @@ const createRateLimiter = ({ windowMs, limit, name, matcher }) => {
 
 const BOT_USER_AGENT_PATTERN = /\b(?:ahrefs|aiohttp|axios|baiduspider|bingbot|bot|bytespider|claudebot|crawler|curl|discordbot|facebookexternalhit|googlebot|gptbot|go-http-client|headless|httpx|insomnia|libwww-perl|node-fetch|petalbot|phantomjs|playwright|postmanruntime|puppeteer|python-requests|python-urllib|scraper|selenium|semrush|slackbot|spider|undici|wget|yandex)\b/iu;
 const BOT_STRICT_USER_AGENT_PATTERN = /(?:headless|phantomjs|playwright|puppeteer|selenium)/iu;
-const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|aiostreams|aiostrms|axios|curl|go-http-client|httpx|insomnia|libwww-perl|node-fetch|okhttp|postmanruntime|python-requests|python-urllib|stremioshell|stremio-apple|strmr|undici|wget)\b/iu;
+const BOT_SOFT_CLIENT_USER_AGENT_PATTERN = /\b(?:aiohttp|aiostreams|aiostrms|axios|curl|dalvik|exoplayer|go-http-client|httpx|insomnia|libwww-perl|node-fetch|okhttp|postmanruntime|python-requests|python-urllib|stremioshell|stremio-apple|strmr|undici|wget)\b/iu;
 
 const isStremioManifestPath = (pathName) =>
   pathName === '/manifest.json'
@@ -3139,6 +3139,8 @@ const isAllowedBotProtectionClient = (userAgent) => {
     || normalized.includes('stremio-apple')
     || normalized.includes('aiostreams')
     || normalized.includes('aiostrms')
+    || normalized.includes('dalvik/')
+    || normalized.includes('exoplayer')
     || normalized.includes('okhttp/')
     || normalized.includes('strmr/')
     || normalized.includes('qtwebengine/')
@@ -3163,6 +3165,8 @@ const isLikelyAddonDataClient = (req, pathName, userAgent) => {
     || normalizedUserAgent.includes('stremio-apple')
     || normalizedUserAgent.includes('aiostreams')
     || normalizedUserAgent.includes('aiostrms')
+    || normalizedUserAgent.includes('dalvik/')
+    || normalizedUserAgent.includes('exoplayer')
     || normalizedUserAgent.includes('okhttp/')
     || normalizedUserAgent.includes('strmr/')
     || normalizedUserAgent.includes('qtwebengine/')

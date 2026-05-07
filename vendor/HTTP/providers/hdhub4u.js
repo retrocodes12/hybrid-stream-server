@@ -341,6 +341,9 @@ function normalizeTitle(title) {
     return "";
   return title.toLowerCase().replace(/\b(the|a|an)\b/g, "").replace(/[:\-_]/g, " ").replace(/\s+/g, " ").replace(/[^\w\s]/g, "").trim();
 }
+function sanitizeSearchQueryTitle(title) {
+  return String(title || "").replace(/["'“”‘’]/g, "").replace(/\s+/g, " ").trim();
+}
 function calculateTitleSimilarity(title1, title2) {
   const norm1 = normalizeTitle(title1);
   const norm2 = normalizeTitle(title2);
@@ -1097,10 +1100,12 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
           console.log(`[HDHub4u] IMDB search found no matching posts`);
         }
         console.log(`[HDHub4u] Falling back to title search`);
+        const searchTitle = sanitizeSearchQueryTitle(mediaInfo.title);
+        const searchMediaInfo = __spreadProps(__spreadValues({}, mediaInfo), { title: searchTitle || mediaInfo.title });
         const searchQueries = [
-          mediaType === "tv" && season ? `${mediaInfo.title} Season ${season}` : mediaInfo.title,
-          mediaInfo.year ? `${mediaInfo.title} ${mediaInfo.year}` : null,
-          mediaInfo.title
+          mediaType === "tv" && season ? `${searchMediaInfo.title} Season ${season}` : searchMediaInfo.title,
+          mediaInfo.year ? `${searchMediaInfo.title} ${mediaInfo.year}` : null,
+          searchMediaInfo.title
         ].filter(Boolean);
         const seenResultUrls = /* @__PURE__ */ new Set();
         for (const searchQuery of searchQueries) {
@@ -1112,9 +1117,12 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
             seenResultUrls.add(result.url);
             searchResults.push(result);
           }
-          if (findBestTitleMatch(mediaInfo, searchResults, mediaType, season)) {
+          if (findBestTitleMatch(searchMediaInfo, searchResults, mediaType, season)) {
             break;
           }
+        }
+        if (searchMediaInfo.title !== mediaInfo.title) {
+          mediaInfo.title = searchMediaInfo.title;
         }
       }
       if (searchResults.length === 0)
