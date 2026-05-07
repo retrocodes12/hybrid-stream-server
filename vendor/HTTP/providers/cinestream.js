@@ -53,7 +53,7 @@ var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json"
 };
-var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js", "./uhdmovies.js"];
+var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js", "./uhdmovies.js", "./allyoucanwatch.js", "./fmovies.js"];
 function detectQualityLabel(value) {
   const text = String(value || "");
   const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
@@ -109,6 +109,7 @@ function streamMatchesRequestedContent(stream, info) {
   if (!expectedTitle) return true;
   const streamTitle = normalizeTitleKey(`${(stream == null ? void 0 : stream.title) || ""} ${(stream == null ? void 0 : stream.name) || ""}`);
   if (!streamTitle) return true;
+  if ((info == null ? void 0 : info.tmdbId) && streamTitle.includes(normalizeTitleKey(`TMDB ${info.tmdbId}`))) return true;
   return streamTitle.includes(expectedTitle) || expectedTitle.includes(streamTitle);
 }
 function isKnownHtmlWrapperUrl(value) {
@@ -292,6 +293,7 @@ function getIMDBId(tmdbId, mediaType) {
     const url = `${TMDB_BASE_URL}/${normalizedMediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
     const data = yield fetchJsonWithRetry(url, { headers: { "Accept": "application/json" } });
     return {
+      tmdbId: String(tmdbId),
       imdbId: (_a = data.external_ids) == null ? void 0 : _a.imdb_id,
       title: normalizedMediaType === "tv" ? data.name : data.title,
       year: String((normalizedMediaType === "tv" ? data.first_air_date : data.release_date) || "").slice(0, 4)
@@ -334,13 +336,14 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         const upstreamName = rewriteUpstreamLabel(s.name || "");
         const fallbackName = quality === "Auto" ? "NebulaStreams" : `NebulaStreams ${quality}`;
         const title = String(s.title || s.name || fallbackName);
-        const requestHeaders = isApiBaseUrl(s.url) ? s.headers || ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE } : null;
+        const requestHeaders = isApiBaseUrl(s.url) ? s.headers || ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE } : s.headers || ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || null;
         return {
           name: `CS [${upstreamName || fallbackName}]`,
           title: rewriteUpstreamLabel(title.split("\n")[0]),
           url: normalizeStreamUrl(s.url),
           quality,
-          headers: requestHeaders
+          headers: requestHeaders,
+          provider: "cinestream"
         };
       });
     } catch (e) {

@@ -15,7 +15,7 @@ const HEADERS = {
     "Accept": "application/json"
 };
 const DIRECT_FALLBACK_PROVIDERS = mediaType => (
-    ['./4khdhub.js', './hdhub4u.js', './uhdmovies.js']
+    ['./4khdhub.js', './hdhub4u.js', './uhdmovies.js', './allyoucanwatch.js', './fmovies.js']
 );
 
 function detectQualityLabel(value) {
@@ -91,6 +91,7 @@ function streamMatchesRequestedContent(stream, info) {
 
     const streamTitle = normalizeTitleKey(`${stream?.title || ''} ${stream?.name || ''}`);
     if (!streamTitle) return true;
+    if (info?.tmdbId && streamTitle.includes(normalizeTitleKey(`TMDB ${info.tmdbId}`))) return true;
 
     return streamTitle.includes(expectedTitle) || expectedTitle.includes(streamTitle);
 }
@@ -307,6 +308,7 @@ async function getIMDBId(tmdbId, mediaType) {
     const url = `${TMDB_BASE_URL}/${normalizedMediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
     const data = await fetchJsonWithRetry(url, { headers: { 'Accept': 'application/json' } });
     return {
+        tmdbId: String(tmdbId),
         imdbId: data.external_ids?.imdb_id,
         title: normalizedMediaType === 'tv' ? data.name : data.title,
         year: String((normalizedMediaType === 'tv' ? data.first_air_date : data.release_date) || '').slice(0, 4)
@@ -356,14 +358,15 @@ async function getStreams(tmdbId, mediaType = 'movie', season = null, episode = 
             const title = String(s.title || s.name || fallbackName);
             const requestHeaders = isApiBaseUrl(s.url)
                 ? (s.headers || s.behaviorHints?.proxyHeaders?.request || { "Referer": API_BASE })
-                : null;
+                : (s.headers || s.behaviorHints?.proxyHeaders?.request || null);
 
             return {
                 name: `CS [${upstreamName || fallbackName}]`,
                 title: rewriteUpstreamLabel(title.split('\n')[0]),
                 url: normalizeStreamUrl(s.url),
                 quality,
-                headers: requestHeaders
+                headers: requestHeaders,
+                provider: 'cinestream'
             };
         });
 
