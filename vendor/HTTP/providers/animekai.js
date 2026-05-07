@@ -13,7 +13,14 @@ var HEADERS = {
 
 const API = 'https://enc-dec.app/api';
 const DB_API = 'https://enc-dec.app/db/kai';
-const KAI_AJAX = 'https://animekai.to/ajax';
+const DEFAULT_KAI_BASE = 'https://animekai.fi/';
+const FALLBACK_KAI_BASES = [
+    'https://animekai.fi/',
+    'https://animekai.fo/',
+    'https://animekai.gs/',
+    'https://anikai.to/',
+    'https://animekai.to/'
+];
 const ARM_BASE = 'https://arm.haglund.dev/api/v2';
 
 // Debug helpers
@@ -30,6 +37,34 @@ function logRid(rid, msg, extra) {
         if (typeof extra !== 'undefined') console.log('[AnimeKai][rid:' + rid + '] ' + msg, extra);
         else console.log('[AnimeKai][rid:' + rid + '] ' + msg);
     } catch (e) { }
+}
+
+function normalizeBaseUrl(baseUrl) {
+    var normalized = String(baseUrl || '').trim();
+    if (!normalized) return '';
+    if (normalized.indexOf('//') === 0) normalized = 'https:' + normalized;
+    if (!/^https?:\/\//i.test(normalized)) normalized = 'https://' + normalized;
+    return normalized.replace(/\/+$/, '') + '/';
+}
+
+function getAnimeKaiBases(dbData) {
+    var bases = [];
+    var mirrors = dbData && dbData.info && dbData.info.mirrors && dbData.info.mirrors.animekai;
+    if (Array.isArray(mirrors)) {
+        bases = bases.concat(mirrors);
+    }
+    bases = FALLBACK_KAI_BASES.concat(bases);
+
+    var seen = {};
+    return bases.map(normalizeBaseUrl).filter(function (base) {
+        if (!base || seen[base]) return false;
+        seen[base] = true;
+        return true;
+    });
+}
+
+function withAnimeKaiReferer(baseUrl, headers) {
+    return Object.assign({}, headers || {}, { Referer: normalizeBaseUrl(baseUrl) || DEFAULT_KAI_BASE });
 }
 
 // Generic fetch helper
@@ -269,12 +304,12 @@ function parseHtmlViaApi(html) {
         .then(function (json) { return json.result; });
 }
 
-function decryptMegaMedia(embedUrl) {
+function decryptMegaMedia(embedUrl, kaiBaseUrl) {
     var mediaUrl = embedUrl.replace('/e/', '/media/').replace('/e2/', '/media/');
     return fetchRequest(mediaUrl, {
         headers: {
             'User-Agent': HEADERS['User-Agent'],
-            'Referer': 'https://animekai.to/'
+            'Referer': normalizeBaseUrl(kaiBaseUrl) || DEFAULT_KAI_BASE
         }
     })
         .then(function (res) { return res.json(); })
@@ -475,16 +510,20 @@ function formatToNuvioStreams(formattedData, mediaTitle) {
     return links;
 }
 
-function runStreamFetch(token, rid) {
-    logRid(rid, 'runStreamFetch: start token=' + token);
+function runStreamFetchForBase(token, rid, kaiBaseUrl) {
+    var normalizedBase = normalizeBaseUrl(kaiBaseUrl) || DEFAULT_KAI_BASE;
+    var ajaxBase = normalizedBase.replace(/\/+$/, '') + '/ajax';
+    logRid(rid, 'runStreamFetch: start token=' + token + ' base=' + normalizedBase);
 
     return encryptKai(token)
         .then(function (encToken) {
             logRid(rid, 'links/list: enc(token) ready');
-            return fetchRequest(KAI_AJAX + '/links/list?token=' + token + '&_=' + encToken)
+            return fetchRequest(ajaxBase + '/links/list?token=' + token + '&_=' + encToken, {
+                    headers: withAnimeKaiReferer(normalizedBase)
+                })
                 .then(function (res) { return res.json(); })
                 .catch(function(e) {
-                    logRid(rid, 'links/list failed', e.message || e);
+                    logRid(rid, 'links/list failed for ' + normalizedBase, e.message || e);
                     throw e;
                 });
         })
@@ -506,7 +545,9 @@ function runStreamFetch(token, rid) {
                     var p = encryptKai(lid)
                         .then(function (encLid) {
                             logRid(rid, 'links/view: enc(lid) ready', { serverType: serverType, serverKey: serverKey, lid: lid });
-                            return fetchRequest(KAI_AJAX + '/links/view?id=' + lid + '&_=' + encLid)
+                            return fetchRequest(ajaxBase + '/links/view?id=' + lid + '&_=' + encLid, {
+                                    headers: withAnimeKaiReferer(normalizedBase)
+                                })
                                 .then(function (res) { return res.json(); });
                         })
                         .then(function (embedResp) {
@@ -518,7 +559,7 @@ function runStreamFetch(token, rid) {
                                 var iframesrc = decrypted.url;
                                 logRid(rid, 'AnimeKai: Fetching intermediate iframe source', { url: iframesrc });
                                 
-                                return fetchRequest(iframesrc)
+                                return fetchRequest(iframesrc, { headers: withAnimeKaiReferer(normalizedBase) })
                                     .then(function (res) { return res.text(); })
                                     .then(function (html) {
                                         // Extract the actual iframe src from the page
@@ -529,7 +570,7 @@ function runStreamFetch(token, rid) {
                                         if (finalIframeUrl.indexOf('//') === 0) finalIframeUrl = 'https:' + finalIframeUrl;
                                         
                                         logRid(rid, 'mega.media → dec-mega', { lid: lid, finalUrl: finalIframeUrl });
-                                        return decryptMegaMedia(finalIframeUrl);
+                                        return decryptMegaMedia(finalIframeUrl, normalizedBase);
                                     })
                                     .then(function (mediaData) {
                                         var srcs = [];
@@ -581,6 +622,33 @@ function runStreamFetch(token, rid) {
                 });
             });
         });
+}
+
+function runStreamFetch(token, rid, kaiBaseUrls) {
+    var bases = Array.isArray(kaiBaseUrls) && kaiBaseUrls.length ? kaiBaseUrls.slice() : [DEFAULT_KAI_BASE];
+    var index = 0;
+
+    function tryNext(lastError) {
+        if (index >= bases.length) {
+            if (lastError) throw lastError;
+            return { streams: [], subtitles: [] };
+        }
+
+        var base = bases[index++];
+        return runStreamFetchForBase(token, rid, base).then(function (result) {
+            if (result && Array.isArray(result.streams) && result.streams.length > 0) {
+                return result;
+            }
+
+            logRid(rid, 'no streams from ' + base + ', trying next mirror');
+            return tryNext(lastError);
+        }).catch(function (error) {
+            logRid(rid, 'mirror failed ' + base + ': ' + (error.message || error));
+            return tryNext(error);
+        });
+    }
+
+    return tryNext(null);
 }
 
 // Main Nuvio entry
@@ -645,7 +713,8 @@ function getStreams(id, mediaType, season, episode) {
 
                 if (!token) throw new Error('Episode ' + epStr + ' token not found for AniList ID ' + syncResult.alId);
                 
-                return runStreamFetch(token, rid).then(function (streamData) {
+                var kaiBases = getAnimeKaiBases(dbData);
+                return runStreamFetch(token, rid, kaiBases).then(function (streamData) {
                     var title = dbData.info ? dbData.info.title_en : 'Anime';
                     var mediaTitle = title + ' E' + epStr;
                     var formatted = formatToNuvioStreams(streamData, mediaTitle);

@@ -42,7 +42,11 @@ const PROVIDER_FETCH_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   'cloudnestra.com': 2,
   'vixsrc.to': 2,
   'vsembed.ru': 2,
-  'vidsrc-embed.ru': 2,
+  'vsembed.su': 2,
+  'vidsrcme.ru': 2,
+  'vidsrcme.su': 2,
+  'vidsrc-me.ru': 2,
+  'vidsrc-me.su': 2,
   'hubcloud.dad': 2,
   'hubdrive.dad': 2,
   'hubcdn.fans': 2,
@@ -118,7 +122,11 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'vidsrc') {
-    return '26';
+    return '27';
+  }
+
+  if (providerId === 'animekai') {
+    return '24';
   }
 
   if (providerId === 'animepahe') {

@@ -2,8 +2,7 @@ const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const EMBED_DOMAINS = [
   'https://vsembed.ru',
-  'https://vidsrc-embed.ru',
-  'https://vidsrc-embed.su',
+  'https://vsembed.su',
   'https://vidsrcme.ru',
   'https://vidsrcme.su',
   'https://vidsrc-me.ru',
@@ -20,8 +19,6 @@ const REQUEST_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
   Connection: 'keep-alive'
 };
-const PLAYBACK_HOST_REPLACEMENT = 'cloudnestra.com';
-
 function delay(ms) {
   return new Promise(function(resolve) {
     setTimeout(resolve, ms);
@@ -319,8 +316,9 @@ function extractFileBundle(html) {
   return match ? match[1].trim() : '';
 }
 
-function resolveCandidateUrls(fileBundle) {
+function resolveCandidateUrls(fileBundle, playbackHost) {
   var unique = new Set();
+  var replacementHost = playbackHost || 'cloudnestra.com';
 
   String(fileBundle || '')
     .split(/\s+or\s+/i)
@@ -331,7 +329,7 @@ function resolveCandidateUrls(fileBundle) {
       return url.startsWith('https://') && url.includes('/master.m3u8');
     })
     .forEach(function(url) {
-      unique.add(url.replace(/\{v\d\}/g, PLAYBACK_HOST_REPLACEMENT));
+      unique.add(url.replace(/\{v\d\}/g, replacementHost));
     });
 
   return Array.from(unique);
@@ -365,7 +363,6 @@ function validatePlaylist(url, referer) {
   return getText(url, {
     headers: {
       Referer: referer,
-      Origin: 'https://cloudnestra.com',
       Accept: 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*'
     }
   }).then(function(playlistText) {
@@ -394,7 +391,6 @@ function buildStreams(validatedPlaylists, title, playbackReferer) {
       quality: quality,
       headers: {
         Referer: playbackReferer,
-        Origin: 'https://cloudnestra.com',
         'User-Agent': REQUEST_HEADERS['User-Agent']
       },
       provider: 'vidsrc'
@@ -411,7 +407,6 @@ function buildUnvalidatedStreams(candidateUrls, title, playbackReferer) {
       quality: 'Auto',
       headers: {
         Referer: playbackReferer,
-        Origin: 'https://cloudnestra.com',
         'User-Agent': REQUEST_HEADERS['User-Agent']
       },
       provider: 'vidsrc'
@@ -510,24 +505,24 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 headers: playerHeaders
               }).then(function(playerHtml) {
                 var fileBundle = extractFileBundle(playerHtml);
-                var candidateUrls = resolveCandidateUrls(fileBundle);
+                var candidateUrls = resolveCandidateUrls(fileBundle, iframeUrl.host);
 
                 if (!candidateUrls.length) {
                   return [];
                 }
 
                 return Promise.all(candidateUrls.map(function(url) {
-                  return validatePlaylist(url, playerUrl).catch(function() {
+                  return validatePlaylist(url, iframeUrl.href).catch(function() {
                     return null;
                   });
                 })).then(function(validated) {
                   var playlists = validated.filter(Boolean);
 
                   if (!playlists.length) {
-                    return buildUnvalidatedStreams(candidateUrls, extractTitle(embedResult.html), playerUrl);
+                    return buildUnvalidatedStreams(candidateUrls, extractTitle(embedResult.html), iframeUrl.href);
                   }
 
-                  return buildStreams(playlists, extractTitle(embedResult.html), playerUrl);
+                  return buildStreams(playlists, extractTitle(embedResult.html), iframeUrl.href);
                 });
               });
             });
