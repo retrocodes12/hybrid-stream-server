@@ -100,6 +100,19 @@ const getContentDispositionFilename = (contentDisposition) => {
   return bareMatch ? bareMatch[1].trim() : '';
 };
 
+const getTargetUrlFilenameHint = (targetUrl) => {
+  try {
+    const parsedUrl = new URL(String(targetUrl || ''));
+    const filenameHint = ['filename', 'fileName', 'KEY5', 'name']
+      .map((key) => parsedUrl.searchParams.get(key))
+      .find((value) => value && /\.[a-z0-9]{2,5}\b/iu.test(value));
+
+    return filenameHint ? decodeHeaderValue(filenameHint) : '';
+  } catch {
+    return '';
+  }
+};
+
 const SYSTEM_CA_PATHS = [
   '/etc/ssl/certs/ca-certificates.crt',
   '/etc/pki/tls/certs/ca-bundle.crt',
@@ -437,15 +450,18 @@ export class HttpProxyService {
     const currentContentType = String(
       output['content-type'] || output['Content-Type'] || ''
     ).toLowerCase();
+    const filename = getContentDispositionFilename(
+      output['content-disposition'] || output['Content-Disposition']
+    ) || getTargetUrlFilenameHint(targetUrl);
+    const filenameContentType = inferContentTypeFromPath(filename);
+    const hasExplicitFilenameHint = Boolean(filename);
     const shouldInferContentType = !currentContentType
       || currentContentType.includes('octet-stream')
-      || currentContentType.includes('binary/octet-stream');
+      || currentContentType.includes('binary/octet-stream')
+      || (hasExplicitFilenameHint && filenameContentType && filenameContentType !== currentContentType);
 
     if (shouldInferContentType) {
-      const filename = getContentDispositionFilename(
-        output['content-disposition'] || output['Content-Disposition']
-      );
-      const inferredContentType = inferContentTypeFromPath(`${filename} ${targetUrl}`);
+      const inferredContentType = filenameContentType || inferContentTypeFromPath(targetUrl);
 
       if (inferredContentType) {
         output['content-type'] = inferredContentType;

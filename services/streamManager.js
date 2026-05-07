@@ -641,7 +641,7 @@ const needsRegisteredPlaybackProxy = (stream) => {
     if (providerId !== 'cinestream') {
       return true;
     }
-  } else if (isHighValueCacheStream(stream) && stream.behaviorHints?.notWebReady !== false) {
+  } else if (isHighValueCacheStream(stream)) {
     return true;
   } else {
     return false;

@@ -6,6 +6,23 @@ const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // ShowBox API Configuration
+const CryptoJS = require('crypto-js');
+const axios = require('axios');
+const SHOWBOX_DIRECT_API_BASE = 'https://mbpapi.shegu.net/api/api_client/index/';
+const SHOWBOX_DIRECT_APP_KEY = 'moviebox';
+const SHOWBOX_DIRECT_APP_ID = 'com.tdo.showbox';
+const SHOWBOX_DIRECT_KEY = '123d6cedf626dy54233aa1w6';
+const SHOWBOX_DIRECT_IV = 'wEiphTn!';
+const FEBBOX_SHARE_ID_API = (function () {
+    try {
+        const configured = typeof process !== 'undefined' && process.env
+            ? String(process.env.FEBBOX_SHARE_ID_API || '').trim().replace(/\/+$/g, '')
+            : '';
+        return configured || 'https://febox.vercel.app/api/febbox/id';
+    } catch (e) {
+        return 'https://febox.vercel.app/api/febbox/id';
+    }
+})();
 const SHOWBOX_API_BASE = (function () {
     try {
         const configured = typeof process !== 'undefined' && process.env
@@ -16,8 +33,22 @@ const SHOWBOX_API_BASE = (function () {
         return 'https://febapi.nuvioapp.space/api';
     }
 })();
+const SHOWBOX_API_BASES = (function () {
+    try {
+        const raw = typeof process !== 'undefined' && process.env
+            ? String(process.env.SHOWBOX_API_BASES || '').trim()
+            : '';
+        const configured = raw
+            ? raw.split(',').map(function (value) { return value.trim().replace(/\/+$/g, ''); }).filter(Boolean)
+            : [];
+        return configured.length ? configured : [SHOWBOX_API_BASE];
+    } catch (e) {
+        return [SHOWBOX_API_BASE];
+    }
+})();
 const TMDB_REQUEST_TIMEOUT_MS = 8000;
-const SHOWBOX_API_TIMEOUT_MS = 45000;
+const SHOWBOX_API_TIMEOUT_MS = 18000;
+const SHOWBOX_LEGACY_API_TIMEOUT_MS = 8000;
 
 // Working headers for ShowBox API
 const WORKING_HEADERS = {
@@ -26,6 +57,12 @@ const WORKING_HEADERS = {
     'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
     'Content-Type': 'application/json'
+};
+const SHOWBOX_PLAYBACK_HEADERS = {
+    'User-Agent': WORKING_HEADERS['User-Agent'],
+    'Accept': '*/*',
+    'Referer': 'https://www.febbox.com/',
+    'Origin': 'https://www.febbox.com'
 };
 
 function getEnvString(name) {
@@ -171,8 +208,11 @@ function getQualityFromName(qualityStr) {
     if (quality === '360P') return '360p';
     if (quality === '240P') return '240p';
 
-    // Try to extract number from string and format consistently
-    const match = qualityStr.match(/(\d{3,4})[pP]?/);
+    // Try to extract explicit resolution from filenames/labels first.
+    let match = qualityStr.match(/(\d{3,4})[pP]\b/i);
+    if (!match && /^\s*\d{3,4}\s*$/u.test(qualityStr)) {
+        match = qualityStr.match(/(\d{3,4})/);
+    }
     if (match) {
         const resolution = parseInt(match[1]);
         if (resolution >= 2160) return '4K';
@@ -217,6 +257,252 @@ function getBestQuality() {
     return getQualityFromSize(values.find(value => parseSizeBytes(value)) || '');
 }
 
+function md5(value) {
+    return CryptoJS.MD5(String(value || '')).toString();
+}
+
+function randomToken(length) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let output = '';
+    for (let i = 0; i < length; i += 1) {
+        output += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return output;
+}
+
+function encryptShowBoxPayload(message) {
+    const encrypted = CryptoJS.TripleDES.encrypt(
+        String(message),
+        CryptoJS.enc.Utf8.parse(SHOWBOX_DIRECT_KEY),
+        {
+            iv: CryptoJS.enc.Utf8.parse(SHOWBOX_DIRECT_IV),
+            mode: CryptoJS.mode.CBC,
+            padding: CryptoJS.pad.Pkcs7
+        }
+    );
+
+    return encrypted.ciphertext.toString(CryptoJS.enc.Base64);
+}
+
+function buildShowBoxDirectBody(params) {
+    const query = JSON.stringify({
+        appid: SHOWBOX_DIRECT_APP_ID,
+        expired_date: Math.floor(Date.now() / 1000) + (60 * 60 * 12),
+        platform: 'android',
+        app_version: '11.5',
+        channel: 'Website',
+        childmode: 0,
+        lang: 'en',
+        pagelimit: 10,
+        ...params
+    });
+    const encryptedQuery = encryptShowBoxPayload(query);
+    const body = {
+        app_key: md5(SHOWBOX_DIRECT_APP_KEY),
+        verify: md5(md5(SHOWBOX_DIRECT_APP_KEY) + SHOWBOX_DIRECT_KEY + encryptedQuery),
+        encrypt_data: encryptedQuery
+    };
+
+    return new URLSearchParams({
+        data: Buffer.from(JSON.stringify(body), 'utf8').toString('base64'),
+        appid: '27',
+        platform: 'android',
+        version: '129',
+        medium: 'Website&token' + randomToken(32)
+    });
+}
+
+function showBoxDirectRequest(params) {
+    return makeRequest(SHOWBOX_DIRECT_API_BASE, {
+        method: 'POST',
+        timeoutMs: 12000,
+        headers: {
+            Platform: 'android',
+            Accept: 'charset=utf-8',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: buildShowBoxDirectBody(params)
+    }).then(function (response) {
+        return response.json();
+    });
+}
+
+function normalizeTitle(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/&/g, 'and')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function pickShowBoxSearchResult(results, mediaInfo, mediaType) {
+    const list = Array.isArray(results) ? results : [];
+    const wantedTitle = normalizeTitle(mediaInfo.title);
+    const wantedYear = mediaInfo.year ? Number(mediaInfo.year) : null;
+    const wantedBoxType = mediaType === 'tv' ? 2 : 1;
+
+    return list
+        .map(function (item) {
+            const titleScore = normalizeTitle(item.title) === wantedTitle ? 100 : 0;
+            const yearScore = wantedYear && Number(item.year) === wantedYear ? 25 : 0;
+            const typeScore = Number(item.box_type) === wantedBoxType ? 50 : 0;
+            return { item, score: titleScore + yearScore + typeScore };
+        })
+        .sort(function (a, b) { return b.score - a.score; })[0]?.item || null;
+}
+
+function getFebBoxShareKey(showboxId, boxType) {
+    const url = `${FEBBOX_SHARE_ID_API}?id=${encodeURIComponent(showboxId)}&type=${encodeURIComponent(boxType)}`;
+    return makeRequest(url, { timeoutMs: 12000 })
+        .then(function (response) { return response.json(); })
+        .then(function (data) { return data?.febBoxId || data?.shareKey || data?.share_key || null; });
+}
+
+function getFebBoxJson(url) {
+    return axios.get(url, {
+        timeout: 12000,
+        headers: {
+            Accept: 'application/json',
+            'User-Agent': 'curl/8.5.0'
+        },
+        maxRedirects: 3
+    }).then(function (response) {
+        return response.data;
+    });
+}
+
+function getFebBoxFileList(shareKey, parentId = 0) {
+    const url = `https://www.febbox.com/file/file_share_list?share_key=${encodeURIComponent(shareKey)}&parent_id=${encodeURIComponent(parentId)}`;
+    return getFebBoxJson(url)
+        .then(function (data) { return data?.data?.file_list || []; });
+}
+
+function getFebBoxDownloadLinks(shareKey, fid) {
+    const url = `https://www.febbox.com/file/file_download?fid=${encodeURIComponent(fid)}&share_key=${encodeURIComponent(shareKey)}`;
+    return getFebBoxJson(url)
+        .then(function (data) { return Array.isArray(data?.data) ? data.data : []; });
+}
+
+function isVideoFile(file) {
+    return !file?.is_dir && /\.(mkv|mp4|webm|avi|mov)$/i.test(String(file?.file_name || file?.name || ''));
+}
+
+function findEpisodeFile(files, seasonNum, episodeNum) {
+    const pattern = new RegExp(`s0*${Number(seasonNum)}e0*${Number(episodeNum)}\\b`, 'i');
+    return files.find(function (file) { return pattern.test(String(file.file_name || '')); }) || null;
+}
+
+async function getCandidateFebBoxFiles(shareKey, mediaType, seasonNum, episodeNum) {
+    const rootFiles = await getFebBoxFileList(shareKey, 0);
+
+    if (mediaType !== 'tv') {
+        return rootFiles.filter(isVideoFile);
+    }
+
+    const directEpisode = findEpisodeFile(rootFiles, seasonNum, episodeNum);
+    if (directEpisode) return [directEpisode];
+
+    const seasonPattern = new RegExp(`season\\s*0*${Number(seasonNum)}\\b|s0*${Number(seasonNum)}\\b`, 'i');
+    const seasonDirs = rootFiles.filter(function (file) {
+        return file?.is_dir && seasonPattern.test(String(file.file_name || ''));
+    });
+    const dirsToCheck = seasonDirs.length ? seasonDirs : rootFiles.filter(function (file) { return file?.is_dir; });
+
+    for (const dir of dirsToCheck) {
+        const files = await getFebBoxFileList(shareKey, dir.fid);
+        const episodeFile = findEpisodeFile(files, seasonNum, episodeNum);
+        if (episodeFile) return [episodeFile];
+    }
+
+    return [];
+}
+
+function buildStreamsFromFebBoxDownloads(downloads, mediaInfo, file, versionIndex) {
+    const output = [];
+    const baseTitle = mediaInfo.title || file.file_name || 'ShowBox';
+    const fileName = file.file_name || file.name || baseTitle;
+    const entries = [];
+
+    downloads.forEach(function (download) {
+        const hasQualityList = Array.isArray(download?.quality_list) && download.quality_list.length > 0;
+        if (download?.download_url && !hasQualityList) {
+            entries.push({
+                quality: download.quality || download.quality_tag || file.quality || file.ext || 'Original',
+                url: download.download_url,
+                size: download.file_size || file.file_size || file.file_size_bytes,
+                fileName: download.file_name || fileName
+            });
+        }
+        if (hasQualityList) {
+            download.quality_list.forEach(function (qualityEntry) {
+                if (qualityEntry?.download_url) {
+                    entries.push({
+                        quality: qualityEntry.quality || download.quality || 'Original',
+                        url: qualityEntry.download_url,
+                        size: qualityEntry.file_size || download.file_size || file.file_size || file.file_size_bytes,
+                        fileName: qualityEntry.file_name || download.file_name || fileName
+                    });
+                }
+            });
+        }
+    });
+
+    entries.forEach(function (entry) {
+        const quality = getBestQuality(entry.fileName, entry.quality, entry.url, entry.size);
+        output.push({
+            name: `ShowBox ${quality}`,
+            title: `${baseTitle}${mediaInfo.year ? ` (${mediaInfo.year})` : ''}`,
+            url: entry.url,
+            quality,
+            size: formatFileSize(entry.size),
+            filename: entry.fileName,
+            headers: getShowBoxPlaybackHeaders(entry.url),
+            provider: 'showbox',
+            behaviorHints: {
+                bingeGroup: `showbox-${versionIndex}`,
+                notWebReady: true
+            }
+        });
+    });
+
+    return output;
+}
+
+async function getShowBoxDirectStreams(mediaInfo, mediaType, seasonNum, episodeNum) {
+    const searchType = mediaType === 'tv' ? 'tv' : 'movie';
+    const searchResponse = await showBoxDirectRequest({
+        module: 'Search5',
+        page: 1,
+        pagelimit: 10,
+        type: searchType,
+        keyword: mediaInfo.title
+    });
+    const match = pickShowBoxSearchResult(searchResponse?.data, mediaInfo, mediaType);
+
+    if (!match?.id || !match?.box_type) {
+        console.log('[ShowBox] Direct search found no matching ShowBox item');
+        return [];
+    }
+
+    const shareKey = await getFebBoxShareKey(match.id, match.box_type);
+    if (!shareKey) {
+        console.log('[ShowBox] Direct lookup found no FebBox share key');
+        return [];
+    }
+
+    const files = await getCandidateFebBoxFiles(shareKey, mediaType, seasonNum, episodeNum);
+    const streams = [];
+
+    for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const downloads = await getFebBoxDownloadLinks(shareKey, file.fid);
+        streams.push(...buildStreamsFromFebBoxDownloads(downloads, mediaInfo, file, index + 1));
+    }
+
+    console.log(`[ShowBox] Direct path returned ${streams.length} stream(s)`);
+    return streams;
+}
+
 function formatFileSize(sizeStr) {
     if (!sizeStr) return 'Unknown';
 
@@ -237,6 +523,21 @@ function formatFileSize(sizeStr) {
     }
 
     return sizeStr;
+}
+
+function getShowBoxPlaybackHeaders(streamUrl) {
+    const headers = { ...SHOWBOX_PLAYBACK_HEADERS };
+
+    try {
+        const hostname = new URL(String(streamUrl || '')).hostname.toLowerCase();
+        if (!hostname.includes('febbox') && !hostname.includes('showbox') && !hostname.includes('mbed')) {
+            delete headers.Origin;
+        }
+    } catch (e) {
+        delete headers.Origin;
+    }
+
+    return headers;
 }
 
 // Helper function to make HTTP requests
@@ -292,11 +593,21 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
 
-    return makeRequest(url, { timeoutMs: TMDB_REQUEST_TIMEOUT_MS })
-        .then(function (response) {
-            return response.json();
-        })
+    const fetchTmdb = function (attempt = 1) {
+        return axios.get(url, {
+            timeout: TMDB_REQUEST_TIMEOUT_MS,
+            headers: { Accept: 'application/json', 'User-Agent': WORKING_HEADERS['User-Agent'] }
+        }).catch(function (error) {
+            if (attempt < 3) {
+                return fetchTmdb(attempt + 1);
+            }
+            throw error;
+        });
+    };
+
+    return fetchTmdb()
         .then(function (data) {
+            data = data.data;
             const title = mediaType === 'tv' ? data.name : data.title;
             const releaseDate = mediaType === 'tv' ? data.first_air_date : data.release_date;
             const year = releaseDate ? parseInt(releaseDate.split('-')[0]) : null;
@@ -390,7 +701,8 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
             // Process each link in the version
             if (version.links && Array.isArray(version.links)) {
                 version.links.forEach(function (link) {
-                    if (!link.url) return;
+                    const rawUrl = link.url || link.link || link.path;
+                    if (!rawUrl) return;
 
                     const linkSize = link.size || versionSize;
                     const normalizedQuality = getBestQuality(
@@ -399,7 +711,7 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
                         link.name,
                         link.fileName,
                         link.filename,
-                        link.url,
+                        rawUrl,
                         version.quality,
                         version.name,
                         version.label,
@@ -417,15 +729,20 @@ function processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNu
                     streams.push({
                         name: streamName,
                         title: streamTitle,
-                        url: link.url,
+                        url: rawUrl,
                         quality: normalizedQuality,
                         size: formatFileSize(linkSize),
                         filename: link.fileName || link.filename || linkName || versionName,
+                        headers: getShowBoxPlaybackHeaders(rawUrl),
                         provider: 'showbox',
-                        speed: link.speed || null
+                        speed: link.speed || null,
+                        behaviorHints: {
+                            bingeGroup: 'showbox',
+                            notWebReady: true
+                        }
                     });
 
-                    console.log(`[ShowBox] Added ${normalizedQuality} stream from ${versionName}: ${link.url.substring(0, 50)}...`);
+                    console.log(`[ShowBox] Added ${normalizedQuality} stream from ${versionName}: ${rawUrl.substring(0, 50)}...`);
                 });
             }
         });
@@ -444,34 +761,31 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
     // Get cookie (uiToken) - required
     const cookie = getUiToken(scraperSettings);
     if (!cookie) {
-        console.error('[ShowBox] No UI token (cookie) found in scraper settings');
-        return Promise.resolve([]);
+        console.log('[ShowBox] No UI token found; using public ShowBox/FEB path');
     }
 
     // Get OSS group - optional
     const ossGroup = getOssGroup(scraperSettings);
-    console.log(`[ShowBox] Using cookie: ${cookie.substring(0, 20)}...${ossGroup ? `, OSS Group: ${ossGroup}` : ' (no OSS group)'}`);
-
-    // Build API URL based on media type
-    let apiUrl;
-    if (mediaType === 'tv' && seasonNum && episodeNum) {
-        // TV format: /api/media/tv/:tmdbId/oss=:ossGroup/:season/:episode?cookie=:cookie
-        if (ossGroup) {
-            apiUrl = `${SHOWBOX_API_BASE}/media/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
-        } else {
-            apiUrl = `${SHOWBOX_API_BASE}/media/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
-        }
-    } else {
-        // Movie format: /api/media/movie/:tmdbId?cookie=:cookie
-        apiUrl = `${SHOWBOX_API_BASE}/media/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
+    if (cookie) {
+        console.log(`[ShowBox] Using UI token (${cookie.length} chars)${ossGroup ? `, OSS Group: ${ossGroup}` : ' (no OSS group)'}`);
     }
 
-    // Debug log with redacted cookie (show first/last 10 chars only)
-    const debugUrl = apiUrl.replace(/cookie=([^&]+)/, function (match, cookieVal) {
-        return 'cookie=' + cookieVal.substring(0, 10) + '...' + cookieVal.substring(cookieVal.length - 10);
+    // Build API URL based on media type
+    const apiUrls = SHOWBOX_API_BASES.map(function (baseUrl) {
+        if (mediaType === 'tv' && seasonNum && episodeNum) {
+            if (ossGroup) {
+                return `${baseUrl}/media/tv/${tmdbId}/oss=${ossGroup}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+            }
+            return `${baseUrl}/media/tv/${tmdbId}/${seasonNum}/${episodeNum}?cookie=${encodeURIComponent(cookie)}`;
+        }
+
+        return `${baseUrl}/media/movie/${tmdbId}?cookie=${encodeURIComponent(cookie)}`;
     });
-    console.log(`[ShowBox] Requesting: ${debugUrl}`);
-    console.log(`[ShowBox] Cookie length: ${cookie.length}, Expires: ${getJwtExpiryIso(cookie)}`);
+
+    console.log(`[ShowBox] Requesting ${apiUrls.length} API base(s)`);
+    if (cookie) {
+        console.log(`[ShowBox] Cookie length: ${cookie.length}, Expires: ${getJwtExpiryIso(cookie)}`);
+    }
 
     const mediaInfoPromise = getTMDBDetails(tmdbId, mediaType)
         .then(function (mediaInfo) {
@@ -479,22 +793,52 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
             return mediaInfo;
         });
 
-    const apiRequestPromise = makeRequest(apiUrl, { timeoutMs: SHOWBOX_API_TIMEOUT_MS })
-        .then(function (response) {
-            console.log(`[ShowBox] API Response status: ${response.status}`);
-            return response.json();
-        })
-        .then(function (data) {
-            console.log(`[ShowBox] API Response received:`, JSON.stringify(data, null, 2));
-            return data;
-        })
-        .catch(function (error) {
-            console.error(`[ShowBox] API request failed: ${error.message}`);
-            throw error;
+    const legacyApiRequest = function () {
+        return apiUrls.reduce(function (promise, url) {
+        return promise.catch(function () {
+            console.log(`[ShowBox] Requesting: ${redactSensitiveUrl(url)}`);
+            return makeRequest(url, { timeoutMs: SHOWBOX_LEGACY_API_TIMEOUT_MS })
+                .then(function (response) {
+                    console.log(`[ShowBox] API Response status: ${response.status}`);
+                    return response.json();
+                });
         });
+        }, Promise.reject(new Error('No ShowBox API attempted')));
+    };
 
-    return Promise.all([mediaInfoPromise, apiRequestPromise])
-        .then(function ([mediaInfo, data]) {
+    return mediaInfoPromise
+        .then(function (mediaInfo) {
+            return getShowBoxDirectStreams(mediaInfo, mediaType, seasonNum, episodeNum)
+                .then(function (streams) {
+                    if (streams.length > 0) {
+                        return { mediaInfo, data: null, directStreams: streams };
+                    }
+
+                    return legacyApiRequest().then(function (data) {
+                        return { mediaInfo, data, directStreams: [] };
+                    });
+                });
+        })
+        .then(function ({ mediaInfo, data, directStreams }) {
+            if (directStreams.length > 0) {
+                directStreams.sort(function (a, b) {
+                    const qualityOrder = {
+                        'Original': 6,
+                        '4K': 5,
+                        '1440p': 4,
+                        '1080p': 3,
+                        '720p': 2,
+                        '480p': 1,
+                        '360p': 0,
+                        '240p': -1,
+                        'Unknown': -2
+                    };
+                    return (qualityOrder[b.quality] || -2) - (qualityOrder[a.quality] || -2);
+                });
+                console.log(`[ShowBox] Returning ${directStreams.length} direct stream(s)`);
+                return directStreams;
+            }
+
             // Process the response
             const streams = processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNum);
 
@@ -524,7 +868,7 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
         })
         .catch(function (error) {
             console.error(`[ShowBox] Error in getStreams: ${error.message}`);
-            return []; // Return empty array on error as per Nuvio scraper guidelines
+            return [];
         });
 }
 
