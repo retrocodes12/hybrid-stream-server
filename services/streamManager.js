@@ -3342,7 +3342,8 @@ export class StreamManager {
           metadata: {
             provider: stream.provider,
             title: stream.title,
-            quality: stream.quality
+            quality: stream.quality,
+            filename: stream.filename || stream.fileName || stream.title
           },
           deferValidation: true
         });
@@ -3790,6 +3791,9 @@ export class StreamManager {
     });
     const streamUrl = new URL('/stream', baseUrl);
     streamUrl.searchParams.set('sourceId', sourceId);
+    if (preparedSource.metadata?.filename) {
+      streamUrl.searchParams.set('filename', String(preparedSource.metadata.filename).slice(0, 180));
+    }
     return streamUrl;
   }
 

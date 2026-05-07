@@ -395,6 +395,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     const results = [];
     const sizeText = $("#size").text();
     const titleText = $("title").text().trim();
+    const playbackHeaders = { Referer: finalLinksUrl, "User-Agent": USER_AGENT };
     const currentMeta = __spreadProps(__spreadValues({}, baseMeta), {
       bytes: parseBytes(sizeText) || baseMeta.bytes,
       title: titleText || baseMeta.title
@@ -408,26 +409,30 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
         results.push({
           source: "FSL",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (text.includes("FSLv2")) {
         results.push({
           source: "FSLv2",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (text.includes("Download File")) {
         results.push({
           source: "FSL",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (text.includes("PixelServer")) {
         const pixelUrl = href.replace("/u/", "/api/file/");
         results.push({
           source: "PixelServer",
           url: pixelUrl,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       }
     });

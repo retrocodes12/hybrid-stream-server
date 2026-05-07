@@ -615,6 +615,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
     const results = [];
     const sizeText = $("#size").text();
     const titleText = $("title").text().trim();
+    const playbackHeaders = { Referer: finalLinksUrl, "User-Agent": USER_AGENT };
     const currentMeta = __spreadProps(__spreadValues({}, baseMeta), {
       bytes: parseBytes(sizeText) || baseMeta.bytes,
       title: ""
@@ -629,56 +630,64 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
         results.push({
           source: "FSL",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (text.includes("FSLv2")) {
         results.push({
           source: "FSLv2",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (text.includes("Download File")) {
         results.push({
           source: "FSL",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (lowerText.includes("10gbps")) {
         results.push({
           source: "10Gbps",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (lowerText.includes("pdl") || href.includes("workers.dev")) {
         results.push({
           source: "PDL",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (lowerText.includes("buzzserver")) {
         results.push({
           source: "BuzzServer",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (lowerText.includes("s3 server")) {
         results.push({
           source: "S3",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (lowerText.includes("mega server")) {
         results.push({
           source: "Mega",
           url: href,
-          meta: currentMeta
+          meta: currentMeta,
+          headers: playbackHeaders
         });
       } else if (href.toLowerCase().includes("hubcdn")) {
         results.push({
           source: "HubCdn",
           url: href,
           meta: currentMeta,
-          headers: { Referer: finalLinksUrl, "User-Agent": USER_AGENT }
+          headers: playbackHeaders
         });
       } else if (text.includes("PixelServer")) {
         const userUrl = href.replace("/api/file/", "/u/");
@@ -688,7 +697,7 @@ function extractHubCloud(hubCloudUrl, baseMeta) {
           source: "PixelServer",
           url: pixelUrl,
           meta: currentMeta,
-          headers: { Referer: userUrl }
+          headers: __spreadProps(__spreadValues({}, playbackHeaders), { Referer: userUrl })
         });
       }
     });

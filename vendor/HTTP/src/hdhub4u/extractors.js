@@ -177,6 +177,7 @@ export async function hubCloudExtractor(url, referer) {
     })();
     
     const links = [];
+    const playbackHeaders = { ...HEADERS, Referer: finalUrl };
     const elements = $("a.btn").get();
     for (const element of elements) {
       const link = $(element).attr("href");
@@ -190,12 +191,12 @@ export async function hubCloudExtractor(url, referer) {
         else if (text.includes("fslv2")) label = "HubCloud - FSLv2";
         else if (text.includes("mega server")) label = "HubCloud - Mega";
         
-        links.push({ source: `${label} ${labelExtras}`, quality, url: link, size: sizeInBytes, fileName });
+        links.push({ source: `${label} ${labelExtras}`, quality, url: link, size: sizeInBytes, fileName, headers: playbackHeaders });
       } else if (text.includes("buzzserver")) {
         try {
           const buzzResp = await fetch(`${link}/download`, { method: "GET", headers: { ...HEADERS, Referer: link } });
           if (buzzResp.url && buzzResp.url !== `${link}/download`) {
-            links.push({ source: `HubCloud - BuzzServer ${labelExtras}`, quality, url: buzzResp.url, size: sizeInBytes, fileName });
+            links.push({ source: `HubCloud - BuzzServer ${labelExtras}`, quality, url: buzzResp.url, size: sizeInBytes, fileName, headers: playbackHeaders });
           }
         } catch (e) {}
       } else if (text.includes("10gbps")) {
@@ -204,15 +205,15 @@ export async function hubCloudExtractor(url, referer) {
               const loc = resp.headers.get("location");
               if (loc && loc.includes("link=")) {
                   const dlink = loc.substring(loc.indexOf("link=") + 5);
-                  links.push({ source: `HubCloud - 10Gbps ${labelExtras}`, quality, url: dlink, size: sizeInBytes, fileName });
+                  links.push({ source: `HubCloud - 10Gbps ${labelExtras}`, quality, url: dlink, size: sizeInBytes, fileName, headers: playbackHeaders });
               }
           } catch (e) {}
       } else if (link && link.includes("pixeldra")) {
         const results = await pixelDrainExtractor(link);
-        links.push(...results.map(l => ({ ...l, source: `${l.source} ${labelExtras}`, size: sizeInBytes, fileName })));
+        links.push(...results.map(l => ({ ...l, source: `${l.source} ${labelExtras}`, size: sizeInBytes, fileName, headers: { ...playbackHeaders, ...(l.headers || {}) } })));
       } else if (link && !link.includes("magnet:") && link.startsWith("http")) {
         const extracted = await loadExtractor(link, finalUrl);
-        links.push(...extracted.map(l => ({ ...l, quality: l.quality || quality })));
+        links.push(...extracted.map(l => ({ ...l, quality: l.quality || quality, headers: { ...playbackHeaders, ...(l.headers || {}) } })));
       }
     }
     return links;

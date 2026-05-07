@@ -6,7 +6,16 @@ const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 // ShowBox API Configuration
-const SHOWBOX_API_BASE = 'https://febapi.nuvioapp.space/api';
+const SHOWBOX_API_BASE = (function () {
+    try {
+        const configured = typeof process !== 'undefined' && process.env
+            ? String(process.env.SHOWBOX_API_BASE || '').trim().replace(/\/+$/g, '')
+            : '';
+        return configured || 'https://febapi.nuvioapp.space/api';
+    } catch (e) {
+        return 'https://febapi.nuvioapp.space/api';
+    }
+})();
 const TMDB_REQUEST_TIMEOUT_MS = 8000;
 const SHOWBOX_API_TIMEOUT_MS = 45000;
 
@@ -28,6 +37,20 @@ function getEnvString(name) {
         // ignore and fall through
     }
     return '';
+}
+
+function redactSensitiveUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''));
+        ['cookie', 'token', 'uiToken', 'showbox', 'ui'].forEach(function (key) {
+            if (parsed.searchParams.has(key)) {
+                parsed.searchParams.set(key, 'REDACTED');
+            }
+        });
+        return parsed.toString();
+    } catch (e) {
+        return String(value || '').replace(/([?&;\s](?:cookie|token|uiToken|showbox|ui)=)[^&;\s]+/gi, '$1REDACTED');
+    }
 }
 
 function normalizeUiToken(value) {
@@ -247,7 +270,7 @@ function makeRequest(url, options = {}) {
         return response;
     }).catch(function (error) {
         clearTimeout(timeoutId);
-        console.error(`[ShowBox] Request failed for ${url}: ${error.message}`);
+        console.error(`[ShowBox] Request failed for ${redactSensitiveUrl(url)}: ${error.message}`);
         throw error;
     });
 }

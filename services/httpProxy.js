@@ -61,6 +61,45 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade'
 ]);
 
+const inferContentTypeFromPath = (value) => {
+  const normalized = String(value || '').toLowerCase();
+
+  if (normalized.includes('.m3u8')) return 'application/vnd.apple.mpegurl';
+  if (normalized.includes('.mpd')) return 'application/dash+xml';
+  if (normalized.includes('.mkv')) return 'video/x-matroska';
+  if (normalized.includes('.mp4')) return 'video/mp4';
+  if (normalized.includes('.webm')) return 'video/webm';
+  if (normalized.includes('.ts')) return 'video/mp2t';
+
+  return null;
+};
+
+const decodeHeaderValue = (value) => {
+  try {
+    return decodeURIComponent(String(value || '').replace(/\+/gu, '%20'));
+  } catch {
+    return String(value || '');
+  }
+};
+
+const getContentDispositionFilename = (contentDisposition) => {
+  const header = String(contentDisposition || '');
+  const encodedMatch = header.match(/filename\*\s*=\s*(?:UTF-8'')?([^;]+)/iu);
+
+  if (encodedMatch) {
+    return decodeHeaderValue(encodedMatch[1].trim().replace(/^"|"$/gu, ''));
+  }
+
+  const quotedMatch = header.match(/filename\s*=\s*"([^"]+)"/iu);
+
+  if (quotedMatch) {
+    return quotedMatch[1];
+  }
+
+  const bareMatch = header.match(/filename\s*=\s*([^;]+)/iu);
+  return bareMatch ? bareMatch[1].trim() : '';
+};
+
 const SYSTEM_CA_PATHS = [
   '/etc/ssl/certs/ca-certificates.crt',
   '/etc/pki/tls/certs/ca-bundle.crt',
@@ -189,7 +228,7 @@ export class HttpProxyService {
           responseType: 'stream'
         });
 
-        const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers);
+        const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers, targetUrl);
         logger.info('http stream started', {
           targetUrl,
           statusCode: upstreamResponse.status,
@@ -386,12 +425,31 @@ export class HttpProxyService {
     };
   }
 
-  filterResponseHeaders(headers) {
+  filterResponseHeaders(headers, targetUrl = '') {
     const output = {};
 
     for (const [headerName, headerValue] of Object.entries(headers)) {
       if (!HOP_BY_HOP_HEADERS.has(headerName.toLowerCase())) {
         output[headerName] = headerValue;
+      }
+    }
+
+    const currentContentType = String(
+      output['content-type'] || output['Content-Type'] || ''
+    ).toLowerCase();
+    const shouldInferContentType = !currentContentType
+      || currentContentType.includes('octet-stream')
+      || currentContentType.includes('binary/octet-stream');
+
+    if (shouldInferContentType) {
+      const filename = getContentDispositionFilename(
+        output['content-disposition'] || output['Content-Disposition']
+      );
+      const inferredContentType = inferContentTypeFromPath(`${filename} ${targetUrl}`);
+
+      if (inferredContentType) {
+        output['content-type'] = inferredContentType;
+        delete output['Content-Type'];
       }
     }
 
