@@ -42,7 +42,7 @@ const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
 const SOURCE_TOKEN_VERSION = 1;
 const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
-const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
+const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 120;
 
 const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
   try {
@@ -2495,7 +2495,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 67,
+      version: 68,
       tmdbId,
       mediaType,
       season: season ?? null,

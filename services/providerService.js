@@ -91,6 +91,10 @@ const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
 };
 
 const getProviderResultCacheTtlSeconds = (streams, providerId = null) => {
+  if (providerId === 'showbox') {
+    return Array.isArray(streams) && streams.length > 0 ? 120 : config.PROVIDER_EMPTY_CACHE_TTL_SECONDS;
+  }
+
   if (!Array.isArray(streams) || streams.length === 0) {
     return PRIORITY_EMPTY_CACHE_PROVIDERS.has(providerId)
       ? config.PROVIDER_PRIORITY_EMPTY_CACHE_TTL_SECONDS
@@ -186,7 +190,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '53';
+    return '54';
   }
 
   if (providerId === 'latino-lamovie') {
@@ -663,7 +667,7 @@ const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
   config.PROVIDER_CACHE_TTL_SECONDS * 12 * 1000
 );
 const SIGNAL_INCOMPATIBLE_PROVIDERS = new Set(['fmovies', 'vidsrc']);
-const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'showbox', 'cinestream', 'uhdmovies', 'hdhub4u', 'vidsrc']);
+const STALE_IF_ERROR_PROVIDERS = new Set(['fmovies', 'brazucaplay', 'cinestream', 'uhdmovies', 'hdhub4u', 'vidsrc']);
 const ANIME_SPECIALIST_PROVIDERS = new Set([
   'animekai',
   'animepahe',
@@ -1888,9 +1892,12 @@ export class ProviderService {
   async setFastLastGoodResult(requestKey, result) {
     const streams = Array.isArray(result?.streams) ? result.streams : [];
     if (streams.length === 0) return;
+    const hasShowbox = streams.some((stream) =>
+      String(stream?.provider || '').trim().toLowerCase() === 'showbox'
+    );
     try {
       await writeFile(this.getFastResultCacheFilePath(requestKey), JSON.stringify({
-        expiresAt: Date.now() + FAST_RESULT_LAST_GOOD_TTL_MS,
+        expiresAt: Date.now() + (hasShowbox ? 120_000 : FAST_RESULT_LAST_GOOD_TTL_MS),
         providers: Array.isArray(result?.providers) ? result.providers : [],
         tried: Array.isArray(result?.tried) ? result.tried : [],
         streams
