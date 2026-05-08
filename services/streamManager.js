@@ -572,6 +572,7 @@ const pruneMapByApproxBytes = (map, maxBytes, getEntryBytes = (entry) => entry?.
   }
 };
 const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const HUBCLOUD_FETCH_TIMEOUT_MS = 3000;
 const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
 const normalizeQualityKey = (quality) => {
@@ -1212,6 +1213,24 @@ const getDeliveryPriorityScore = (stream) => {
 
   if (stream.transport === 'torrent') {
     return -12000;
+  }
+
+  return 0;
+};
+
+const getProviderPlaybackReliabilityScore = (stream) => {
+  const providerId = String(stream?.provider || '').trim().toLowerCase();
+
+  if (providerId === 'showbox') {
+    return 18000;
+  }
+
+  if (providerId === 'vixsrc' || providerId === 'vidsrc' || providerId === 'vidlink' || providerId === 'cinestream') {
+    return 7000;
+  }
+
+  if (providerId === '4khdhub' || providerId === '4khdhub_tv' || providerId === 'hdhub4u') {
+    return -3000;
   }
 
   return 0;
@@ -3322,7 +3341,7 @@ export class StreamManager {
         tmdbId,
         mediaType: parsed.mediaType
       });
-      throw createHttpError(503, 'Server is recovering from high load');
+      return [];
     }
 
     if (this.stremioResultInFlight.size >= config.STREMIO_MAX_INFLIGHT_SEARCHES) {
@@ -3423,7 +3442,13 @@ export class StreamManager {
       return [];
     }
 
-    const normalizedStreams = await this.normalizeProviderStreams(baseUrl, result.streams);
+    const hasShowboxRawStreams = result.streams.some((stream) =>
+      String(stream?.provider || '').trim().toLowerCase() === 'showbox'
+    );
+    const rawStreamsForNormalization = hasShowboxRawStreams
+      ? result.streams.filter((stream) => !isHubCloudUrl(String(stream?.url || '').trim()))
+      : result.streams;
+    const normalizedStreams = await this.normalizeProviderStreams(baseUrl, rawStreamsForNormalization);
     const { streams: configuredStreams } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
     if (configuredStreams.length === 0) {
@@ -3443,8 +3468,8 @@ export class StreamManager {
     }
 
     configuredStreams.sort((left, right) =>
-      (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
-      (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+      (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getProviderPlaybackReliabilityScore(right) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+      (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getProviderPlaybackReliabilityScore(left) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
     );
     const postDedupeStreams = applyConfiguredDedupe(configuredStreams, streamOptions).streams;
     const dedupedStreams = diversifyStreamsByProvider(
@@ -3727,8 +3752,8 @@ export class StreamManager {
       const { streams: configuredStreams, diagnostics } = filterConfiguredStreamsDetailed(normalizedStreams, streamOptions);
 
       configuredStreams.sort((left, right) =>
-        (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
-        (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
+        (getQualityPriorityScore(right, qualityPriority) + getPreferredAudioLanguageScore(right, streamOptions) + getStreamPreferenceScore(right, streamOptions) + getProviderPriorityScore(right, result.providers) + getProviderPlaybackReliabilityScore(right) + getDeliveryPriorityScore(right) + toStremioCompatibilityScore(right)) -
+        (getQualityPriorityScore(left, qualityPriority) + getPreferredAudioLanguageScore(left, streamOptions) + getStreamPreferenceScore(left, streamOptions) + getProviderPriorityScore(left, result.providers) + getProviderPlaybackReliabilityScore(left) + getDeliveryPriorityScore(left) + toStremioCompatibilityScore(left))
       );
       const dedupeResult = applyConfiguredDedupe(configuredStreams, streamOptions);
       diagnostics.dedupedTotal = dedupeResult.removedCount;
@@ -4011,7 +4036,7 @@ export class StreamManager {
           ...(inheritedHeaders && typeof inheritedHeaders === 'object' ? inheritedHeaders : {}),
           Referer: normalizedUrl
         };
-        const initialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
+        const initialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, HUBCLOUD_FETCH_TIMEOUT_MS);
         const redirectHref = extractHubCloudRedirectHref(initialHtml);
         let redirectUrl = redirectHref ? new URL(redirectHref, normalizedUrl).toString() : normalizedUrl;
         let linksHtml = initialHtml;
@@ -4022,7 +4047,7 @@ export class StreamManager {
               'User-Agent': HUBCLOUD_USER_AGENT,
               Referer: normalizedUrl
             }
-          }, 8000);
+          }, HUBCLOUD_FETCH_TIMEOUT_MS);
         } else if (!hasValidHubCloudDownloadContent(initialHtml)) {
           touchMapEntry(this.hubCloudCache, normalizedUrl, {
             expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
@@ -4035,8 +4060,8 @@ export class StreamManager {
         }
 
         if (!hasValidHubCloudDownloadContent(linksHtml)) {
-          await delay(2500);
-          const retryInitialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
+          await delay(500);
+          const retryInitialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, HUBCLOUD_FETCH_TIMEOUT_MS);
           const retryRedirectHref = extractHubCloudRedirectHref(retryInitialHtml);
 
           if (retryRedirectHref) {
@@ -4046,7 +4071,7 @@ export class StreamManager {
                 'User-Agent': HUBCLOUD_USER_AGENT,
                 Referer: normalizedUrl
               }
-            }, 8000);
+            }, HUBCLOUD_FETCH_TIMEOUT_MS);
           }
         }
         const title = parseHubCloudTitle(linksHtml);

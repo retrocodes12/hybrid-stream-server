@@ -223,11 +223,15 @@ const getProviderCacheVersion = (providerId) => {
 
   return '23';
 };
+const hasShowboxCredential = (privateProviderSettings = null) => Boolean(
+  String(privateProviderSettings?.febboxUiCookie || '').trim()
+  || String(process.env.SHOWBOX_UI_TOKEN || process.env.SHOWBOX_COOKIE || '').trim()
+);
+
 const prioritizePrivateTokenProviders = (providers, privateProviderSettings = null) => {
   const ordered = Array.isArray(providers) ? [...providers] : [];
-  const hasFebboxUiCookie = Boolean(String(privateProviderSettings?.febboxUiCookie || '').trim());
 
-  if (hasFebboxUiCookie && ordered.includes('showbox')) {
+  if (hasShowboxCredential(privateProviderSettings) && ordered.includes('showbox')) {
     ordered.splice(ordered.indexOf('showbox'), 1);
     ordered.unshift('showbox');
   }
@@ -240,7 +244,7 @@ const getPrivateProviderPriorityBoost = (providerId, privateProviderSettings = n
 
   if (
     normalizedProviderId === 'showbox' &&
-    String(privateProviderSettings?.febboxUiCookie || '').trim()
+    hasShowboxCredential(privateProviderSettings)
   ) {
     return 180;
   }
@@ -1935,7 +1939,7 @@ export class ProviderService {
       score += 30;
     }
 
-    if (providerId === 'showbox' && privateProviderSettings?.febboxUiCookie) {
+    if (providerId === 'showbox' && hasShowboxCredential(privateProviderSettings)) {
       score += 25;
     }
 
@@ -1952,9 +1956,12 @@ export class ProviderService {
 
   buildFastPhaseProviders(providers, contentProfile, privateProviderSettings, hasExplicitProviders) {
     const contentTags = Array.isArray(contentProfile?.tags) ? contentProfile.tags : [];
-    const priorityProviders = contentTags.includes('kdrama') || contentTags.includes('asian_drama')
+    const basePriorityProviders = contentTags.includes('kdrama') || contentTags.includes('asian_drama')
       ? ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS
       : OLD_TITLE_PRIORITY_PROVIDERS;
+    const priorityProviders = hasShowboxCredential(privateProviderSettings)
+      ? ['showbox', ...basePriorityProviders.filter((providerId) => providerId !== 'showbox')]
+      : basePriorityProviders;
     const orderedProviders = reprioritizeProviders(providers, priorityProviders);
     const phaseOneLimit = this.getFastPhaseOneLimit(orderedProviders, hasExplicitProviders);
     const phaseOneProviders = orderedProviders.slice(0, phaseOneLimit);
@@ -2208,6 +2215,9 @@ export class ProviderService {
             return Promise.all(providerIds.map(runProvider));
           }
 
+          const requiredEarlyProviders = hasShowboxCredential(rest.privateProviderSettings) && providerIds.includes('showbox')
+            ? new Set(['showbox'])
+            : new Set();
           const pending = new Map(providerIds.map((providerId, index) => [
             index,
             runProvider(providerId).then((result) => ({ index, result }))
@@ -2236,14 +2246,13 @@ export class ProviderService {
             results.push(winner.result);
 
             const streamCount = results.reduce((count, result) => count + result.streams.length, 0);
-            const pendingHighValueProviders = [...pending.keys()]
+            const pendingRequiredProviders = [...pending.keys()]
               .map((index) => providerIds[index])
-              .filter((providerId) => DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS.has(providerId));
-
+              .filter((providerId) => requiredEarlyProviders.has(providerId));
             if (
               results.length >= minCompletedProviders &&
               streamCount >= config.STREMIO_FAST_EARLY_RETURN_STREAMS &&
-              pendingHighValueProviders.length === 0
+              pendingRequiredProviders.length === 0
             ) {
               break;
             }

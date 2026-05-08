@@ -820,6 +820,11 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
                 });
         })
         .then(function ({ mediaInfo, data, directStreams }) {
+            if (directStreams.length > 0 && !data) {
+                console.log(`[ShowBox] Returning ${directStreams.length} direct streams`);
+                return directStreams;
+            }
+
             const fallbackPromise = data
                 ? Promise.resolve(data)
                 : legacyApiRequest().catch(function (error) {
