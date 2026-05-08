@@ -1,359 +1,296 @@
 /**
- * cinestream - Built from src/cinestream/
- * Generated: 2026-05-05T14:50:13.071Z
+ * CineStream Provider untuk Nuvio Mobile
+ * Dibangun menggunakan pola yang sama dengan VideoEasy (works)
+ *
+ * Pelajaran dari Videasy:
+ * 1. Pakai API endpoint yang return JSON langsung — BUKAN scraping HTML
+ * 2. Jika response terenkripsi → dekripsi via enc-dec.app
+ * 3. TMDB → ambil title + imdbId dalam satu request (append_to_response)
+ * 4. Dedup + sort kualitas sebelum return
+ *
+ * Sources yang digunakan (semua clean JSON API):
+ * - Videasy (10 servers) — sama persis dengan plugin Videasy yang works
+ * - Stremio addons: Streamvix, NoTorrent (JSON /stream endpoint)
+ * - VidSrc JSON API
  */
-var __defProp = Object.defineProperty;
-var __defProps = Object.defineProperties;
-var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
-var __getOwnPropSymbols = Object.getOwnPropertySymbols;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __spreadValues = (a, b) => {
-  for (var prop in b || (b = {}))
-    if (__hasOwnProp.call(b, prop))
-      __defNormalProp(a, prop, b[prop]);
-  if (__getOwnPropSymbols)
-    for (var prop of __getOwnPropSymbols(b)) {
-      if (__propIsEnum.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    }
-  return a;
-};
-var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
+
+var TMDB_API_KEY  = '1865f43a0549ca50d341dd9ab8b29f49';
+var DECRYPT_API   = 'https://enc-dec.app/api/dec-videasy';
+var STREAMVIX_API = 'https://streamvix.hayd.uk';
+var NOTORRENT_API = 'https://addon-osvh.onrender.com';
+var VIDSRC_API    = 'https://api.rgshows.ru';
+var FETCH_TIMEOUT = 12000;
+
+var HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Origin': 'https://player.videasy.net',
+  'Referer': 'https://player.videasy.net/'
 };
 
-// src/cinestream/index.js
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var API_BASE = "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club";
-var PLAYABLE_CHECK_TIMEOUT_MS = 7e3;
-var PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
-var HTML_WRAPPER_HOSTS = /* @__PURE__ */ new Set(["hubcdn.fans"]);
-var HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "application/json"
-};
-var DIRECT_FALLBACK_PROVIDERS = (mediaType) => ["./4khdhub.js", "./hdhub4u.js", "./uhdmovies.js", "./allyoucanwatch.js", "./fmovies.js"];
-function detectQualityLabel(value) {
-  const text = String(value || "");
-  const match = text.match(/\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i);
-  if (!match) return "Auto";
-  const normalized = match[1].toLowerCase();
-  return normalized === "4k" ? "2160p" : normalized;
+// ─── Videasy servers (sama persis dari plugin Videasy yang works) ──────────────
+var VIDEASY_SERVERS = [
+  { name: 'Neon',   url: 'https://api.videasy.net/myflixerzupcloud/sources-with-title', tvOk: true },
+  { name: 'Cypher', url: 'https://api.videasy.net/moviebox/sources-with-title',         tvOk: true },
+  { name: 'Reyna',  url: 'https://api.videasy.net/primewire/sources-with-title',        tvOk: true },
+  { name: 'Omen',   url: 'https://api.videasy.net/onionplay/sources-with-title',        tvOk: true },
+  { name: 'Breach', url: 'https://api.videasy.net/m4uhd/sources-with-title',            tvOk: true },
+  { name: 'Ghost',  url: 'https://api.videasy.net/primesrcme/sources-with-title',       tvOk: true },
+  { name: 'Sage',   url: 'https://api.videasy.net/1movies/sources-with-title',          tvOk: true },
+  { name: 'Vyse',   url: 'https://api.videasy.net/hdmovie/sources-with-title',          tvOk: true },
+  { name: 'Raze',   url: 'https://api.videasy.net/superflix/sources-with-title',        tvOk: true },
+  { name: 'Yoru',   url: 'https://api.videasy.net/cdn/sources-with-title',              tvOk: false } // movie only
+];
+
+var QUALITY_ORDER = { '4K': 6, '2160p': 6, '1080p': 5, '720p': 4, '576p': 3, '480p': 2, '360p': 1, 'Auto': 0 };
+
+// ─── Fetch dengan timeout ─────────────────────────────────────────────────────
+function fetchTimeout(url, options, ms) {
+  ms = ms || FETCH_TIMEOUT;
+  return Promise.race([
+    fetch(url, options),
+    new Promise(function(_, rej) {
+      setTimeout(function() { rej(new Error('Timeout')); }, ms);
+    })
+  ]);
 }
-function getQualityRank(value) {
-  const quality = detectQualityLabel(value);
-  const rank = {
-    "2160p": 6,
-    "1440p": 5,
-    "1080p": 4,
-    "720p": 3,
-    "480p": 2,
-    "360p": 1,
-    "Auto": 0
-  };
-  return rank[quality] || 0;
+
+function safeText(url, options) {
+  return fetchTimeout(url, options || {}).then(function(r) { return r.text(); }).catch(function() { return ''; });
 }
-function rewriteUpstreamLabel(value) {
-  return String(value || "").replace(/WebStreamrMBG/gi, "NebulaStreams").replace(/\s+/g, " ").trim();
+
+function safeJson(url, options) {
+  return fetchTimeout(url, options || {}).then(function(r) { return r.json(); }).catch(function() { return null; });
 }
-function normalizeStreamUrl(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const parsedUrl = new URL(raw);
-    const apiBaseUrl = new URL(API_BASE);
-    if (parsedUrl.hostname === "87d6a6ef6b58-webstreamrmbg") {
-      parsedUrl.hostname = apiBaseUrl.hostname;
-    }
-    return parsedUrl.toString();
-  } catch (error) {
-    return raw;
-  }
-}
-function pad2(value) {
-  return String(Number(value) || 0).padStart(2, "0");
-}
-function normalizeMediaType(mediaType) {
-  const normalized = String(mediaType || "movie").trim().toLowerCase();
-  return normalized === "series" ? "tv" : normalized;
-}
-function toStreamContentType(mediaType) {
-  return normalizeMediaType(mediaType) === "tv" ? "series" : "movie";
-}
-function normalizeTitleKey(value) {
-  return String(value || "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
-}
-function streamMatchesRequestedContent(stream, info) {
-  const expectedTitle = normalizeTitleKey(info == null ? void 0 : info.title);
-  if (!expectedTitle) return true;
-  const streamTitle = normalizeTitleKey(`${(stream == null ? void 0 : stream.title) || ""} ${(stream == null ? void 0 : stream.name) || ""}`);
-  if (!streamTitle) return true;
-  if ((info == null ? void 0 : info.tmdbId) && streamTitle.includes(normalizeTitleKey(`TMDB ${info.tmdbId}`))) return true;
-  return streamTitle.includes(expectedTitle) || expectedTitle.includes(streamTitle);
-}
-function isKnownHtmlWrapperUrl(value) {
-  try {
-    return HTML_WRAPPER_HOSTS.has(new URL(value).hostname.toLowerCase());
-  } catch (e) {
-    return false;
-  }
-}
-function hasPlayableExtension(value) {
-  return PLAYABLE_EXTENSION_PATTERN.test(String(value || ""));
-}
-function isApiBaseUrl(value) {
-  try {
-    return new URL(value).hostname.toLowerCase() === new URL(API_BASE).hostname.toLowerCase();
-  } catch (e) {
-    return false;
-  }
-}
-function shouldTrustStreamUrl(stream, url) {
-  var _a, _b, _c;
-  const text = `${(stream == null ? void 0 : stream.name) || ""} ${(stream == null ? void 0 : stream.title) || ""} ${(stream == null ? void 0 : stream.quality) || ""}`;
-  return hasPlayableExtension(url) || Boolean((_a = stream == null ? void 0 : stream.behaviorHints) == null ? void 0 : _a.videoSize) || Boolean((stream == null ? void 0 : stream.headers) || ((_c = (_b = stream == null ? void 0 : stream.behaviorHints) == null ? void 0 : _b.proxyHeaders) == null ? void 0 : _c.request)) || /\b(2160p|4k|1440p|1080p|720p|480p|360p)\b/i.test(text);
-}
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-function fetchJsonWithRetry(_0) {
-  return __async(this, arguments, function* (url, options = {}, attempts = 3) {
-    let lastError = null;
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      try {
-        const res = yield fetch(url, options);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        return yield res.json();
-      } catch (error) {
-        lastError = error;
-        if (attempt < attempts) {
-          yield wait(250 * attempt);
-        }
-      }
-    }
-    throw lastError || new Error("Request failed");
+
+// ─── Dedup + sort kualitas (sama dengan Videasy) ──────────────────────────────
+function dedupAndSort(streams) {
+  var seen = {};
+  var unique = streams.filter(function(s) {
+    if (!s || !s.url) return false;
+    var key = s.url + '|' + s.quality;
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
   });
-}
-function resolvePlayableStream(stream) {
-  return __async(this, null, function* () {
-    var _a, _b;
-    const url = normalizeStreamUrl(stream == null ? void 0 : stream.url);
-    if (!url || isKnownHtmlWrapperUrl(url)) return null;
-    if (shouldTrustStreamUrl(stream, url)) {
-      return __spreadProps(__spreadValues({}, stream), { url });
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), PLAYABLE_CHECK_TIMEOUT_MS);
-    try {
-      const res = yield fetch(url, {
-        headers: __spreadProps(__spreadValues({}, (stream == null ? void 0 : stream.headers) || {}), {
-          Range: "bytes=0-1023"
-        }),
-        redirect: "follow",
-        signal: controller.signal
-      });
-      const contentType = String(res.headers.get("content-type") || "").toLowerCase();
-      const contentLength = Number.parseInt(res.headers.get("content-length") || "0", 10);
-      const contentRange = String(res.headers.get("content-range") || "");
-      const finalUrl = normalizeStreamUrl(res.url || url);
-      yield (_b = (_a = res.body) == null ? void 0 : _a.cancel) == null ? void 0 : _b.call(_a);
-      if (!res.ok && res.status !== 206) return null;
-      if (contentType.includes("text/html")) return null;
-      const videoLike = contentType.startsWith("video/") || contentType.includes("mpegurl") || contentType.includes("application/vnd.apple.mpegurl") || contentType.includes("application/octet-stream") && (hasPlayableExtension(finalUrl) || contentLength > 1048576) || Boolean(contentRange);
-      return videoLike ? __spreadProps(__spreadValues({}, stream), { url: finalUrl }) : null;
-    } catch (e) {
-      return null;
-    } finally {
-      clearTimeout(timeout);
-    }
+  unique.sort(function(a, b) {
+    return (QUALITY_ORDER[b.quality] || 0) - (QUALITY_ORDER[a.quality] || 0);
   });
+  return unique;
 }
-function filterPlayableStreams(streams, info) {
-  return __async(this, null, function* () {
-    const output = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const stream of Array.isArray(streams) ? streams : []) {
-      if (!streamMatchesRequestedContent(stream, info)) continue;
-      const playable = yield resolvePlayableStream(stream);
-      if (playable) {
-        const key = normalizeStreamUrl(playable.url);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        output.push(playable);
-      }
-    }
-    return output;
-  });
-}
-function buildSeriesCandidateUrls(apiBase, imdbId, tmdbId, season, episode) {
-  const seasonValue = Number(season) || 0;
-  const episodeValue = Number(episode) || 0;
-  const seasonPadded = pad2(seasonValue);
-  const episodePadded = pad2(episodeValue);
-  const ids = [
-    `${imdbId}:${seasonValue}:${episodeValue}`,
-    `${imdbId}:${seasonPadded}:${episodePadded}`,
-    `tmdb:${tmdbId}:${seasonValue}:${episodeValue}`,
-    `tmdb:${tmdbId}:${seasonPadded}:${episodePadded}`
-  ];
-  const candidates = [];
-  for (const route of ["series", "tv"]) {
-    for (const id of ids) {
-      candidates.push(`${apiBase}/stream/${route}/${id}.json`);
-    }
-  }
-  return candidates;
-}
-function fetchFirstWorkingPayload(urls) {
-  return __async(this, null, function* () {
-    for (const url of urls) {
-      console.log(`[CineStream] Fetching: ${url}`);
-      try {
-        const res = yield fetch(url, { headers: HEADERS });
-        if (!res.ok) continue;
-        const data = yield res.json();
-        if (Array.isArray(data == null ? void 0 : data.streams) && data.streams.length > 0) {
-          return data;
-        }
-      } catch (error) {
-        console.log(`[CineStream] Candidate failed: ${error.message}`);
-      }
-    }
-    return null;
-  });
-}
-function fetchDirectFallbackStreams(tmdbId, mediaType, season, episode) {
-  return __async(this, null, function* () {
-    const results = yield Promise.all(DIRECT_FALLBACK_PROVIDERS(mediaType).map((modulePath) => __async(this, null, function* () {
-      try {
-        const provider = require(modulePath);
-        if (!provider || typeof provider.getStreams !== "function") return [];
-        const streams = yield provider.getStreams(tmdbId, mediaType, season, episode);
-        return Array.isArray(streams) ? streams : [];
-      } catch (error) {
-        console.log(`[CineStream] Direct fallback failed for ${modulePath}: ${error.message}`);
-        return [];
-      }
-    })));
-    return results.flat();
-  });
-}
-function dedupeStreams(streams) {
-  const output = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const stream of Array.isArray(streams) ? streams : []) {
-    const key = JSON.stringify({
-      url: String((stream == null ? void 0 : stream.url) || "").trim() || null,
-      magnet: String((stream == null ? void 0 : stream.magnet) || (stream == null ? void 0 : stream.torrent) || "").trim() || null,
-      quality: String((stream == null ? void 0 : stream.quality) || "").trim().toLowerCase() || null
+
+// ─── Step 1: Ambil info dari TMDB (satu request, append external_ids) ─────────
+// Sama persis dengan Videasy
+function getTmdbInfo(tmdbId, isMovie) {
+  var type = isMovie ? 'movie' : 'tv';
+  var url = 'https://api.themoviedb.org/3/' + type + '/' + tmdbId +
+            '?api_key=' + TMDB_API_KEY + '&append_to_response=external_ids';
+
+  return fetchTimeout(url, {}, 8000)
+    .then(function(r) {
+      if (!r.ok) throw new Error('TMDB gagal: ' + r.status);
+      return r.json();
+    })
+    .then(function(data) {
+      var title = data.title || data.name;
+      if (!title) throw new Error('Judul tidak ditemukan di TMDB');
+
+      var imdbFull = (data.external_ids && data.external_ids.imdb_id) || '';
+      var imdbClean = imdbFull.startsWith('tt') ? imdbFull.slice(2) : imdbFull;
+
+      return {
+        id: String(tmdbId),
+        title: title,
+        year: (data.release_date || data.first_air_date || '').split('-')[0],
+        imdbId: imdbClean,       // tanpa "tt" prefix — untuk Videasy
+        imdbIdFull: imdbFull,    // dengan "tt" prefix — untuk Stremio & VidSrc
+        type: isMovie ? 'movie' : 'tv'
+      };
     });
-    if (seen.has(key)) continue;
-    seen.add(key);
-    output.push(stream);
-  }
-  return output;
 }
-function sortStreamsByQuality(streams) {
-  return [...streams].sort((a, b) => {
-    var _a, _b;
-    const qualityDiff = getQualityRank(`${b.name || ""} ${b.title || ""} ${b.quality || ""}`) - getQualityRank(`${a.name || ""} ${a.title || ""} ${a.quality || ""}`);
-    if (qualityDiff !== 0) return qualityDiff;
-    const sizeA = Number(((_a = a == null ? void 0 : a.behaviorHints) == null ? void 0 : _a.videoSize) || (a == null ? void 0 : a.videoSize) || 0);
-    const sizeB = Number(((_b = b == null ? void 0 : b.behaviorHints) == null ? void 0 : _b.videoSize) || (b == null ? void 0 : b.videoSize) || 0);
-    return sizeB - sizeA;
-  });
-}
-function getIMDBId(tmdbId, mediaType) {
-  return __async(this, null, function* () {
-    var _a;
-    const normalizedMediaType = normalizeMediaType(mediaType);
-    const url = `${TMDB_BASE_URL}/${normalizedMediaType}/${tmdbId}?api_key=${TMDB_API_KEY}&append_to_response=external_ids`;
-    const data = yield fetchJsonWithRetry(url, { headers: { "Accept": "application/json" } });
-    return {
-      tmdbId: String(tmdbId),
-      imdbId: (_a = data.external_ids) == null ? void 0 : _a.imdb_id,
-      title: normalizedMediaType === "tv" ? data.name : data.title,
-      year: String((normalizedMediaType === "tv" ? data.first_air_date : data.release_date) || "").slice(0, 4)
+
+// ─── Source 1: Videasy servers (pola identik dengan plugin Videasy) ───────────
+function invokeVideasy(info, isMovie, season, episode, allStreams) {
+  var tasks = VIDEASY_SERVERS.map(function(server) {
+    return function() {
+      // Skip server movie-only jika ini TV
+      if (!isMovie && !server.tvOk) return Promise.resolve();
+
+      var url = server.url +
+        '?title='     + encodeURIComponent(info.title) +
+        '&mediaType=' + info.type +
+        '&year='      + info.year +
+        '&tmdbId='    + info.id +
+        '&imdbId='    + info.imdbId;
+
+      if (!isMovie) {
+        url += '&seasonId=' + season + '&episodeId=' + episode;
+      }
+
+      return safeText(url, { headers: HEADERS })
+        .then(function(encText) {
+          if (!encText || encText.length < 20 || encText.startsWith('<!')) return;
+
+          return fetchTimeout(DECRYPT_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: encText, id: info.id })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(dec) {
+            var data = dec.result || dec;
+            if (!data || !Array.isArray(data.sources)) return;
+
+            data.sources.forEach(function(s) {
+              if (!s.url) return;
+              allStreams.push({
+                name: 'CineStream',
+                title: 'Videasy ' + server.name + ' [' + (s.quality || 'Auto') + ']',
+                url: s.url,
+                quality: s.quality || 'Auto',
+                headers: {
+                  'Referer': 'https://player.videasy.net/',
+                  'Origin': 'https://player.videasy.net',
+                  'User-Agent': HEADERS['User-Agent']
+                },
+                provider: 'videasy_' + server.name.toLowerCase()
+              });
+            });
+          });
+        })
+        .catch(function(e) {
+          console.error('[CineStream] Videasy ' + server.name + ' error: ' + e.message);
+        });
     };
   });
+
+  return runLimited(tasks, 4);
 }
-function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) {
-  return __async(this, null, function* () {
-    try {
-      const normalizedMediaType = normalizeMediaType(mediaType);
-      const streamContentType = toStreamContentType(normalizedMediaType);
-      let info = null;
-      try {
-        info = yield getIMDBId(tmdbId, normalizedMediaType);
-      } catch (error) {
-        console.log(`[CineStream] TMDB lookup failed: ${error.message}`);
-      }
-      let urls = [];
-      if (normalizedMediaType === "movie" && (info == null ? void 0 : info.title)) {
-        urls = [
-          ...(info == null ? void 0 : info.imdbId) ? [`${API_BASE}/stream/movie/${info.imdbId}.json`] : [],
-          `${API_BASE}/stream/movie/tmdb:${tmdbId}.json`
-        ];
-      } else if (info == null ? void 0 : info.imdbId) {
-        urls = buildSeriesCandidateUrls(API_BASE, info.imdbId, tmdbId, season, episode);
-      } else if (normalizedMediaType !== "movie") {
-        urls = [`${API_BASE}/stream/${streamContentType}/tmdb:${tmdbId}:${Number(season) || 0}:${Number(episode) || 0}.json`];
-      }
-      const data = urls.length > 0 ? yield fetchFirstWorkingPayload(urls) : null;
-      const upstreamStreams = (data == null ? void 0 : data.streams) || [];
-      const directFallbackStreams = yield fetchDirectFallbackStreams(tmdbId, normalizedMediaType, season, episode);
-      const streams = yield filterPlayableStreams(
-        dedupeStreams([...upstreamStreams, ...directFallbackStreams]).filter((s) => normalizeStreamUrl(s == null ? void 0 : s.url)),
-        info
-      );
-      if (streams.length === 0) return [];
-      return sortStreamsByQuality(streams).map((s) => {
-        var _a, _b;
-        const quality = detectQualityLabel(`${s.name || ""} ${s.title || ""}`);
-        const upstreamName = rewriteUpstreamLabel(s.name || "");
-        const fallbackName = quality === "Auto" ? "NebulaStreams" : `NebulaStreams ${quality}`;
-        const title = String(s.title || s.name || fallbackName);
-        const requestHeaders = isApiBaseUrl(s.url) ? s.headers || ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || { "Referer": API_BASE } : s.headers || ((_b = (_a = s.behaviorHints) == null ? void 0 : _a.proxyHeaders) == null ? void 0 : _b.request) || null;
-        return {
-          name: `CS [${upstreamName || fallbackName}]`,
-          title: rewriteUpstreamLabel(title.split("\n")[0]),
-          url: normalizeStreamUrl(s.url),
-          quality,
-          headers: requestHeaders,
-          provider: "cinestream"
-        };
+
+// ─── Source 2: Stremio addon (Streamvix + NoTorrent) — clean JSON API ─────────
+// Format: /stream/movie/{imdbId}.json atau /stream/series/{imdbId}:{s}:{e}.json
+function invokeStremio(name, baseUrl, imdbIdFull, isMovie, season, episode, allStreams) {
+  if (!imdbIdFull) return Promise.resolve();
+
+  var path = isMovie
+    ? '/stream/movie/' + imdbIdFull + '.json'
+    : '/stream/series/' + imdbIdFull + '%3A' + season + '%3A' + episode + '.json';
+
+  return safeJson(baseUrl.replace(/\/$/, '') + path)
+    .then(function(data) {
+      if (!data || !Array.isArray(data.streams)) return;
+      data.streams.forEach(function(s) {
+        if (!s.url) return;
+        var q = detectQuality(s.name || s.title || '');
+        allStreams.push({
+          name: 'CineStream',
+          title: name + ' [' + q + ']',
+          url: s.url,
+          quality: q,
+          headers: (s.behaviorHints && s.behaviorHints.headers) || { 'Referer': baseUrl }
+        });
       });
-    } catch (e) {
-      console.error("[CineStream] Error:", e.message);
-      return [];
-    }
-  });
+    })
+    .catch(function() {});
 }
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = { getStreams };
-} else {
-  global.getStreams = { getStreams };
+
+// ─── Source 3: VidSrc JSON API ────────────────────────────────────────────────
+function invokeVidSrc(imdbIdFull, isMovie, season, episode, allStreams) {
+  if (!imdbIdFull) return Promise.resolve();
+
+  var url = isMovie
+    ? VIDSRC_API + '/api/v2/embed/movie?imdb_id=' + imdbIdFull
+    : VIDSRC_API + '/api/v2/embed/tv?imdb_id=' + imdbIdFull + '&season=' + season + '&episode=' + episode;
+
+  return safeJson(url)
+    .then(function(data) {
+      if (!data) return;
+      var sources = (data.result && data.result.sources) || data.sources || [];
+      sources.forEach(function(s) {
+        if (!s.url) return;
+        allStreams.push({
+          name: 'CineStream',
+          title: 'VidSrc [' + (s.quality || 'Auto') + ']',
+          url: s.url,
+          quality: s.quality || 'Auto',
+          headers: { 'Referer': VIDSRC_API + '/' }
+        });
+      });
+    })
+    .catch(function() {});
+}
+
+// ─── Quality detector ─────────────────────────────────────────────────────────
+function detectQuality(str) {
+  str = String(str || '');
+  if (str.indexOf('4K') !== -1 || str.indexOf('2160') !== -1) return '4K';
+  if (str.indexOf('1080') !== -1) return '1080p';
+  if (str.indexOf('720') !== -1)  return '720p';
+  if (str.indexOf('480') !== -1)  return '480p';
+  if (str.indexOf('360') !== -1)  return '360p';
+  return 'Auto';
+}
+
+// ─── Concurrency runner ───────────────────────────────────────────────────────
+function runLimited(tasks, limit) {
+  var i = 0;
+  function next() {
+    if (i >= tasks.length) return Promise.resolve();
+    var fn = tasks[i++];
+    return fn().catch(function() {}).then(next);
+  }
+  var workers = [];
+  for (var w = 0; w < Math.min(limit, tasks.length); w++) workers.push(next());
+  return Promise.all(workers);
+}
+
+// ─── getStreams — entry point dipanggil Nuvio ─────────────────────────────────
+function getStreams(tmdbId, mediaType, season, episode) {
+  var isMovie = mediaType !== 'tv';
+
+  if (!tmdbId) {
+    console.error('[CineStream] tmdbId tidak boleh kosong');
+    return Promise.resolve([]);
+  }
+  if (!isMovie && (season == null || episode == null)) {
+    console.error('[CineStream] season/episode wajib untuk TV');
+    return Promise.resolve([]);
+  }
+
+  console.log('[CineStream] ' + mediaType + ' tmdbId=' + tmdbId +
+    (isMovie ? '' : ' S' + season + 'E' + episode));
+
+  var allStreams = [];
+
+  // Step 1: Info dari TMDB
+  return getTmdbInfo(tmdbId, isMovie)
+    .then(function(info) {
+      console.log('[CineStream] "' + info.title + '" (' + info.year + ') imdb=' + (info.imdbIdFull || 'none'));
+
+      // Step 2: Jalankan semua sources secara parallel
+      return Promise.all([
+        // Videasy 10 servers (concurrency 4)
+        invokeVideasy(info, isMovie, season, episode, allStreams),
+
+        // Stremio addons (JSON langsung)
+        invokeStremio('Streamvix', STREAMVIX_API, info.imdbIdFull, isMovie, season, episode, allStreams),
+        invokeStremio('NoTorrent', NOTORRENT_API, info.imdbIdFull, isMovie, season, episode, allStreams),
+
+        // VidSrc JSON API
+        invokeVidSrc(info.imdbIdFull, isMovie, season, episode, allStreams)
+      ]);
+    })
+    .then(function() {
+      var result = dedupAndSort(allStreams);
+      console.log('[CineStream] Selesai — ' + result.length + ' stream ditemukan');
+      return result;
+    })
+    .catch(function(err) {
+      console.error('[CineStream] Error: ' + (err.message || err));
+      return [];
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { getStreams: getStreams };
 }

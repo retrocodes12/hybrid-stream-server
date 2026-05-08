@@ -33,7 +33,7 @@ const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
   showbox: 60_000,
   uhdmovies: 60_000
 });
-const PROVIDER_RESULT_CACHE_SCHEMA_VERSION = 2;
+const PROVIDER_RESULT_CACHE_SCHEMA_VERSION = 3;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT = 2;
 const PROVIDER_FETCH_HOST_MAX_INFLIGHT_OVERRIDES = Object.freeze({
   'enc-dec.app': 1,
@@ -461,12 +461,14 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'brazucaplay',
   'cinestream',
   'fmovies',
+  'gramcinema',
   'hdhub4u',
   'hdmovie2',
   'kisskh',
   'moviesmod',
   'multivid',
   'nakios',
+  'onetouchtv',
   'playimdb',
   'playimdb_v2',
   'showbox',
@@ -486,7 +488,9 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   'hdhub4u',
   'uhdmovies',
   'flixindia',
+  'gramcinema',
   'tamilian',
+  'onetouchtv',
   'streamflix',
   'moviebox',
   'vidlink'
@@ -524,6 +528,8 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   playimdb: 15,
   playimdb_v2: 15,
   showbox: 50,
+  gramcinema: 25,
+  onetouchtv: 25,
   rgshows: 10,
   kisskh: 15,
   onlykdrama: 18,
@@ -553,6 +559,8 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   playimdb_v2: 10,
   uhdmovies: 45,
   showbox: 35,
+  gramcinema: 18,
+  onetouchtv: 18,
   rgshows: 6,
   kisskh: 10,
   multivid: 10,
@@ -573,7 +581,9 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   rgshows: 8_000,
   kisskh: 15_000,
   onlykdrama: 18_000,
-  showbox: 45_000
+  showbox: 45_000,
+  gramcinema: 20_000,
+  onetouchtv: 20_000
 });
 const getProviderTimeoutSeconds = (providerId, params = null) => {
   if (params?.enforceFastTimeout) {
@@ -598,6 +608,7 @@ const PROVIDER_PRIORITY = [
   'vidlink',
   'cinestream',
   'moviebox',
+  'onetouchtv',
   'allyoucanwatch',
   'kisskh',
   'onlykdrama',
@@ -617,6 +628,7 @@ const PROVIDER_PRIORITY = [
   'dahmermovies-4k',
   'movix',
   'flixindia',
+  'gramcinema',
   'isaidub',
   'allwish',
   'allmovieland',
@@ -653,9 +665,9 @@ const PROVIDER_PRIORITY = [
 ];
 const STREMIO_ALWAYS_EXCLUDED_PROVIDERS = new Set(['torrent-scraper']);
 const STREMIO_DEFAULT_ONLY_EXCLUDED_PROVIDERS = new Set(['allyoucanwatch']);
-const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'multivid', 'playimdb', 'vidsrc', 'vixsrc']);
-const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'vidsrc', 'vixsrc']);
-const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies']);
+const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'vidlink', 'cinestream', 'onetouchtv', 'multivid', 'playimdb', 'vidsrc', 'vixsrc']);
+const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'onetouchtv', 'vidsrc', 'vixsrc']);
+const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies', 'onetouchtv']);
 const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'castle', 'moviebox', 'vidlink', 'cinestream']);
 const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'vidsrc', 'vixsrc', 'castle', 'cinestream', 'vidlink', 'moviebox']);
 const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
@@ -730,6 +742,8 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     '4khdhub_tv': 225,
     uhdmovies: 223,
     hdhub4u: 220,
+    gramcinema: 212,
+    onetouchtv: 130,
     flixindia: 205,
     tamilian: 165,
     isaidub: 155,
@@ -793,6 +807,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   hdhub4u: 150,
   uhdmovies: 145,
   vidlink: 120,
+  onetouchtv: 116,
   cinestream: 118,
   videasy: 115,
   tamilian: 104,
@@ -832,6 +847,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   'dahmermovies-4k': 92,
   multivid: 110,
   nakios: 104,
+  gramcinema: 82,
   playimdb: 108,
   playimdb_v2: 106,
   toflix: 102,
@@ -867,6 +883,8 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   'dahmermovies-4k': 'DahmerMovies 4K',
   multivid: 'MultiVid',
   nakios: 'Nakios',
+  gramcinema: 'GramCinema',
+  onetouchtv: 'OneTouchTV',
   playimdb: 'PlayIMDb',
   playimdb_v2: 'PlayIMDb V2',
   toflix: 'ToFlix',

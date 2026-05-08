@@ -167,17 +167,7 @@ function fetchFromServer(server, media, season, episode) {
     return decryptPayload(encryptedText, media.tmdbId);
   }).then((payload) => {
     const sources = Array.isArray(payload && payload.sources) ? payload.sources : [];
-    return sources.filter((source) => {
-      if (!source || typeof source.url !== "string") {
-        return false;
-      }
-
-      return /^https?:\/\//i.test(source.url) && (
-        source.url.includes(".m3u8")
-        || source.url.includes("workers.dev")
-        || source.url.includes("midwesteagle.com")
-      );
-    }).map((source) => createStream(source, server, media));
+    return sources.filter((source) => source && typeof source.url === "string" && source.url.includes("workers.dev")).map((source) => createStream(source, server, media));
   }).catch(() => []);
 }
 function dedupeStreams(streams) {

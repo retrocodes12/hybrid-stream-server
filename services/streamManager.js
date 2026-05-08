@@ -1318,6 +1318,21 @@ const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
   }
 };
 
+const withTimeoutFallback = async (promise, timeoutMs, fallbackValue) => {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(fallbackValue), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
 const stripHtml = (html) =>
   String(html || '')
     .replace(/<[^>]+>/g, ' ')
@@ -2550,7 +2565,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 70,
+      version: 71,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -4222,7 +4237,11 @@ export class StreamManager {
           const normalizedEntries = [];
 
           if (variant.transport === 'http' && isHubCloudUrl(normalizedUrl)) {
-            const resolvedHubCloudEntries = await this.resolveHubCloudUrls(normalizedUrl, variant.headers);
+            const resolvedHubCloudEntries = await withTimeoutFallback(
+              this.resolveHubCloudUrls(normalizedUrl, variant.headers),
+              HUBCLOUD_FETCH_TIMEOUT_MS + 1000,
+              []
+            );
 
             if (resolvedHubCloudEntries.length > 0) {
               for (const resolvedEntry of resolvedHubCloudEntries) {

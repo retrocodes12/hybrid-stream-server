@@ -210,10 +210,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
   return Promise.all(
     resolvers.map(function (resolver) {
-      return Promise.race([
-        resolver(tmdbId, mediaType, season, episode).catch(function () { return []; }),
-        new Promise(function (resolve) { setTimeout(function () { resolve([]); }, 8000); })
-      ]);
+      return resolver(tmdbId, mediaType, season, episode).catch(function () { return []; });
     })
   )
     .then(function (results) {

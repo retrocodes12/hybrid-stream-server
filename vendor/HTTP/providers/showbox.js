@@ -579,6 +579,7 @@ function makeRequest(url, options = {}) {
 // Simple in-memory cache for TMDB metadata
 const tmdbCache = new Map();
 const TMDB_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Get movie/TV show details from TMDB
 function getTMDBDetails(tmdbId, mediaType) {
@@ -593,16 +594,38 @@ function getTMDBDetails(tmdbId, mediaType) {
     const endpoint = mediaType === 'tv' ? 'tv' : 'movie';
     const url = `${TMDB_BASE_URL}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
 
-    const fetchTmdb = function (attempt = 1) {
-        return axios.get(url, {
-            timeout: TMDB_REQUEST_TIMEOUT_MS,
-            headers: { Accept: 'application/json', 'User-Agent': WORKING_HEADERS['User-Agent'] }
-        }).catch(function (error) {
-            if (attempt < 3) {
-                return fetchTmdb(attempt + 1);
+    const fetchTmdb = async function () {
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= 4; attempt += 1) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(function () {
+                controller.abort(new Error(`TMDB request timeout after ${TMDB_REQUEST_TIMEOUT_MS}ms`));
+            }, TMDB_REQUEST_TIMEOUT_MS);
+
+            try {
+                const response = await fetch(url, {
+                    headers: { Accept: 'application/json', 'User-Agent': WORKING_HEADERS['User-Agent'] },
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`TMDB HTTP ${response.status}`);
+                }
+
+                return { data: await response.json() };
+            } catch (error) {
+                clearTimeout(timeoutId);
+                lastError = error;
+
+                if (attempt < 4) {
+                    await wait(250 * attempt);
+                }
             }
-            throw error;
-        });
+        }
+
+        throw lastError || new Error('TMDB lookup failed');
     };
 
     return fetchTmdb()

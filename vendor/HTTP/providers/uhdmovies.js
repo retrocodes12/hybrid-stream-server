@@ -1,58 +1,10 @@
 "use strict";
 
 // src/uhdmovies/index.js
-var DOMAIN_CANDIDATES = [
-  "https://uhdmovies.pink",
-  "https://www.uhdmovies.rip",
-  "https://uhdmovies.rip",
-  "https://uhdmovies.cs.in",
-  "https://uhdmovies.cat",
-  "http://uhdmovies.club"
-];
-var DOMAIN = DOMAIN_CANDIDATES[0];
+var DOMAIN = "https://uhdmovies.rip";
 var TMDB_API = "https://api.themoviedb.org/3";
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-var domainCache = { value: DOMAIN, at: 0 };
-function getWorkingDomain() {
-  return Promise.resolve().then(function() {
-    var now = Date.now();
-    if (domainCache.value && now - domainCache.at < 6 * 60 * 60 * 1e3) return domainCache.value;
-    var tryDomain = function(d) {
-      var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      var timeoutId = controller ? setTimeout(function() { controller.abort(); }, 5000) : null;
-      return fetch(d, {
-        method: "HEAD",
-        redirect: "follow",
-        headers: { "User-Agent": USER_AGENT },
-        signal: controller ? controller.signal : void 0
-      }).then(function(res) {
-        if (timeoutId) clearTimeout(timeoutId);
-        if (res && res.ok) return d;
-        return null;
-      }).catch(function() {
-        if (timeoutId) clearTimeout(timeoutId);
-        return null;
-      });
-    };
-    var chain = Promise.resolve(null);
-    DOMAIN_CANDIDATES.forEach(function(d) {
-      chain = chain.then(function(found) {
-        if (found) return found;
-        return tryDomain(d);
-      });
-    });
-    return chain.then(function(found) {
-      if (found) {
-        domainCache.value = found;
-        domainCache.at = now;
-        DOMAIN = found;
-        return found;
-      }
-      return DOMAIN;
-    });
-  });
-}
 function getBaseUrl(url) {
   if (!url) return DOMAIN;
   var match = url.match(/^(https?:\/\/[^\/]+)/);
@@ -64,44 +16,6 @@ function fixUrl(url, domain) {
   if (url.indexOf("//") === 0) return "https:" + url;
   if (url.indexOf("/") === 0) return domain + url;
   return domain + "/" + url;
-}
-function normalizeDirectStreamUrl(value) {
-  try {
-    return new URL(String(value || "").trim()).toString();
-  } catch (e) {
-    return "";
-  }
-}
-function parseSizeBytes(value) {
-  var match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)$/i);
-  if (!match) return 0;
-  var amount = parseFloat(match[1]);
-  var unit = match[2].toUpperCase();
-  var multiplier = unit === "TB" ? Math.pow(1024, 4) : unit === "GB" ? Math.pow(1024, 3) : unit === "MB" ? Math.pow(1024, 2) : 1024;
-  return Math.round(amount * multiplier);
-}
-function dedupeAndSanitizeStreams(streams) {
-  var output = [];
-  var seen = {};
-  (Array.isArray(streams) ? streams : []).forEach(function(stream) {
-    var url = normalizeDirectStreamUrl(stream && stream.url);
-    if (!url || seen[url]) return;
-    seen[url] = true;
-    var title = String(stream.title || stream.name || "");
-    var sizeMatch = title.match(/(\d+(?:\.\d+)?\s*(?:TB|GB|MB|KB))/i);
-    var sizeBytes = sizeMatch ? parseSizeBytes(sizeMatch[1]) : 0;
-    var quality = stream.quality && stream.quality !== "Unknown" ? stream.quality : buildQualityLabel(title);
-    output.push(Object.assign({}, stream, {
-      name: stream.name || "UHDMovies",
-      title: title || "UHDMovies",
-      url,
-      quality,
-      size: stream.size || (sizeMatch ? sizeMatch[1] : void 0),
-      sourceSite: "UHDMovies",
-      behaviorHints: Object.assign({}, stream.behaviorHints || {}, sizeBytes ? { videoSize: sizeBytes } : {})
-    }));
-  });
-  return output;
 }
 function toFormEncoded(obj) {
   return Object.keys(obj).map(function(k) {
@@ -287,16 +201,14 @@ function getTmdbDetails(tmdbId, mediaType) {
   });
 }
 function searchByTitle(title, year) {
-  return getWorkingDomain().then(function(domain) {
-    var query = encodeURIComponent((title + " " + (year || "")).trim());
-    var url = domain + "/?s=" + query;
-    console.log("[UHDMovies] Search: " + url);
-    return fetchText(url).then(function(html) {
-      return parseSearchResults(html);
-    }).catch(function(err) {
-      console.error("[UHDMovies] Search error: " + err.message);
-      return [];
-    });
+  var query = encodeURIComponent((title + " " + (year || "")).trim());
+  var url = DOMAIN + "/?s=" + query;
+  console.log("[UHDMovies] Search: " + url);
+  return fetchText(url).then(function(html) {
+    return parseSearchResults(html);
+  }).catch(function(err) {
+    console.error("[UHDMovies] Search error: " + err.message);
+    return [];
   });
 }
 function parseSearchResults(html) {
@@ -688,7 +600,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
         else if (/hdrip|dvdrip|hdtv/i.test(q)) sScore = 1;
         return rScore * 10 + sScore;
       }
-      streams = dedupeAndSanitizeStreams(streams);
       streams.sort(function(a, b) { return scoreStream(b) - scoreStream(a); });
       return streams;
     });
