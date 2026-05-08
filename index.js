@@ -3526,42 +3526,12 @@ const bootstrap = async () => {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
-  if (config.REVERSE_PROXY_TARGET) {
-    const reverseProxy = new ReverseProxyService({
+  const reverseProxy = config.REVERSE_PROXY_TARGET
+    ? new ReverseProxyService({
       targetBaseUrl: config.REVERSE_PROXY_TARGET,
       timeoutSeconds: config.REVERSE_PROXY_TIMEOUT_SECONDS
-    });
-
-    app.get('/health', (_req, res) => {
-      res.json({
-        status: 'ok',
-        mode: 'reverse-proxy',
-        target: config.REVERSE_PROXY_TARGET
-      });
-    });
-
-    app.use((req, res, next) => {
-      reverseProxy.handle(req, res, next).catch(next);
-    });
-
-    app.use((error, _req, res, _next) => {
-      logger.error('reverse proxy request failed', { error });
-      res.status(502).json({
-        error: 'Reverse proxy request failed',
-        details: error?.message || 'unknown error'
-      });
-    });
-
-    const proxyServer = app.listen(config.PORT, () => {
-      logger.info('reverse proxy started', {
-        port: config.PORT,
-        target: config.REVERSE_PROXY_TARGET
-      });
-    });
-    proxyServer.keepAliveTimeout = 65_000;
-    proxyServer.headersTimeout = 66_000;
-    return;
-  }
+    })
+    : null;
 
   const cacheManager = new CacheManager();
 
@@ -3676,7 +3646,15 @@ const bootstrap = async () => {
           guardCriticalPercent: config.MEMORY_GUARD_CRITICAL_PERCENT
         },
         users: publicUserStats,
-        cache: cacheStats
+        cache: cacheStats,
+        reverseProxy: reverseProxy
+          ? {
+            enabled: true,
+            target: config.REVERSE_PROXY_TARGET
+          }
+          : {
+            enabled: false
+          }
       });
     } catch (error) {
       next(error);
@@ -3812,6 +3790,12 @@ const bootstrap = async () => {
   app.get('/stream/http', streamManager.handleHttpStream.bind(streamManager));
   app.get('/stream/torrent/:infoHash/:filename', streamManager.handleTorrentFileStream.bind(streamManager));
   app.get('/stream/torrent', streamManager.handleTorrentStream.bind(streamManager));
+
+  if (reverseProxy) {
+    app.use((req, res, next) => {
+      reverseProxy.handle(req, res, next).catch(next);
+    });
+  }
 
   app.use((_req, _res, next) => {
     next(new HttpError(404, 'Route not found'));
