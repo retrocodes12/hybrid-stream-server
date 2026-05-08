@@ -43,6 +43,20 @@ var VIDEASY_SERVERS = [
 ];
 
 var QUALITY_ORDER = { '4K': 6, '2160p': 6, '1080p': 5, '720p': 4, '576p': 3, '480p': 2, '360p': 1, 'Auto': 0 };
+var LOCAL_PROVIDER_IDS = [
+  'vidlink',
+  'videasy',
+  'moviebox',
+  'streamflix',
+  'fmovies',
+  'playimdb',
+  'playimdb_v2',
+  'multivid',
+  'vidsrc',
+  'vixsrc',
+  'netmirror',
+  'onetouchtv'
+];
 
 // ─── Fetch dengan timeout ─────────────────────────────────────────────────────
 function fetchTimeout(url, options, ms) {
@@ -61,6 +75,66 @@ function safeText(url, options) {
 
 function safeJson(url, options) {
   return fetchTimeout(url, options || {}).then(function(r) { return r.json(); }).catch(function() { return null; });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise(function(resolve) {
+      setTimeout(function() { resolve([]); }, ms || FETCH_TIMEOUT);
+    })
+  ]);
+}
+
+function loadLocalProvider(providerId) {
+  try {
+    var mod = require('./' + providerId + '.js');
+    return mod && typeof mod.getStreams === 'function' ? mod : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function normalizeLocalProviderStream(providerId, stream) {
+  if (!stream || !stream.url) return null;
+  var q = stream.quality || detectQuality([stream.name, stream.title, stream.filename, stream.url].join(' '));
+  return {
+    name: stream.name || ('CineStream ' + providerId),
+    title: stream.title || (providerId + ' [' + q + ']'),
+    url: stream.url,
+    quality: q,
+    size: stream.size || stream.fileSize || null,
+    filename: stream.filename || stream.fileName || null,
+    headers: stream.headers || (stream.behaviorHints && stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) || null,
+    provider: stream.provider || providerId,
+    sourceSite: stream.sourceSite || ('CineStream ' + providerId),
+    behaviorHints: stream.behaviorHints || null
+  };
+}
+
+function invokeLocalProviders(tmdbId, mediaType, season, episode, allStreams) {
+  var tasks = LOCAL_PROVIDER_IDS.map(function(providerId) {
+    return function() {
+      var provider = loadLocalProvider(providerId);
+      if (!provider) return Promise.resolve();
+
+      return withTimeout(Promise.resolve()
+        .then(function() {
+          return provider.getStreams(tmdbId, mediaType, season, episode);
+        })
+        .then(function(streams) {
+          (Array.isArray(streams) ? streams : [])
+            .map(function(stream) { return normalizeLocalProviderStream(providerId, stream); })
+            .filter(Boolean)
+            .forEach(function(stream) { allStreams.push(stream); });
+        })
+        .catch(function(e) {
+          console.error('[CineStream] Local ' + providerId + ' error: ' + (e.message || e));
+        }), 10000);
+    };
+  });
+
+  return runLimited(tasks, 4);
 }
 
 // ─── Dedup + sort kualitas (sama dengan Videasy) ──────────────────────────────
@@ -270,14 +344,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
       // Step 2: Jalankan semua sources secara parallel
       return Promise.all([
         // Videasy 10 servers (concurrency 4)
-        invokeVideasy(info, isMovie, season, episode, allStreams),
+        withTimeout(invokeVideasy(info, isMovie, season, episode, allStreams), 9000),
 
         // Stremio addons (JSON langsung)
-        invokeStremio('Streamvix', STREAMVIX_API, info.imdbIdFull, isMovie, season, episode, allStreams),
-        invokeStremio('NoTorrent', NOTORRENT_API, info.imdbIdFull, isMovie, season, episode, allStreams),
+        withTimeout(invokeStremio('Streamvix', STREAMVIX_API, info.imdbIdFull, isMovie, season, episode, allStreams), 9000),
+        withTimeout(invokeStremio('NoTorrent', NOTORRENT_API, info.imdbIdFull, isMovie, season, episode, allStreams), 9000),
 
         // VidSrc JSON API
-        invokeVidSrc(info.imdbIdFull, isMovie, season, episode, allStreams)
+        withTimeout(invokeVidSrc(info.imdbIdFull, isMovie, season, episode, allStreams), 9000),
+
+        // Local maintained providers from this addon, bounded and deduped.
+        withTimeout(invokeLocalProviders(tmdbId, mediaType, season, episode, allStreams), 11000)
       ]);
     })
     .then(function() {

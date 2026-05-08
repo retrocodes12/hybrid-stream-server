@@ -2291,7 +2291,7 @@ export class ProviderService {
 
         let settledResults = await collectProviderResults(primaryProviderIds);
         const primaryStreamCount = settledResults.reduce((count, result) => count + result.streams.length, 0);
-        const minimumUsefulDefaultStreams = Math.min(3, config.STREMIO_FAST_EARLY_RETURN_STREAMS);
+        const minimumUsefulDefaultStreams = Math.min(1, config.STREMIO_FAST_EARLY_RETURN_STREAMS);
 
         if (!hasExplicitProviders && fallbackProviderIds.length > 0 && primaryStreamCount < minimumUsefulDefaultStreams) {
           logger.info('fast provider search expanding after weak primary phase', {

@@ -47,7 +47,11 @@ const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 120;
 const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
   try {
     const parsedUrl = new URL(String(url || '').trim());
-    const token = parsedUrl.searchParams.get('token');
+    const token = parsedUrl.searchParams.get('token')
+      || parsedUrl.searchParams.get('KEY2')
+      || parsedUrl.searchParams.get('expires')
+      || parsedUrl.searchParams.get('expire')
+      || parsedUrl.searchParams.get('exp');
 
     if (!/^\d{10,13}$/u.test(String(token || ''))) {
       return null;
@@ -63,6 +67,20 @@ const getSignedUrlExpiryTtlSeconds = (url, nowMs = Date.now()) => {
   } catch {
     return null;
   }
+};
+
+const getSourceTokenTtlMs = (preparedSource) => {
+  const defaultTtlSeconds = config.STREAM_SOURCE_TOKEN_TTL_SECONDS;
+  const signedTtlSeconds = preparedSource?.type === 'http'
+    ? getSignedUrlExpiryTtlSeconds(preparedSource.source)
+    : null;
+  const providerId = String(preparedSource?.metadata?.provider || '').trim().toLowerCase();
+  const providerCapSeconds = providerId === 'showbox' ? 300 : defaultTtlSeconds;
+  const ttlSeconds = signedTtlSeconds === null
+    ? Math.min(defaultTtlSeconds, providerCapSeconds)
+    : Math.min(defaultTtlSeconds, providerCapSeconds, signedTtlSeconds);
+
+  return Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS * 1000, ttlSeconds * 1000);
 };
 
 const getSignedStreamCacheLimit = (streams, nowMs = Date.now()) => {
@@ -2565,7 +2583,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 71,
+      version: 73,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3034,7 +3052,7 @@ export class StreamManager {
   async handleStremioStreams(req, res, next) {
     const overallTimeoutMs = Math.max(
       config.STREMIO_STREAM_OVERALL_TIMEOUT_MS,
-      config.STREMIO_FAST_MAX_WAIT_MS + 10_000
+      config.STREMIO_FAST_MAX_WAIT_MS + 5_000
     );
     let timeoutFallbackContext = null;
     const overallTimeout = setTimeout(() => {
@@ -3966,7 +3984,7 @@ export class StreamManager {
   createSourceToken(preparedSource) {
     return encryptSourceTokenPayload(JSON.stringify({
       version: SOURCE_TOKEN_VERSION,
-      expiresAt: Date.now() + (config.STREAM_SOURCE_TOKEN_TTL_SECONDS * 1000),
+      expiresAt: Date.now() + getSourceTokenTtlMs(preparedSource),
       type: preparedSource.type,
       source: preparedSource.source,
       headers: preparedSource.headers,
