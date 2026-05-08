@@ -4197,9 +4197,17 @@ export class StreamManager {
 
         return deduped.map((entry) => ({ ...entry }));
       } catch (error) {
+        let streamHost = 'unknown';
+        try {
+          streamHost = new URL(normalizedUrl).hostname;
+        } catch {
+          streamHost = 'invalid-url';
+        }
         logger.warn('hubcloud resolution failed', {
-          streamUrl: normalizedUrl,
-          error
+          streamHost,
+          errorName: error?.name || 'Error',
+          errorMessage: error?.message || String(error),
+          statusCode: error?.statusCode || null
         });
         touchMapEntry(this.hubCloudCache, normalizedUrl, {
           expiresAt: Date.now() + (10 * 60 * 1000),

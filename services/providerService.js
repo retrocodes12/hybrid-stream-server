@@ -186,7 +186,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'kisskh') {
-    return '31';
+    return '32';
   }
 
   if (providerId === 'showbox') {
@@ -680,7 +680,7 @@ const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animek
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
 const ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS = Object.freeze(['kisskh', 'onlykdrama', 'hdhub4u', '4khdhub_tv', '4khdhub', 'moviebox', 'vidlink', 'vixsrc', 'vidsrc', 'cinestream', 'showbox']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
-const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u']);
+const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'cinestream']);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama']);
 const FAST_PROVIDER_STAGGER_DELAYS_MS = Object.freeze([100, 200, 300]);
 const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
@@ -2186,10 +2186,12 @@ export class ProviderService {
         const defaultProviderParallelTimeoutMs = 20_000;
         const explicitProviderParallelTimeoutCapMs = 65_000;
 
+        const providerAbortControllers = new Map();
         const runProvider = async (providerId) => {
           const providerAbortController = new AbortController();
           let providerParallelTimeoutId;
           const enforceProviderFastTimeout = !hasExplicitProviders || FORCE_FAST_TIMEOUT_PROVIDER_IDS.has(providerId);
+          providerAbortControllers.set(providerId, providerAbortController);
 
           try {
             const providerParallelTimeoutMs = hasExplicitProviders
@@ -2231,6 +2233,9 @@ export class ProviderService {
             return { provider: providerId, streams: [], error };
           } finally {
             clearTimeout(providerParallelTimeoutId);
+            if (providerAbortControllers.get(providerId) === providerAbortController) {
+              providerAbortControllers.delete(providerId);
+            }
           }
         };
 
@@ -2239,9 +2244,13 @@ export class ProviderService {
             return Promise.all(providerIds.map(runProvider));
           }
 
-          const requiredEarlyProviders = hasShowboxCredential(rest.privateProviderSettings) && providerIds.includes('showbox')
-            ? new Set(['showbox'])
-            : new Set();
+          const requiredEarlyProviders = new Set();
+          if (hasShowboxCredential(rest.privateProviderSettings) && providerIds.includes('showbox')) {
+            requiredEarlyProviders.add('showbox');
+          }
+          if (!hasExplicitProviders && providerIds.includes('cinestream')) {
+            requiredEarlyProviders.add('cinestream');
+          }
           const pending = new Map(providerIds.map((providerId, index) => [
             index,
             runProvider(providerId).then((result) => ({ index, result }))
@@ -2283,13 +2292,21 @@ export class ProviderService {
           }
 
           if (pending.size > 0) {
-            logger.warn('fast provider search returning partial results before slow providers finished', {
+            const pendingProviders = [...pending.keys()].map((index) => providerIds[index]);
+            const resultCount = results.reduce((count, result) => count + result.streams.length, 0);
+            const logPartialResults = resultCount > 0 ? logger.info.bind(logger) : logger.warn.bind(logger);
+            logPartialResults('fast provider search returning partial results before slow providers finished', {
               tmdbId: rest.tmdbId,
               mediaType: rest.mediaType,
               completedProviders: results.map((result) => result.provider),
-              pendingProviders: [...pending.keys()].map((index) => providerIds[index]),
-              resultCount: results.reduce((count, result) => count + result.streams.length, 0)
+              pendingProviders,
+              resultCount
             });
+
+            const partialReturnError = createHttpError(499, 'Fast search returned partial results');
+            for (const providerId of pendingProviders) {
+              providerAbortControllers.get(providerId)?.abort(partialReturnError);
+            }
           }
 
           return results;
@@ -2758,7 +2775,7 @@ export class ProviderService {
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         const timeoutError = createHttpError(504, `Provider ${providerId} timed out`);
-        abortController.abort(timeoutError);
+        abortController.abort(cancelledError);
         reject(timeoutError);
       }, timeoutSeconds * 1000);
       timeoutId.unref?.();

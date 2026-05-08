@@ -242,7 +242,7 @@ function processVidlinkResponse(data, mediaInfo) {
     const streams = [];
     
     try {
-        console.log(`[Vidlink] Processing response data:`, JSON.stringify(data, null, 2));
+        console.log(`[Vidlink] Response summary: source=${data?.sourceId || 'unknown'} type=${data?.stream?.type || 'unknown'} qualities=${data?.stream?.qualities ? Object.keys(data.stream.qualities).join(',') : 'none'} playlist=${Boolean(data?.stream?.playlist)}`);
         
         // Handle Vidlink's specific response format with stream.qualities
         if (data.stream && data.stream.qualities) {
