@@ -3464,9 +3464,7 @@ const startMemoryGuard = ({
         sourceRegistryEntries: before.sourceRegistry.entries
       });
 
-      const restartRequired = usagePercent >= config.MEMORY_GUARD_RESTART_PERCENT
-        || criticalStrikes >= config.MEMORY_GUARD_RESTART_AFTER_CRITICAL
-        || memory.availableMemoryBytes <= config.MEMORY_GUARD_MIN_AVAILABLE_MB * 1024 * 1024;
+      const restartRequired = usagePercent >= config.MEMORY_GUARD_RESTART_PERCENT;
 
       if (restartRequired) {
         logger.error('memory guard restarting process before system lockup', {
