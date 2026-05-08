@@ -3345,7 +3345,7 @@ export class StreamManager {
           tmdbId,
           mediaType: parsed.mediaType
         });
-        throw createHttpError(503, 'Server is busy preparing streams');
+        return [];
       }
     }
 
@@ -3356,7 +3356,7 @@ export class StreamManager {
         tmdbId,
         mediaType: parsed.mediaType
       });
-      throw createHttpError(503, 'Server is busy preparing streams');
+      return [];
     }
 
     const request = this.buildStremioStreams({
