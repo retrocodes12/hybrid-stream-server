@@ -221,6 +221,7 @@ const HIGH_VALUE_CACHE_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u'])
 const HIGH_VALUE_CACHE_PATTERN = /\b(4khdhub|hdhub|hubcloud|hub cloud)\b/iu;
 const LAST_GOOD_PRIMARY_PROVIDERS = new Set(['4khdhub', '4khdhub tv', 'hdhub4u', 'uhdmovies']);
 const LAST_GOOD_SECONDARY_PROVIDERS = new Set(['vidsrc', 'vixsrc', 'vidlink', 'moviebox', 'cinestream', 'streamflix']);
+const DIRECT_PLAYBACK_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u', 'showbox']);
 
 const CONFIGURED_PROFILE_LABELS = Object.freeze({
   wf: Object.freeze({ code: 'WF', label: 'Web Fast' }),
@@ -646,6 +647,26 @@ const isTrustedDirectHttpStream = (stream) =>
   !hasForwardHeaders(stream.headers) &&
   isHighValueCacheStream(stream);
 
+const isRegisteredProxyOnlyUrl = (streamUrl) => {
+  try {
+    const parsedUrl = new URL(String(streamUrl || '').trim());
+    const hostname = parsedUrl.hostname.toLowerCase();
+    return hostname.includes('webstreamrmbg')
+      || hostname.endsWith('baby-beamup.club')
+      || parsedUrl.pathname.startsWith('/extract/');
+  } catch {
+    return false;
+  }
+};
+
+const prefersDirectPlayback = (stream) => {
+  const providerId = String(stream?.provider || '').trim().toLowerCase();
+  return DIRECT_PLAYBACK_PROVIDER_IDS.has(providerId)
+    || stream?.behaviorHints?.notWebReady === false
+    || isPlainMp4Url(stream?.url)
+    || isPlainHlsUrl(stream?.url);
+};
+
 const getStremioRequestBaseUrl = (req) => {
   if (config.PUBLIC_BASE_URL) {
     return config.PUBLIC_BASE_URL;
@@ -666,25 +687,19 @@ const needsRegisteredPlaybackProxy = (stream) => {
   const providerId = String(stream.provider || '').trim().toLowerCase();
   const forwardHeaders = getProviderForwardHeaders(stream);
 
-  if (hasForwardHeaders(forwardHeaders)) {
-    if (providerId !== 'cinestream') {
-      return true;
-    }
-  } else if (isHighValueCacheStream(stream)) {
+  if (isRegisteredProxyOnlyUrl(stream.url)) {
     return true;
-  } else {
+  }
+
+  if (prefersDirectPlayback(stream)) {
     return false;
   }
 
-  try {
-    const parsedUrl = new URL(stream.url);
-    const hostname = parsedUrl.hostname.toLowerCase();
-    return hostname.includes('webstreamrmbg')
-      || hostname.endsWith('baby-beamup.club')
-      || parsedUrl.pathname.startsWith('/extract/');
-  } catch {
-    return false;
+  if (hasForwardHeaders(forwardHeaders)) {
+    return providerId !== 'cinestream';
   }
+
+  return false;
 };
 
 const hasHeavyFormatTraits = (stream) => {
@@ -2480,7 +2495,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 66,
+      version: 67,
       tmdbId,
       mediaType,
       season: season ?? null,
