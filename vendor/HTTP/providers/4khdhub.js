@@ -43,10 +43,11 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // src/4khdhub/constants.js
-var BASE_URL = "https://4khdhub.click";
+var BASE_URL = "https://4khdhub.fans";
 var TMDB_API_KEY = process.env.TMDB_API_KEY || "439c478a771f35c05022f9feabcca01c";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
+var FALLBACK_DOMAINS = ["https://4khdhub.fans", "https://4khdhub.click"];
 var PLAYABLE_CHECK_TIMEOUT_MS = 7e3;
 var PLAYABLE_EXTENSION_PATTERN = /\.(?:mp4|mkv|webm|m3u8)(?:[?#]|$)/i;
 var HTML_WRAPPER_HOSTS = /* @__PURE__ */ new Set(["hubcdn.fans"]);
@@ -162,18 +163,43 @@ function filterPlayableStreams(streams) {
 
 // src/4khdhub/utils.js
 var domainCache = { url: BASE_URL, ts: 0 };
+function isReachableDomain(url) {
+  return __async(this, null, function* () {
+    try {
+      const response = yield fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": USER_AGENT },
+        redirect: "follow",
+        signal: AbortSignal.timeout(5000)
+      });
+      if (response.body && typeof response.body.cancel === "function") {
+        yield response.body.cancel();
+      }
+      return response && response.ok;
+    } catch {
+      return false;
+    }
+  });
+}
 function fetchLatestDomain() {
   return __async(this, null, function* () {
     const now = Date.now();
     if (now - domainCache.ts < 36e5) return domainCache.url;
+    const candidates = [...FALLBACK_DOMAINS];
     try {
       const response = yield fetch(DOMAINS_URL, { signal: AbortSignal.timeout(5000) });
       const data = yield response.json();
       if (data && data["4khdhub"]) {
-        domainCache.url = data["4khdhub"];
-        domainCache.ts = now;
+        candidates.unshift(data["4khdhub"]);
       }
     } catch (e) { }
+    for (const candidate of [...new Set(candidates)]) {
+      if (yield isReachableDomain(candidate)) {
+        domainCache.url = candidate;
+        break;
+      }
+    }
+    domainCache.ts = now;
     return domainCache.url;
   });
 }
@@ -739,7 +765,7 @@ function getStreams(tmdbId, type, season, episode) {
     const pageUrl = yield fetchPageUrl(normalizedTitle, year, isSeries);
     if (!pageUrl) {
       console.log("[4KHDHub] Page not found");
-      return [];
+      return yield getMirrorStreams(tmdbId, type, season, episode);
     }
     console.log(`[4KHDHub] Found page: ${pageUrl}`);
     const html = yield fetchText(pageUrl);
@@ -828,7 +854,7 @@ function getStreams(tmdbId, type, season, episode) {
       return playableStreams;
     }
     console.log("[4KHDHub] No direct streams found");
-    return [];
+    return yield getMirrorStreams(tmdbId, type, season, episode);
   });
 }
 module.exports = { getStreams };

@@ -1,4 +1,4 @@
-import { DOMAINS_URL, DOMAIN_CACHE_TTL, MAIN_URL, HEADERS, updateMainUrl, TMDB_BASE_URL, TMDB_API_KEY } from './constants.js';
+import { DOMAINS_URL, DOMAIN_CACHE_TTL, FALLBACK_DOMAINS, MAIN_URL, HEADERS, updateMainUrl, TMDB_BASE_URL, TMDB_API_KEY } from './constants.js';
 
 let domainCacheTimestamp = 0;
 
@@ -126,6 +126,36 @@ export function cleanDisplayTitle(raw) {
     return result;
 }
 
+export async function tryFallbackDomains(domains = FALLBACK_DOMAINS) {
+  for (const domain of [...new Set(domains.filter(Boolean))]) {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutId = controller ? setTimeout(function() {
+      controller.abort();
+    }, 5000) : null;
+    try {
+      const response = await fetch(domain, {
+        method: "GET",
+        redirect: "follow",
+        headers: { "User-Agent": HEADERS["User-Agent"] },
+        signal: controller ? controller.signal : undefined
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+      if (response && response.body && typeof response.body.cancel === "function") {
+        await response.body.cancel();
+      }
+      if (response && response.ok) {
+        console.log(`[HDHub4u] Fallback domain selected: ${domain}`);
+        updateMainUrl(domain);
+        domainCacheTimestamp = Date.now();
+        return domain;
+      }
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }
+  return null;
+}
+
 export async function fetchAndUpdateDomain() {
   const now = Date.now();
   if (now - domainCacheTimestamp < DOMAIN_CACHE_TTL) return;
@@ -139,16 +169,17 @@ export async function fetchAndUpdateDomain() {
     if (response.ok) {
       const data = await response.json();
       if (data && data.HDHUB4u) {
-        const newDomain = data.HDHUB4u;
-        if (newDomain !== MAIN_URL) {
-          console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${newDomain}`);
-          updateMainUrl(newDomain);
+        const selectedDomain = await tryFallbackDomains([data.HDHUB4u, ...FALLBACK_DOMAINS]);
+        if (selectedDomain && selectedDomain !== MAIN_URL) {
+          console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${selectedDomain}`);
+          updateMainUrl(selectedDomain);
           domainCacheTimestamp = now;
         }
       }
     }
   } catch (error) {
     console.error(`[HDHub4u] Failed to fetch latest domains: ${error.message}`);
+    await tryFallbackDomains();
   }
 }
 

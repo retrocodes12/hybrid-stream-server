@@ -691,12 +691,12 @@ const needsRegisteredPlaybackProxy = (stream) => {
     return true;
   }
 
-  if (prefersDirectPlayback(stream)) {
-    return false;
-  }
-
   if (hasForwardHeaders(forwardHeaders)) {
     return providerId !== 'cinestream';
+  }
+
+  if (prefersDirectPlayback(stream)) {
+    return false;
   }
 
   return false;
@@ -3438,7 +3438,7 @@ export class StreamManager {
           headers: null,
           behaviorHints: {
             ...stream.behaviorHints,
-            notWebReady: !isWebReadyPlaybackProxyStream(stream)
+            notWebReady: false
           }
         };
       } catch (error) {

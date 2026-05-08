@@ -68,12 +68,14 @@ var import_cheerio_without_node_native2 = __toESM(require("cheerio-without-node-
 // src/hdhub4u/constants.js
 var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 var TMDB_BASE_URL = "https://api.themoviedb.org/3";
-var MAIN_URL = "https://new6.hdhub4u.fo";
+var MAIN_URL = "https://hdhub4u.cv";
 var DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json";
 var FALLBACK_DOMAINS = [
+  "https://hdhub4u.cv",
   "https://new6.hdhub4u.fo",
   "https://new7.hdhub4u.fo",
   "https://hdhub4u.tv",
+  "https://hdhub4u.com",
   "https://hdhub4u.global"
 ];
 var DOMAIN_CACHE_TTL = 4 * 60 * 60 * 1e3;
@@ -192,22 +194,25 @@ function updateMainUrl(url) {
   HEADERS.Referer = `${url}/`;
 }
 
-function tryFallbackDomains() {
+function tryFallbackDomains(domains = FALLBACK_DOMAINS) {
   return __async(this, null, function* () {
-    for (const domain of FALLBACK_DOMAINS) {
+    for (const domain of [...new Set(domains.filter(Boolean))]) {
       const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(function() {
         controller.abort();
       }, 5e3) : null;
       try {
         const response = yield fetch(domain, {
-          method: "HEAD",
+          method: "GET",
           redirect: "follow",
           headers: { "User-Agent": HEADERS["User-Agent"] },
           signal: controller ? controller.signal : void 0
         });
         if (timeoutId)
           clearTimeout(timeoutId);
+        if (response && response.body && typeof response.body.cancel === "function") {
+          yield response.body.cancel();
+        }
         if (response && response.ok) {
           console.log(`[HDHub4u] Fallback domain selected: ${domain}`);
           updateMainUrl(domain);
@@ -316,10 +321,10 @@ function fetchAndUpdateDomain() {
       if (response.ok) {
         const data = yield response.json();
         if (data && data.HDHUB4u) {
-          const newDomain = data.HDHUB4u;
-          if (newDomain !== MAIN_URL) {
-            console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${newDomain}`);
-            updateMainUrl(newDomain);
+          const selectedDomain = yield tryFallbackDomains([data.HDHUB4u, ...FALLBACK_DOMAINS]);
+          if (selectedDomain && selectedDomain !== MAIN_URL) {
+            console.log(`[HDHub4u] Updating domain from ${MAIN_URL} to ${selectedDomain}`);
+            updateMainUrl(selectedDomain);
             domainCacheTimestamp = now;
           }
         }
@@ -430,7 +435,7 @@ function getTMDBDetails(tmdbId, mediaType) {
         response = yield fetch(url, {
           method: "GET",
           headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
-          signal: AbortSignal.timeout(3000)
+          signal: AbortSignal.timeout(8000)
         });
         break;
       } catch (retryErr) {
@@ -969,6 +974,49 @@ function searchByScraping(query) {
     return results.slice(0, 10);
   });
 }
+function fetchExternalHdHubStreams(imdbId, mediaType, season, episode) {
+  return __async(this, null, function* () {
+    if (!imdbId) return [];
+    const type = mediaType === "tv" || mediaType === "series" ? "series" : "movie";
+    const id = type === "series" && season && episode
+      ? `${imdbId}:${season}:${episode}`
+      : imdbId;
+    const url = `https://hdhub.thevolecitor.qzz.io/stream/${type}/${encodeURIComponent(id)}.json`;
+    try {
+      const response = yield fetch(url, {
+        headers: { "Accept": "application/json", "User-Agent": HEADERS["User-Agent"] },
+        signal: AbortSignal.timeout(15e3)
+      });
+      if (!response.ok) return [];
+      const data = yield response.json();
+      const streams = Array.isArray(data == null ? void 0 : data.streams) ? data.streams : [];
+      return streams
+        .filter((stream) => stream && stream.url)
+        .map((stream) => {
+          const label = String(stream.name || "HDHub4u").trim();
+          const qualityMatch = label.match(/\b(4K|2160p|1080p|720p|480p|360p)\b/i);
+          const quality = qualityMatch ? qualityMatch[1].replace(/^2160p$/i, "4K") : "Unknown";
+          return {
+            name: label.replace(/^4KHDHub/i, "HDHub4u"),
+            title: stream.description || stream.title || label,
+            url: stream.url,
+            quality,
+            size: stream.size,
+            filename: stream.behaviorHints && stream.behaviorHints.filename,
+            headers: stream.headers || null,
+            provider: "hdhub4u",
+            behaviorHints: __spreadValues({
+              bingeGroup: "hdhub4u-external",
+              notWebReady: true
+            }, stream.behaviorHints || {})
+          };
+        });
+    } catch (error) {
+      console.log(`[HDHub4u] External fallback failed: ${error.message}`);
+      return [];
+    }
+  });
+}
 function getDownloadLinks(mediaUrl) {
   return __async(this, null, function* () {
     const domain = yield getCurrentDomain();
@@ -1095,6 +1143,12 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
           usedImdbSearch = true;
           console.log(`[HDHub4u] IMDB search found ${searchResults.length} result(s)`);
         }
+        if (searchResults.length === 0) {
+          const externalStreams = yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
+          if (externalStreams.length > 0) {
+            return externalStreams;
+          }
+        }
       }
       if (searchResults.length === 0) {
         if (mediaInfo.imdbId) {
@@ -1127,11 +1181,11 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         }
       }
       if (searchResults.length === 0)
-        return [];
+        return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
       const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
       if (!bestMatch && !usedImdbSearch) {
         console.log(`[HDHub4u] No reliable title match found`);
-        return [];
+        return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
       }
       const selectedMedia = bestMatch || searchResults[0];
       const selectedMediaList = usedImdbSearch ? searchResults : [selectedMedia];
@@ -1190,10 +1244,13 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       });
       const qualityOrder = { "4K": 4, "1080p": 2, "720p": 1, "480p": 0, "Unknown": -2 };
       const sortedStreams = streams.sort((a, b) => (qualityOrder[b.quality] || -3) - (qualityOrder[a.quality] || -3));
-      return sortedStreams;
+      if (sortedStreams.length > 0) {
+        return sortedStreams;
+      }
+      return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
     } catch (error) {
       console.error(`[HDHub4u] Scraping error: ${error.message}`);
-      return [];
+      return yield fetchExternalHdHubStreams(error && error.mediaInfo && error.mediaInfo.imdbId, mediaType, season, episode);
     }
   });
 }
