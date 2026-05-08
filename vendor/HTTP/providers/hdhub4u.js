@@ -985,7 +985,7 @@ function fetchExternalHdHubStreams(imdbId, mediaType, season, episode) {
     try {
       const response = yield fetch(url, {
         headers: { "Accept": "application/json", "User-Agent": HEADERS["User-Agent"] },
-        signal: AbortSignal.timeout(15e3)
+        signal: AbortSignal.timeout(6e3)
       });
       if (!response.ok) return [];
       const data = yield response.json();
@@ -1054,6 +1054,26 @@ function getCachedFallbackFiles() {
 function extractCachedHubCloudUrls(payload) {
   const values = collectStringsDeep(payload);
   const urls = [];
+  const addCandidateUrl = (value) => {
+    let candidate = String(value || "").replace(/\\\//g, "/");
+    try {
+      candidate = decodeURIComponent(candidate);
+    } catch {}
+
+    try {
+      const parsed = new URL(candidate);
+      const nestedUrl = parsed.searchParams.get("url");
+      if (nestedUrl) {
+        candidate = nestedUrl;
+      }
+    } catch {}
+
+    try {
+      candidate = decodeURIComponent(candidate);
+    } catch {}
+
+    urls.push(candidate);
+  };
   for (const value of values) {
     try {
       if (value.trim().startsWith("[") || value.trim().startsWith("{")) {
@@ -1061,25 +1081,19 @@ function extractCachedHubCloudUrls(payload) {
       }
     } catch {}
     const matches = value.match(/https?:\/\/[^"'\\\s<>]+hubcloud[^"'\\\s<>]+/gi) || [];
-    urls.push(...matches.map((url) => {
-      try {
-        return decodeURIComponent(url);
-      } catch {
-        return url;
-      }
-    }));
+    matches.forEach(addCandidateUrl);
     const encodedMatches = value.match(/https%3A%2F%2F[^"'\\\s<>]+hubcloud[^"'\\\s<>]+/gi) || [];
-    urls.push(...encodedMatches.map((url) => {
-      try {
-        return decodeURIComponent(url);
-      } catch {
-        return url;
-      }
-    }));
+    encodedMatches.forEach(addCandidateUrl);
   }
   return [...new Set(urls)]
-    .map((url) => url.replace(/\\\//g, "/"))
-    .filter((url) => /\/drive\//i.test(url));
+    .filter((url) => {
+      try {
+        const parsed = new URL(url);
+        return /hubcloud/i.test(parsed.hostname) && /\/drive\//i.test(parsed.pathname);
+      } catch {
+        return false;
+      }
+    });
 }
 function fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode) {
   return __async(this, null, function* () {
@@ -1087,6 +1101,7 @@ function fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episod
     const fs = require("fs");
     const titleNeedle = normalizeCachedFallbackText(mediaInfo.title);
     const yearNeedle = mediaInfo.year ? String(mediaInfo.year) : "";
+    const tmdbNeedle = mediaInfo.tmdbId ? String(mediaInfo.tmdbId) : "";
     const candidateUrls = [];
     for (const filePath of getCachedFallbackFiles()) {
       let raw = "";
@@ -1096,7 +1111,9 @@ function fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episod
         continue;
       }
       const normalizedRaw = normalizeCachedFallbackText(raw);
-      if (!normalizedRaw.includes(titleNeedle) || yearNeedle && !normalizedRaw.includes(yearNeedle)) {
+      const matchesTitle = titleNeedle && normalizedRaw.includes(titleNeedle) && (!yearNeedle || normalizedRaw.includes(yearNeedle));
+      const matchesTmdb = tmdbNeedle && raw.includes(tmdbNeedle);
+      if (!matchesTitle && !matchesTmdb) {
         continue;
       }
       try {
@@ -1264,6 +1281,7 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
     console.log(`[HDHub4u] Fetching streams for TMDB ID: ${tmdbId}, Type: ${mediaType}`);
     try {
       const mediaInfo = yield getTMDBDetails(tmdbId, mediaType);
+      mediaInfo.tmdbId = tmdbId;
       console.log(`[HDHub4u] TMDB Info: "${mediaInfo.title}" (${mediaInfo.year || "N/A"}) [IMDB: ${mediaInfo.imdbId || "N/A"}]`);
       let searchResults = [];
       let usedImdbSearch = false;
@@ -1388,7 +1406,7 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         .concat(yield fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode));
     } catch (error) {
       console.error(`[HDHub4u] Scraping error: ${error.message}`);
-      return yield fetchExternalHdHubStreams(error && error.mediaInfo && error.mediaInfo.imdbId, mediaType, season, episode);
+      return yield fetchCachedHubCloudFallbackStreams({ tmdbId, title: "", year: null }, mediaType, season, episode);
     }
   });
 }
