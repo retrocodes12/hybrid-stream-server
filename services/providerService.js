@@ -26,10 +26,10 @@ const PROVIDER_FETCH_DISPATCHER = new Agent({
   connect: { family: 4 }
 });
 const PROVIDER_FETCH_REQUEST_TIMEOUT_OVERRIDES_MS = Object.freeze({
-  '4khdhub': 45_000,
-  '4khdhub_tv': 45_000,
+  '4khdhub': 18_000,
+  '4khdhub_tv': 18_000,
   cinestream: 60_000,
-  hdhub4u: 60_000,
+  hdhub4u: 18_000,
   showbox: 60_000,
   uhdmovies: 60_000
 });
@@ -554,7 +554,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
   cinestream: 45,
-  hdhub4u: 45,
+  hdhub4u: 18,
   playimdb: 10,
   playimdb_v2: 10,
   uhdmovies: 45,
@@ -571,7 +571,7 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 22_000,
   '4khdhub_tv': 22_000,
   cinestream: 55_000,
-  hdhub4u: 55_000,
+  hdhub4u: 22_000,
   uhdmovies: 55_000,
   moviesmod: 18_000,
   streamflix: 18_000,
@@ -585,6 +585,11 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   gramcinema: 20_000,
   onetouchtv: 20_000
 });
+const FORCE_FAST_TIMEOUT_PROVIDER_IDS = new Set([
+  '4khdhub',
+  '4khdhub_tv',
+  'hdhub4u'
+]);
 const getProviderTimeoutSeconds = (providerId, params = null) => {
   if (params?.enforceFastTimeout) {
     const defaultFastTimeout = Math.min(config.PROVIDER_TIMEOUT_SECONDS, 10);
@@ -2184,6 +2189,7 @@ export class ProviderService {
         const runProvider = async (providerId) => {
           const providerAbortController = new AbortController();
           let providerParallelTimeoutId;
+          const enforceProviderFastTimeout = !hasExplicitProviders || FORCE_FAST_TIMEOUT_PROVIDER_IDS.has(providerId);
 
           try {
             const providerParallelTimeoutMs = hasExplicitProviders
@@ -2193,7 +2199,7 @@ export class ProviderService {
                   PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs,
                   (getProviderTimeoutSeconds(providerId, {
                     privateProviderSettings: rest.privateProviderSettings,
-                    enforceFastTimeout: false
+                    enforceFastTimeout: enforceProviderFastTimeout
                   }) * 1000) + 5_000
                 )
               )
@@ -2207,7 +2213,7 @@ export class ProviderService {
               privateProviderSettings: rest.privateProviderSettings,
               priorityRequest: true,
               signal: providerAbortController.signal,
-              enforceFastTimeout: !hasExplicitProviders
+              enforceFastTimeout: enforceProviderFastTimeout
             });
             const streams = await Promise.race([
               streamPromise,

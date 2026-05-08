@@ -3653,7 +3653,9 @@ export class StreamManager {
         tmdbId: req.query.tmdbId,
         mediaType: req.query.mediaType,
         season: req.query.season,
-        episode: req.query.episode
+        episode: req.query.episode,
+        priorityRequest: true,
+        enforceFastTimeout: true
       });
 
       if (streams.length === 0) {
@@ -3665,7 +3667,11 @@ export class StreamManager {
         return;
       }
 
-      const normalizedStreams = await this.normalizeProviderStreams(baseUrl, streams, provider);
+      const normalizedStreams = await withTimeoutFallback(
+        this.normalizeProviderStreams(baseUrl, streams, provider),
+        8_000,
+        streams
+      );
 
       res.json({
         provider,
