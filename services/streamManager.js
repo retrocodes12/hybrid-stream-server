@@ -78,6 +78,42 @@ const getSignedStreamCacheLimit = (streams, nowMs = Date.now()) => {
   return ttlSeconds;
 };
 
+const getSourceTokenExpiryTtlSeconds = (streamUrl, nowMs = Date.now()) => {
+  try {
+    const parsedUrl = new URL(String(streamUrl || '').trim());
+    const sourceToken = parsedUrl.searchParams.get('sourceToken');
+
+    if (!sourceToken) {
+      return null;
+    }
+
+    const payload = JSON.parse(decryptSourceTokenPayload(sourceToken));
+    const expiresAt = Number(payload?.expiresAt);
+
+    if (!Number.isFinite(expiresAt)) {
+      return null;
+    }
+
+    const ttlSeconds = Math.floor((expiresAt - nowMs) / 1000) - SIGNED_STREAM_CACHE_SAFETY_SECONDS;
+    return Math.max(MIN_SIGNED_STREAM_CACHE_TTL_SECONDS, ttlSeconds);
+  } catch {
+    return MIN_SIGNED_STREAM_CACHE_TTL_SECONDS;
+  }
+};
+
+const getSourceTokenStreamCacheLimit = (streams, nowMs = Date.now()) => {
+  let ttlSeconds = null;
+
+  for (const stream of Array.isArray(streams) ? streams : []) {
+    const tokenTtl = getSourceTokenExpiryTtlSeconds(stream?.url, nowMs);
+    if (tokenTtl !== null) {
+      ttlSeconds = ttlSeconds === null ? tokenTtl : Math.min(ttlSeconds, tokenTtl);
+    }
+  }
+
+  return ttlSeconds;
+};
+
 const normalizeRequestedType = (type) => {
   if (typeof type !== 'string' || !type.trim()) {
     return null;
@@ -2495,7 +2531,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 69,
+      version: 70,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2650,6 +2686,7 @@ export class StreamManager {
 
     const now = Date.now();
     const signedTtlSeconds = getSignedStreamCacheLimit(streams, now);
+    const sourceTokenTtlSeconds = getSourceTokenStreamCacheLimit(streams, now);
     const defaultResultTtlSeconds = hasShowbox
       ? SHOWBOX_RESULT_CACHE_TTL_SECONDS
       : hasCinestream
@@ -2661,10 +2698,13 @@ export class StreamManager {
     const cappedFreshTtlSeconds = signedTtlSeconds === null
       ? freshTtlSeconds
       : Math.min(freshTtlSeconds, signedTtlSeconds);
-    const freshTtlMs = cappedFreshTtlSeconds * 1000;
+    const sourceTokenCappedFreshTtlSeconds = sourceTokenTtlSeconds === null
+      ? cappedFreshTtlSeconds
+      : Math.min(cappedFreshTtlSeconds, sourceTokenTtlSeconds);
+    const freshTtlMs = sourceTokenCappedFreshTtlSeconds * 1000;
     const staleTtlMs = weak
       ? freshTtlMs
-      : signedTtlSeconds !== null
+      : signedTtlSeconds !== null || sourceTokenTtlSeconds !== null
         ? freshTtlMs
       : Math.max(
         freshTtlMs,

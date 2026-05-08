@@ -1017,6 +1017,137 @@ function fetchExternalHdHubStreams(imdbId, mediaType, season, episode) {
     }
   });
 }
+function normalizeCachedFallbackText(value) {
+  return String(value || "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function collectStringsDeep(value, output = []) {
+  if (typeof value === "string") {
+    output.push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((entry) => collectStringsDeep(entry, output));
+  } else if (value && typeof value === "object") {
+    Object.values(value).forEach((entry) => collectStringsDeep(entry, output));
+  }
+  return output;
+}
+function getCachedFallbackFiles() {
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const roots = [
+      path.join(process.cwd(), "cache", "fast-results"),
+      path.join(process.cwd(), "cache", "stremio-results")
+    ];
+    return roots.flatMap((root) => {
+      try {
+        return fs.readdirSync(root)
+          .filter((file) => file.endsWith(".json"))
+          .map((file) => path.join(root, file));
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+function extractCachedHubCloudUrls(payload) {
+  const values = collectStringsDeep(payload);
+  const urls = [];
+  for (const value of values) {
+    try {
+      if (value.trim().startsWith("[") || value.trim().startsWith("{")) {
+        urls.push(...extractCachedHubCloudUrls(JSON.parse(value)));
+      }
+    } catch {}
+    const matches = value.match(/https?:\/\/[^"'\\\s<>]+hubcloud[^"'\\\s<>]+/gi) || [];
+    urls.push(...matches.map((url) => {
+      try {
+        return decodeURIComponent(url);
+      } catch {
+        return url;
+      }
+    }));
+    const encodedMatches = value.match(/https%3A%2F%2F[^"'\\\s<>]+hubcloud[^"'\\\s<>]+/gi) || [];
+    urls.push(...encodedMatches.map((url) => {
+      try {
+        return decodeURIComponent(url);
+      } catch {
+        return url;
+      }
+    }));
+  }
+  return [...new Set(urls)]
+    .map((url) => url.replace(/\\\//g, "/"))
+    .filter((url) => /\/drive\//i.test(url));
+}
+function fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode) {
+  return __async(this, null, function* () {
+    if (mediaType !== "movie") return [];
+    const fs = require("fs");
+    const titleNeedle = normalizeCachedFallbackText(mediaInfo.title);
+    const yearNeedle = mediaInfo.year ? String(mediaInfo.year) : "";
+    const candidateUrls = [];
+    for (const filePath of getCachedFallbackFiles()) {
+      let raw = "";
+      try {
+        raw = fs.readFileSync(filePath, "utf8");
+      } catch {
+        continue;
+      }
+      const normalizedRaw = normalizeCachedFallbackText(raw);
+      if (!normalizedRaw.includes(titleNeedle) || yearNeedle && !normalizedRaw.includes(yearNeedle)) {
+        continue;
+      }
+      try {
+        candidateUrls.push(...extractCachedHubCloudUrls(JSON.parse(raw)));
+      } catch {}
+    }
+    const streams = [];
+    for (const hubCloudUrl of [...new Set(candidateUrls)].slice(0, 4)) {
+      const links = yield Promise.race([
+        hubCloudExtractor(hubCloudUrl, MAIN_URL),
+        new Promise((resolve) => setTimeout(() => resolve([]), 12000))
+      ]);
+      streams.push(...links.map((link) => {
+        let qualityStr = "Unknown";
+        if (typeof link.quality === "number" && link.quality > 0) {
+          if (link.quality >= 2160) qualityStr = "4K";
+          else if (link.quality >= 1080) qualityStr = "1080p";
+          else if (link.quality >= 720) qualityStr = "720p";
+          else if (link.quality >= 480) qualityStr = "480p";
+        }
+        const sizeLabel = formatBytes(link.size);
+        return {
+          name: `HDHub4u ${extractServerName(link.source)} ${qualityStr}`,
+          title: [
+            link.fileName && link.fileName !== "Unknown" ? link.fileName : mediaInfo.title,
+            sizeLabel && `💾 ${sizeLabel}`,
+            `🔗 ${extractServerName(link.source)} from HDHub4u`
+          ].filter(Boolean).join("\n"),
+          url: link.url,
+          quality: qualityStr,
+          size: sizeLabel,
+          filename: link.fileName && link.fileName !== "Unknown" ? link.fileName : void 0,
+          headers: link.headers || null,
+          provider: "hdhub4u",
+          behaviorHints: {
+            bingeGroup: `hdhub4u-${extractServerName(link.source)}`,
+            notWebReady: true,
+            ...(link.size ? { videoSize: link.size } : {})
+          }
+        };
+      }));
+    }
+    const seen = /* @__PURE__ */ new Set();
+    return streams.filter((stream) => {
+      const key = String(stream.url || "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  });
+}
 function getDownloadLinks(mediaUrl) {
   return __async(this, null, function* () {
     const domain = yield getCurrentDomain();
@@ -1148,6 +1279,10 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
           if (externalStreams.length > 0) {
             return externalStreams;
           }
+          const cachedFallbackStreams = yield fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode);
+          if (cachedFallbackStreams.length > 0) {
+            return cachedFallbackStreams;
+          }
         }
       }
       if (searchResults.length === 0) {
@@ -1181,11 +1316,13 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
         }
       }
       if (searchResults.length === 0)
-        return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
+        return (yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode))
+          .concat(yield fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode));
       const bestMatch = findBestTitleMatch(mediaInfo, searchResults, mediaType, season);
       if (!bestMatch && !usedImdbSearch) {
         console.log(`[HDHub4u] No reliable title match found`);
-        return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
+        return (yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode))
+          .concat(yield fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode));
       }
       const selectedMedia = bestMatch || searchResults[0];
       const selectedMediaList = usedImdbSearch ? searchResults : [selectedMedia];
@@ -1247,7 +1384,8 @@ function getStreams(tmdbId, mediaType = "movie", season = null, episode = null) 
       if (sortedStreams.length > 0) {
         return sortedStreams;
       }
-      return yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode);
+      return (yield fetchExternalHdHubStreams(mediaInfo.imdbId, mediaType, season, episode))
+        .concat(yield fetchCachedHubCloudFallbackStreams(mediaInfo, mediaType, season, episode));
     } catch (error) {
       console.error(`[HDHub4u] Scraping error: ${error.message}`);
       return yield fetchExternalHdHubStreams(error && error.mediaInfo && error.mediaInfo.imdbId, mediaType, season, episode);
