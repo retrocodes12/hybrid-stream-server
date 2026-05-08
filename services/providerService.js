@@ -174,7 +174,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'hdhub4u') {
-    return '36';
+    return '37';
   }
 
   if (providerId === 'hdmovie2') {
@@ -186,7 +186,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'showbox') {
-    return '51';
+    return '52';
   }
 
   if (providerId === 'latino-lamovie') {

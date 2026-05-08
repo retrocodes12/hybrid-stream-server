@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream/promises';
-import { createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
 import { createClient } from 'redis';
@@ -39,6 +39,7 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
+const SOURCE_TOKEN_VERSION = 1;
 const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
@@ -253,6 +254,34 @@ const delay = (ms) => new Promise((resolve) => {
   const timer = setTimeout(resolve, ms);
   timer.unref?.();
 });
+
+const getSourceTokenKey = () =>
+  createHash('sha256').update(config.STREAM_SOURCE_TOKEN_SECRET).digest();
+
+const encryptSourceTokenPayload = (value) => {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', getSourceTokenKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return [iv, encrypted, tag].map((part) => part.toString('base64url')).join('.');
+};
+
+const decryptSourceTokenPayload = (value) => {
+  const [iv, encrypted, tag, extra] = String(value || '').split('.');
+
+  if (!iv || !encrypted || !tag || extra !== undefined) {
+    throw createHttpError(400, 'Invalid source token');
+  }
+
+  const decipher = createDecipheriv('aes-256-gcm', getSourceTokenKey(), Buffer.from(iv, 'base64url'));
+  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+
+  return Buffer.concat([
+    decipher.update(Buffer.from(encrypted, 'base64url')),
+    decipher.final()
+  ]).toString('utf8');
+};
 
 const normalizeProviderLabel = (value) =>
   String(value || '')
@@ -1742,6 +1771,20 @@ const isPlainMp4Url = (streamUrl) => {
   }
 };
 
+const isPlainHlsUrl = (streamUrl) => {
+  try {
+    const parsedUrl = new URL(String(streamUrl || '').trim());
+    return parsedUrl.protocol === 'https:' && parsedUrl.pathname.toLowerCase().endsWith('.m3u8');
+  } catch {
+    return false;
+  }
+};
+
+const isWebReadyPlaybackProxyStream = (stream) =>
+  Boolean(stream?.url)
+  && !hasForwardHeaders(getProviderForwardHeaders(stream))
+  && (isPlainMp4Url(stream.url) || isPlainHlsUrl(stream.url));
+
 const getTorrentSources = (magnet) => {
   try {
     const parsedUrl = new URL(String(magnet || '').trim());
@@ -2437,7 +2480,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 65,
+      version: 66,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3380,7 +3423,7 @@ export class StreamManager {
           headers: null,
           behaviorHints: {
             ...stream.behaviorHints,
-            notWebReady: false
+            notWebReady: !isWebReadyPlaybackProxyStream(stream)
           }
         };
       } catch (error) {
@@ -3562,6 +3605,7 @@ export class StreamManager {
     try {
       const descriptor = await this.handleStreamRequest({
         sourceId: req.query.sourceId,
+        sourceToken: req.query.sourceToken,
         type: req.query.type,
         source: req.query.source,
         rangeHeader: req.headers.range
@@ -3687,9 +3731,26 @@ export class StreamManager {
     if (typeof input.sourceId === 'string' && input.sourceId.trim()) {
       const resolved = this.sourceRegistry.get(input.sourceId.trim());
 
-      if (!resolved) {
+      if (!resolved && !input.sourceToken) {
         throw createHttpError(404, 'Source id was not found or has expired');
       }
+
+      if (resolved) {
+        return this.handleStreamRequest({
+          ...input,
+          type: resolved.type,
+          source: resolved.source,
+          headers: resolved.headers,
+          metadata: resolved.metadata,
+          fallback: resolved.fallback,
+          sourceId: null,
+          sourceToken: null
+        });
+      }
+    }
+
+    if (typeof input.sourceToken === 'string' && input.sourceToken.trim()) {
+      const resolved = this.decodeSourceToken(input.sourceToken.trim());
 
       return this.handleStreamRequest({
         ...input,
@@ -3698,7 +3759,8 @@ export class StreamManager {
         headers: resolved.headers,
         metadata: resolved.metadata,
         fallback: resolved.fallback,
-        sourceId: null
+        sourceId: null,
+        sourceToken: null
       });
     }
 
@@ -3806,6 +3868,51 @@ export class StreamManager {
     };
   }
 
+  createSourceToken(preparedSource) {
+    return encryptSourceTokenPayload(JSON.stringify({
+      version: SOURCE_TOKEN_VERSION,
+      expiresAt: Date.now() + (config.STREAM_SOURCE_TOKEN_TTL_SECONDS * 1000),
+      type: preparedSource.type,
+      source: preparedSource.source,
+      headers: preparedSource.headers,
+      metadata: preparedSource.metadata,
+      fallback: preparedSource.fallback
+    }));
+  }
+
+  decodeSourceToken(token) {
+    let parsed;
+
+    try {
+      parsed = JSON.parse(decryptSourceTokenPayload(token));
+    } catch {
+      throw createHttpError(400, 'Invalid source token payload');
+    }
+
+    if (!parsed || parsed.version !== SOURCE_TOKEN_VERSION) {
+      throw createHttpError(400, 'Unsupported source token');
+    }
+
+    if (!Number.isFinite(Number(parsed.expiresAt)) || Number(parsed.expiresAt) <= Date.now()) {
+      throw createHttpError(404, 'Source token has expired');
+    }
+
+    return {
+      type: parsed.type,
+      source: parsed.source,
+      headers: parsed.headers && typeof parsed.headers === 'object' ? { ...parsed.headers } : null,
+      metadata: parsed.metadata && typeof parsed.metadata === 'object' ? { ...parsed.metadata } : null,
+      fallback: parsed.fallback && typeof parsed.fallback === 'object'
+        ? {
+            type: parsed.fallback.type,
+            source: parsed.fallback.source,
+            headers: parsed.fallback.headers && typeof parsed.fallback.headers === 'object' ? { ...parsed.fallback.headers } : null,
+            metadata: parsed.fallback.metadata && typeof parsed.fallback.metadata === 'object' ? { ...parsed.fallback.metadata } : null
+          }
+        : null
+    };
+  }
+
   async createRegisteredStreamUrl(baseUrl, input = {}) {
     const preparedSource = await this.prepareSource(input);
     const sourceId = this.sourceRegistry.register({
@@ -3817,6 +3924,7 @@ export class StreamManager {
     });
     const streamUrl = new URL('/stream', baseUrl);
     streamUrl.searchParams.set('sourceId', sourceId);
+    streamUrl.searchParams.set('sourceToken', this.createSourceToken(preparedSource));
     if (preparedSource.metadata?.filename) {
       streamUrl.searchParams.set('filename', String(preparedSource.metadata.filename).slice(0, 180));
     }

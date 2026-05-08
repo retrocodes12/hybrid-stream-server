@@ -136,6 +136,8 @@ export const config = Object.freeze({
   HTTP_STREAM_RETRY_MAX: toBoundedInteger(process.env.HTTP_STREAM_RETRY_MAX, 2, 0, 6),
   HTTP_STREAM_RETRY_BASE_DELAY_MS: toBoundedInteger(process.env.HTTP_STREAM_RETRY_BASE_DELAY_MS, 250, 50, 5000),
   HTTP_STREAM_CACHE_MAX_BYTES: toPositiveInteger(process.env.HTTP_STREAM_CACHE_MAX_BYTES, 25 * 1024 * 1024),
+  STREAM_SOURCE_TOKEN_TTL_SECONDS: toPositiveInteger(process.env.STREAM_SOURCE_TOKEN_TTL_SECONDS, 6 * 60 * 60),
+  STREAM_SOURCE_TOKEN_SECRET: String(process.env.STREAM_SOURCE_TOKEN_SECRET || process.env.ADMIN_PASSWORD || process.env.STREMIO_ADDON_ID || 'nebulastreams').trim(),
   PUBLIC_RATE_LIMIT_WINDOW_SECONDS: toPositiveInteger(process.env.PUBLIC_RATE_LIMIT_WINDOW_SECONDS, 60),
   PUBLIC_RATE_LIMIT_MAX_REQUESTS: toPositiveInteger(process.env.PUBLIC_RATE_LIMIT_MAX_REQUESTS, 90),
   STREAM_RATE_LIMIT_WINDOW_SECONDS: toPositiveInteger(process.env.STREAM_RATE_LIMIT_WINDOW_SECONDS, 60),
