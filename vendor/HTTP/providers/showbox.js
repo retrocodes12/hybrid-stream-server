@@ -820,8 +820,35 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
                 });
         })
         .then(function ({ mediaInfo, data, directStreams }) {
-            if (directStreams.length > 0) {
-                directStreams.sort(function (a, b) {
+            const fallbackPromise = data
+                ? Promise.resolve(data)
+                : legacyApiRequest().catch(function (error) {
+                    console.log(`[ShowBox] Fallback API unavailable after direct path: ${error.message}`);
+                    return null;
+                });
+
+            return fallbackPromise.then(function (fallbackData) {
+                // Process the response
+                const streams = fallbackData ? processShowBoxResponse(fallbackData, mediaInfo, mediaType, seasonNum, episodeNum) : [];
+                const seenUrls = {};
+                const mergedStreams = [];
+
+                directStreams.concat(streams).forEach(function (stream) {
+                    const key = String(stream && stream.url || '').trim();
+                    if (!key || seenUrls[key]) {
+                        return;
+                    }
+                    seenUrls[key] = true;
+                    mergedStreams.push(stream);
+                });
+
+                if (mergedStreams.length === 0) {
+                    console.log(`[ShowBox] No streams found in API response`);
+                    return [];
+                }
+
+                // Sort streams by quality (highest first)
+                mergedStreams.sort(function (a, b) {
                     const qualityOrder = {
                         'Original': 6,
                         '4K': 5,
@@ -835,36 +862,10 @@ function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = 
                     };
                     return (qualityOrder[b.quality] || -2) - (qualityOrder[a.quality] || -2);
                 });
-                console.log(`[ShowBox] Returning ${directStreams.length} direct stream(s)`);
-                return directStreams;
-            }
 
-            // Process the response
-            const streams = processShowBoxResponse(data, mediaInfo, mediaType, seasonNum, episodeNum);
-
-            if (streams.length === 0) {
-                console.log(`[ShowBox] No streams found in API response`);
-                return [];
-            }
-
-            // Sort streams by quality (highest first)
-            streams.sort(function (a, b) {
-                const qualityOrder = {
-                    'Original': 6,
-                    '4K': 5,
-                    '1440p': 4,
-                    '1080p': 3,
-                    '720p': 2,
-                    '480p': 1,
-                    '360p': 0,
-                    '240p': -1,
-                    'Unknown': -2
-                };
-                return (qualityOrder[b.quality] || -2) - (qualityOrder[a.quality] || -2);
+                console.log(`[ShowBox] Returning ${mergedStreams.length} streams`);
+                return mergedStreams;
             });
-
-            console.log(`[ShowBox] Returning ${streams.length} streams`);
-            return streams;
         })
         .catch(function (error) {
             console.error(`[ShowBox] Error in getStreams: ${error.message}`);

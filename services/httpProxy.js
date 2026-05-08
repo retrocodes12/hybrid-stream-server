@@ -100,6 +100,21 @@ const getContentDispositionFilename = (contentDisposition) => {
   return bareMatch ? bareMatch[1].trim() : '';
 };
 
+const isCacheableStreamingResponse = (headers, contentLength) => {
+  if (!Number.isInteger(contentLength) || contentLength <= 0) {
+    return false;
+  }
+
+  if (contentLength > config.HTTP_STREAM_CACHE_MAX_BYTES) {
+    return false;
+  }
+
+  const contentType = String(headers['content-type'] || headers['Content-Type'] || '').toLowerCase();
+  return !contentType.startsWith('video/')
+    && !contentType.includes('mpegurl')
+    && !contentType.includes('dash+xml');
+};
+
 const getTargetUrlFilenameHint = (targetUrl) => {
   try {
     const parsedUrl = new URL(String(targetUrl || ''));
@@ -254,8 +269,7 @@ export class HttpProxyService {
           : null;
         const shouldCache = !rangeRequested
           && upstreamResponse.status === 200
-          && Number.isInteger(contentLength)
-          && contentLength > 0
+          && isCacheableStreamingResponse(upstreamResponse.headers, contentLength)
           && contentLength <= this.cacheManager.maxCacheSizeBytes;
 
         if (!shouldCache) {

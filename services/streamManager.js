@@ -1237,7 +1237,14 @@ const extractHubCloudRedirectHref = (html) => {
     || markup.match(/window\.location(?:\.href)? ?= ?['"]([^'"]+)['"]/i)
     || markup.match(/location\.replace\(['"]([^'"]+)['"]\)/i)
     || markup.match(/document\.location(?:\.href)? ?= ?['"]([^'"]+)['"]/i)
-    || markup.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i);
+    || markup.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)
+    || markup.match(/location\.assign\(['"]([^'"]+)['"]\)/i)
+    || markup.match(/window\.open\(['"]([^'"]+)/i)
+    || markup.match(/data-(?:url|href|link)\s*=\s*['"]([^'"]+)['"]/i)
+    || markup.match(/<iframe[^>]+src\s*=\s*['"]([^'"]*(?:hubcloud|gamerxyt|hubdrive|hubcdn)[^'"]*)['"]/i)
+    || markup.match(/var\s+\w+\s*=\s*['"]([^'"]*(?:hubcloud|gamerxyt|hubdrive|hubcdn)[^'"]*)['"]/i)
+    || markup.match(/<meta[^>]*http-equiv=["']?refresh["']?[^>]*content=["']?\d+;\s*url=([^"'>\s]+)/i)
+    || markup.match(/https?:\/\/(?:hubcloud\.[a-z.]+|hubdrive\.[a-z.]+|gamerxyt\.com|hubcdn\.fans)[^\s'"<>)]+/i);
 
   return match?.[1] ? stripHtml(match[1]) : null;
 };
@@ -1270,7 +1277,7 @@ const getHubCloudCandidateScore = ({ href, text }) => {
     score += 500;
   }
 
-  if (normalizedText.includes('pixel') || normalizedText.includes('10gbps') || normalizedHref.includes('pixel.')) {
+  if (normalizedText.includes('pixel') || normalizedText.includes('10gbps') || normalizedHref.includes('pixel.') || normalizedHref.includes('hubcdn.fans')) {
     score += 400;
   }
 
@@ -1282,6 +1289,10 @@ const getHubCloudCandidateScore = ({ href, text }) => {
 
   if (normalizedHref.includes('hubcloud') || normalizedHref.includes('gamerxyt.com')) {
     score -= 300;
+  }
+
+  if (normalizedHref.includes('hubdrive') && normalizedText.includes('download')) {
+    score += 120;
   }
 
   return score;
@@ -1301,6 +1312,10 @@ const classifyHubCloudCandidate = ({ href, text }) => {
 
   if (normalizedText.includes('pixelserver') || normalizedText.includes('pixel') || normalizedHref.includes('pixeldrain')) {
     return 'PixelServer';
+  }
+
+  if (normalizedText.includes('10gbps') || normalizedHref.includes('hubcdn.fans')) {
+    return 'Fast';
   }
 
   if (normalizedText.includes('pdl') || normalizedHref.includes('workers.dev')) {
@@ -1326,9 +1341,20 @@ const parseHubCloudSize = (html) => {
   return sizeMatch?.[1] ? stripHtml(sizeMatch[1]) : null;
 };
 
+const hasValidHubCloudDownloadContent = (html) => {
+  const markup = String(html || '');
+
+  return /id=["']size["']/i.test(markup)
+    || />\s*FSL/i.test(markup)
+    || />\s*PixelServer/i.test(markup)
+    || /href=["'][^"']*(?:workers\.dev|hubcdn\.fans|\/api\/file\/|\/u\/)/i.test(markup)
+    || /(?:download-btn|btn-success|btn-danger)/i.test(markup);
+};
+
 const isHubCloudUrl = (streamUrl) => {
   try {
-    return new URL(String(streamUrl || '').trim()).hostname.toLowerCase().includes('hubcloud');
+    const hostname = new URL(String(streamUrl || '').trim()).hostname.toLowerCase();
+    return hostname.includes('hubcloud') || hostname === 'gamerxyt.com';
   } catch {
     return false;
   }
@@ -3824,8 +3850,17 @@ export class StreamManager {
         };
         const initialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
         const redirectHref = extractHubCloudRedirectHref(initialHtml);
+        let redirectUrl = redirectHref ? new URL(redirectHref, normalizedUrl).toString() : normalizedUrl;
+        let linksHtml = initialHtml;
 
-        if (!redirectHref) {
+        if (redirectHref) {
+          linksHtml = await fetchTextWithTimeout(redirectUrl, {
+            headers: {
+              'User-Agent': HUBCLOUD_USER_AGENT,
+              Referer: normalizedUrl
+            }
+          }, 8000);
+        } else if (!hasValidHubCloudDownloadContent(initialHtml)) {
           touchMapEntry(this.hubCloudCache, normalizedUrl, {
             expiresAt: Date.now() + HUBCLOUD_CACHE_TTL_MS,
             value: [],
@@ -3836,13 +3871,21 @@ export class StreamManager {
           return [];
         }
 
-        const redirectUrl = new URL(redirectHref, normalizedUrl).toString();
-        const linksHtml = await fetchTextWithTimeout(redirectUrl, {
-          headers: {
-            'User-Agent': HUBCLOUD_USER_AGENT,
-            Referer: normalizedUrl
+        if (!hasValidHubCloudDownloadContent(linksHtml)) {
+          await delay(2500);
+          const retryInitialHtml = await fetchTextWithTimeout(normalizedUrl, { headers: initialHeaders }, 8000);
+          const retryRedirectHref = extractHubCloudRedirectHref(retryInitialHtml);
+
+          if (retryRedirectHref) {
+            redirectUrl = new URL(retryRedirectHref, normalizedUrl).toString();
+            linksHtml = await fetchTextWithTimeout(redirectUrl, {
+              headers: {
+                'User-Agent': HUBCLOUD_USER_AGENT,
+                Referer: normalizedUrl
+              }
+            }, 8000);
           }
-        }, 8000);
+        }
         const title = parseHubCloudTitle(linksHtml);
         const size = parseHubCloudSize(linksHtml);
         const candidates = extractHubCloudAnchorCandidates(linksHtml)
