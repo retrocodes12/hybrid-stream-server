@@ -15,6 +15,15 @@ const VIDLINK_HEADERS = {
     "Origin": "https://vidlink.pro"
 };
 
+function safeUrlLog(url) {
+    try {
+        const parsed = new URL(String(url || ''));
+        return `${parsed.host}${parsed.pathname.slice(0, 80)}`;
+    } catch {
+        return 'invalid-url';
+    }
+}
+
 // Helper function to make HTTP requests with default headers
 function makeRequest(url, options = {}) {
     const defaultHeaders = {
@@ -38,7 +47,7 @@ function makeRequest(url, options = {}) {
         return response;
     })
     .catch(error => {
-        console.error(`[Vidlink] Request failed for ${url}: ${error.message}`);
+        console.error(`[Vidlink] Request failed for ${safeUrlLog(url)}: ${error.message}`);
         throw error;
     });
 }

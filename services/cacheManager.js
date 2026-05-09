@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createReadStream, createWriteStream, promises as fsPromises } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 
-import { cacheConfig } from '../config.js';
+import { cacheConfig, config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const {
@@ -20,6 +20,12 @@ const {
 } = fsPromises;
 
 const SAFE_KEY_PATTERN = /^[a-z0-9][a-z0-9._-]*$/iu;
+const FLAT_JSON_CACHE_ENTRY_LIMITS = Object.freeze({
+  provider: 10_000,
+  stremio: 5_000,
+  fast: 5_000,
+  imdb: 5_000
+});
 
 const nowIso = () => new Date().toISOString();
 
@@ -30,6 +36,9 @@ export class CacheManager {
     this.rootDir = path.dirname(cacheConfig.HTTP_CACHE_DIR);
     this.httpCacheDir = cacheConfig.HTTP_CACHE_DIR;
     this.providerCacheDir = cacheConfig.PROVIDER_CACHE_DIR;
+    this.stremioResultCacheDir = cacheConfig.STREMIO_RESULT_CACHE_DIR;
+    this.fastResultCacheDir = path.join(this.rootDir, 'fast-results');
+    this.imdbResolverCacheDir = path.join(this.rootDir, 'imdb-resolver');
     this.torrentCacheDir = cacheConfig.TORRENT_CACHE_DIR;
     this.indexDir = path.join(this.rootDir, 'index');
     this.tempDir = path.join(this.rootDir, 'tmp');
@@ -196,6 +205,18 @@ export class CacheManager {
 
     try {
       const fileStats = await stat(dataPath);
+
+      if (fileStats.size > config.HTTP_STREAM_CACHE_MAX_BYTES) {
+        await rm(dataPath, { force: true });
+        await this.removeMetadataByKey(cacheKey);
+        logger.warn('oversized http cache entry evicted', {
+          cacheKey,
+          size: fileStats.size,
+          maxSize: config.HTTP_STREAM_CACHE_MAX_BYTES
+        });
+        return null;
+      }
+
       logger.info('cache hit', {
         cacheKey,
         size: fileStats.size,
@@ -235,7 +256,11 @@ export class CacheManager {
       ? Number.parseInt(upstreamHeaders['content-length'], 10)
       : null;
 
-    if (!Number.isInteger(expectedSize) || expectedSize <= 0) {
+    if (
+      !Number.isInteger(expectedSize)
+      || expectedSize <= 0
+      || expectedSize > config.HTTP_STREAM_CACHE_MAX_BYTES
+    ) {
       writer.destroy();
       await rm(tempPath, { force: true });
       return null;
@@ -378,6 +403,9 @@ export class CacheManager {
       currentCacheSizeBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
       httpEntries: entries.filter((entry) => entry.type === 'http').length,
       providerEntries: entries.filter((entry) => entry.type === 'provider').length,
+      stremioEntries: entries.filter((entry) => entry.type === 'stremio').length,
+      fastResultEntries: entries.filter((entry) => entry.type === 'fast').length,
+      imdbResolverEntries: entries.filter((entry) => entry.type === 'imdb').length,
       torrentEntries: entries.filter((entry) => entry.type === 'torrent').length,
       activeTorrentEntries: activeTorrentPaths.length
     };
@@ -466,7 +494,12 @@ export class CacheManager {
 
   async collectEntries() {
     const metadataFiles = await readdir(this.indexDir, { withFileTypes: true });
-    const entries = await this.collectProviderEntries();
+    const entries = [
+      ...(await this.collectProviderEntries()),
+      ...(await this.collectFlatJsonEntries(this.stremioResultCacheDir, 'stremio')),
+      ...(await this.collectFlatJsonEntries(this.fastResultCacheDir, 'fast')),
+      ...(await this.collectFlatJsonEntries(this.imdbResolverCacheDir, 'imdb'))
+    ];
 
     for (const entry of metadataFiles) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) {
@@ -481,6 +514,17 @@ export class CacheManager {
         const size = metadata.kind === 'file'
           ? (await stat(targetPath)).size
           : Number.isFinite(metadata.size) ? metadata.size : 0;
+
+        if (metadata.path.startsWith('http/') && size > config.HTTP_STREAM_CACHE_MAX_BYTES) {
+          await rm(targetPath, { recursive: true, force: true });
+          await unlink(metadataPath).catch(() => {});
+          logger.warn('oversized http cache entry evicted', {
+            cacheKey: metadata.key,
+            size,
+            maxSize: config.HTTP_STREAM_CACHE_MAX_BYTES
+          });
+          continue;
+        }
 
         entries.push({
           key: metadata.key,
@@ -502,10 +546,14 @@ export class CacheManager {
   }
 
   async collectProviderEntries() {
+    return this.collectFlatJsonEntries(this.providerCacheDir, 'provider');
+  }
+
+  async collectFlatJsonEntries(directoryPath, type) {
     let entries = [];
 
     try {
-      entries = await readdir(this.providerCacheDir, { withFileTypes: true });
+      entries = await readdir(directoryPath, { withFileTypes: true });
     } catch (error) {
       if (error.code === 'ENOENT') {
         return [];
@@ -521,13 +569,13 @@ export class CacheManager {
         continue;
       }
 
-      const entryPath = path.join(this.providerCacheDir, entry.name);
+      const entryPath = path.join(directoryPath, entry.name);
 
       try {
         const fileStats = await stat(entryPath);
         output.push({
           key: entry.name.replace(/\.json$/u, ''),
-          type: 'provider',
+          type,
           path: entryPath,
           size: fileStats.size,
           lastAccessed: fileStats.mtimeMs
@@ -539,7 +587,25 @@ export class CacheManager {
       }
     }
 
-    return output;
+    const maxEntries = FLAT_JSON_CACHE_ENTRY_LIMITS[type] || 10_000;
+
+    if (output.length <= maxEntries) {
+      return output;
+    }
+
+    const sortedEntries = output.sort((left, right) => left.lastAccessed - right.lastAccessed);
+    const entriesToRemove = sortedEntries.slice(0, output.length - maxEntries);
+
+    for (const entry of entriesToRemove) {
+      await rm(entry.path, { force: true });
+      logger.info('flat json cache evicted by entry cap', {
+        cacheKey: entry.key,
+        size: entry.size,
+        type
+      });
+    }
+
+    return sortedEntries.slice(output.length - maxEntries);
   }
 
   async getPathSize(targetPath, kind) {

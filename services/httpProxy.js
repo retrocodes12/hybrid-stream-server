@@ -128,6 +128,21 @@ const getTargetUrlFilenameHint = (targetUrl) => {
   }
 };
 
+const getSafeUrlLogContext = (targetUrl) => {
+  try {
+    const parsedUrl = new URL(String(targetUrl || ''));
+    return {
+      host: parsedUrl.host,
+      path: parsedUrl.pathname.slice(0, 120)
+    };
+  } catch {
+    return {
+      host: 'invalid',
+      path: ''
+    };
+  }
+};
+
 const SYSTEM_CA_PATHS = [
   '/etc/ssl/certs/ca-certificates.crt',
   '/etc/pki/tls/certs/ca-bundle.crt',
@@ -258,7 +273,7 @@ export class HttpProxyService {
 
         const upstreamHeaders = this.filterResponseHeaders(upstreamResponse.headers, targetUrl);
         logger.info('http stream started', {
-          targetUrl,
+          ...getSafeUrlLogContext(targetUrl),
           statusCode: upstreamResponse.status,
           rangeRequested: Boolean(rangeHeader),
           attempt
@@ -337,7 +352,7 @@ export class HttpProxyService {
               await this.cacheManager.pruneCache(this.torrentEngine.getActiveCachePaths());
             } catch (error) {
               logger.error('cache commit failed', {
-                targetUrl,
+                ...getSafeUrlLogContext(targetUrl),
                 error
               });
               await cacheWrite.abort();
@@ -354,7 +369,7 @@ export class HttpProxyService {
         const shouldRetry = attempt < maxAttempts && isRetryableUpstreamError(error);
 
         logger.warn('http stream attempt failed', {
-          targetUrl,
+          ...getSafeUrlLogContext(targetUrl),
           attempt,
           maxAttempts,
           code: error?.code,

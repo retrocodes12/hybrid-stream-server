@@ -1869,7 +1869,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v7',
+      version: 'two-phase-v9',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2165,6 +2165,18 @@ export class ProviderService {
       return existingRequest.then((result) => copyFastSearchResult(result));
     }
 
+    if (!hasExplicitProviders) {
+      const lastGood = await this.getFastLastGoodResult(requestKey);
+      if (lastGood?.streams?.length) {
+        logger.info('serving fast last-good result before default search', {
+          tmdbId: rest.tmdbId,
+          mediaType: rest.mediaType,
+          resultCount: lastGood.streams.length
+        });
+        return lastGood;
+      }
+    }
+
     const executeSearch = async () => {
       try {
         const isAnime = Array.isArray(contentProfile?.tags) && contentProfile.tags.includes('anime');
@@ -2248,15 +2260,32 @@ export class ProviderService {
           if (hasShowboxCredential(rest.privateProviderSettings) && providerIds.includes('showbox')) {
             requiredEarlyProviders.add('showbox');
           }
-          if (!hasExplicitProviders && providerIds.includes('cinestream')) {
-            requiredEarlyProviders.add('cinestream');
+          if (!hasExplicitProviders) {
+            for (const providerId of providerIds) {
+              if (DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS.has(providerId)) {
+                requiredEarlyProviders.add(providerId);
+              }
+            }
           }
           const pending = new Map(providerIds.map((providerId, index) => [
             index,
             runProvider(providerId).then((result) => ({ index, result }))
           ]));
           const results = [];
-          const deadline = Date.now() + config.STREMIO_FAST_MAX_WAIT_MS;
+          const requiredProviderWaitMs = [...requiredEarlyProviders]
+            .filter((providerId) => providerIds.includes(providerId))
+            .reduce((maxWaitMs, providerId) => Math.max(
+              maxWaitMs,
+              (PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs) + 2_000
+            ), 0);
+          const maxFastWaitBeforeRouteTimeout = Math.max(
+            Math.min(config.STREMIO_FAST_MAX_WAIT_MS, 6_500),
+            Math.min(6_500, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS - 10_000)
+          );
+          const deadline = Date.now() + Math.min(
+            Math.max(config.STREMIO_FAST_MAX_WAIT_MS, requiredProviderWaitMs),
+            maxFastWaitBeforeRouteTimeout
+          );
           const minCompletedProviders = Math.min(config.STREMIO_FAST_MIN_COMPLETED_PROVIDERS, providerIds.length);
 
           while (pending.size > 0) {
@@ -2303,16 +2332,25 @@ export class ProviderService {
               resultCount
             });
 
-            const partialReturnError = createHttpError(499, 'Fast search returned partial results');
-            for (const providerId of pendingProviders) {
-              providerAbortControllers.get(providerId)?.abort(partialReturnError);
+            if (resultCount === 0) {
+              const partialReturnError = createHttpError(499, 'Fast search returned empty partial results');
+              for (const providerId of pendingProviders) {
+                providerAbortControllers.get(providerId)?.abort(partialReturnError);
+              }
             }
           }
 
-          return results;
+          return {
+            results,
+            partial: pending.size > 0,
+            pendingProviders: [...pending.keys()].map((index) => providerIds[index])
+          };
         };
 
-        let settledResults = await collectProviderResults(primaryProviderIds);
+        const primaryCollection = await collectProviderResults(primaryProviderIds);
+        let settledResults = primaryCollection.results;
+        let partial = primaryCollection.partial;
+        let pendingProviders = primaryCollection.pendingProviders;
         const primaryStreamCount = settledResults.reduce((count, result) => count + result.streams.length, 0);
         const minimumUsefulDefaultStreams = Math.min(1, config.STREMIO_FAST_EARLY_RETURN_STREAMS);
 
@@ -2324,10 +2362,13 @@ export class ProviderService {
             fallbackProviders: fallbackProviderIds,
             primaryStreamCount
           });
+          const fallbackCollection = await collectProviderResults(fallbackProviderIds);
           settledResults = [
             ...settledResults,
-            ...await collectProviderResults(fallbackProviderIds)
+            ...fallbackCollection.results
           ];
+          partial = partial || fallbackCollection.partial;
+          pendingProviders = [...pendingProviders, ...fallbackCollection.pendingProviders];
         }
 
         const allStreams = settledResults.flatMap((r) => r.streams);
@@ -2357,6 +2398,8 @@ export class ProviderService {
           reason: 'parallel-all',
           providers: allProviderIds,
           tried,
+          partial,
+          pendingProviders,
           streams: limited
         };
       } finally {
@@ -2397,7 +2440,9 @@ export class ProviderService {
       }
     }
 
-    await this.setFastLastGoodResult(requestKey, result);
+    if (!result.partial) {
+      await this.setFastLastGoodResult(requestKey, result);
+    }
     return result;
   }
 

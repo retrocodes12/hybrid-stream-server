@@ -39,7 +39,7 @@ const detectSourceType = (source) => {
 
 const SIGNED_STREAM_CACHE_SAFETY_SECONDS = 60;
 const MIN_SIGNED_STREAM_CACHE_TTL_SECONDS = 15;
-const SOURCE_TOKEN_VERSION = 1;
+const SOURCE_TOKEN_VERSION = 2;
 const CINESTREAM_RESULT_CACHE_TTL_SECONDS = 6 * 60 * 60;
 const DEFAULT_NON_EMPTY_RESULT_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const SHOWBOX_RESULT_CACHE_TTL_SECONDS = 120;
@@ -591,6 +591,7 @@ const pruneMapByApproxBytes = (map, maxBytes, getEntryBytes = (entry) => entry?.
 };
 const HUBCLOUD_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const HUBCLOUD_FETCH_TIMEOUT_MS = 3000;
+const MAX_FETCH_TEXT_BYTES = 1024 * 1024;
 const HUBCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
 
 const normalizeQualityKey = (quality) => {
@@ -723,10 +724,6 @@ const prefersDirectPlayback = (stream) => {
 };
 
 const getStremioRequestBaseUrl = (req) => {
-  if (config.PUBLIC_BASE_URL) {
-    return config.PUBLIC_BASE_URL;
-  }
-
   const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
   const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim();
   const proto = forwardedProto || req.protocol || 'https';
@@ -734,12 +731,21 @@ const getStremioRequestBaseUrl = (req) => {
   return `${proto}://${host}`;
 };
 
+const getManifestInstallUrls = (req, manifestPath) => {
+  const baseUrl = getStremioRequestBaseUrl(req);
+  const manifestUrl = `${baseUrl}${manifestPath}`;
+
+  return {
+    manifestUrl,
+    stremioInstallUrl: `stremio://addon-install?addon=${encodeURIComponent(manifestUrl)}`
+  };
+};
+
 const needsRegisteredPlaybackProxy = (stream) => {
   if (stream?.transport !== 'http' || !stream.url) {
     return false;
   }
 
-  const providerId = String(stream.provider || '').trim().toLowerCase();
   const forwardHeaders = getProviderForwardHeaders(stream);
 
   if (isRegisteredProxyOnlyUrl(stream.url)) {
@@ -747,7 +753,7 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   if (hasForwardHeaders(forwardHeaders)) {
-    return providerId !== 'cinestream';
+    return false;
   }
 
   if (prefersDirectPlayback(stream)) {
@@ -1323,13 +1329,52 @@ const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
       ...options,
       signal: controller.signal
     });
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    return response.text();
+    const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+
+    if (contentLength > MAX_FETCH_TEXT_BYTES || contentType.startsWith('video/')) {
+      await response.body?.cancel?.();
+      throw new Error(`Response too large for text fetch (${contentLength || 'unknown'} bytes)`);
+    }
+
+    if (!response.body) {
+      const text = await response.text();
+      clearTimeout(timeoutId);
+      return text;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let receivedBytes = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        receivedBytes += value.byteLength;
+
+        if (receivedBytes > MAX_FETCH_TEXT_BYTES) {
+          await reader.cancel();
+          throw new Error(`Response too large for text fetch (${receivedBytes} bytes)`);
+        }
+
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    clearTimeout(timeoutId);
+    return new TextDecoder().decode(Buffer.concat(chunks));
   } catch (error) {
     clearTimeout(timeoutId);
     throw error;
@@ -2332,7 +2377,7 @@ export class StreamManager {
     };
 
     const intervalMs = config.POPULAR_STREAM_PREWARM_INTERVAL_SECONDS * 1000;
-    this.popularStreamPrewarmInitialTimer = setTimeout(runPrewarm, Math.min(60_000, intervalMs));
+    this.popularStreamPrewarmInitialTimer = setTimeout(runPrewarm, Math.min(10_000, intervalMs));
     this.popularStreamPrewarmInitialTimer.unref();
     this.popularStreamPrewarmTimer = setInterval(runPrewarm, intervalMs);
     this.popularStreamPrewarmTimer.unref();
@@ -2583,7 +2628,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 73,
+      version: 75,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -2786,9 +2831,13 @@ export class StreamManager {
     }
 
     if (shouldPersistLastGoodStreamSet(streams)) {
+      const lastGoodTtlMs = Math.min(
+        config.STREMIO_LAST_GOOD_TTL_SECONDS * 1000,
+        freshTtlMs
+      );
       const lastGoodEntry = {
-        expiresAt: now + (config.STREMIO_LAST_GOOD_TTL_SECONDS * 1000),
-        staleExpiresAt: now + (config.STREMIO_LAST_GOOD_TTL_SECONDS * 1000),
+        expiresAt: now + lastGoodTtlMs,
+        staleExpiresAt: now + lastGoodTtlMs,
         weak: false,
         approxBytes: getSerializedApproxBytes(serializedStreams),
         serializedStreams
@@ -3238,6 +3287,14 @@ export class StreamManager {
         privateProviderSettings
       };
 
+      if (lastGoodStreams?.length && getLastGoodStreamSetScore(lastGoodStreams) > 0) {
+        this.scheduleStremioBackgroundRefresh(buildInput);
+        res.setHeader('X-NebulaStreams-Cache', 'last-good-refreshing');
+        clearTimeout(overallTimeout);
+        this.sendStremioStreamsResponse(res, lastGoodStreams);
+        return;
+      }
+
       if (cachedResult?.state === 'stale') {
         this.scheduleStremioBackgroundRefresh(buildInput);
         res.setHeader('X-NebulaStreams-Cache', 'stale');
@@ -3548,7 +3605,7 @@ export class StreamManager {
         return stream;
       }
     }));
-    const useWeakCache = shouldUseWeakResultCache(playbackStreams);
+    const useWeakCache = Boolean(result.partial) || shouldUseWeakResultCache(playbackStreams);
     const hasCinestream = playbackStreams.some((stream) =>
       String(stream?.provider || '').trim().toLowerCase() === 'cinestream'
     );
@@ -3559,8 +3616,24 @@ export class StreamManager {
       .map((stream) => toStremioStreamObject(stream, parsed, streamOptions))
       .filter(Boolean);
 
-    if (cacheResult) {
+    if (cacheResult && !result.partial) {
       await this.setCachedStremioStreams(resultCacheKey, stremioStreams, { weak: useWeakCache, hasCinestream, hasShowbox });
+    } else if (cacheResult && result.partial && stremioStreams.length > 0) {
+      const refreshInput = {
+        resultCacheKey,
+        baseUrl,
+        parsed,
+        requestedProviders,
+        qualityPriority,
+        streamOptions,
+        tmdbId,
+        privateProviderSettings
+      };
+
+      const refreshDelay = setTimeout(() => {
+        this.scheduleStremioBackgroundRefresh(refreshInput);
+      }, 8_000);
+      refreshDelay.unref?.();
     }
 
     return stremioStreams;
@@ -3634,10 +3707,12 @@ export class StreamManager {
         privateProviderSettings: req.body?.privateProviderSettings,
         profileCode: req.body?.profileCode
       });
+      const installUrls = getManifestInstallUrls(req, manifestPath);
 
       res.json({
         configId,
-        manifestPath
+        manifestPath,
+        ...installUrls
       });
     } catch (error) {
       next(error);

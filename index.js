@@ -3109,7 +3109,9 @@ const isStremioManifestPath = (pathName) =>
   pathName === '/manifest.json'
   || pathName === '/stremio/manifest.json'
   || pathName.endsWith('/manifest.json')
-  || pathName.endsWith('/stremio/manifest.json');
+  || pathName.endsWith('/stremio/manifest.json')
+  || /^\/private\/[^/]+$/u.test(pathName)
+  || /^\/configured\/[^/]+(?:\/[^/]+){0,2}$/u.test(pathName);
 
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
@@ -3117,6 +3119,46 @@ const isBotProtectionIgnoredPath = (pathName) =>
   || pathName.startsWith('/assets/')
   || pathName === '/favicon.ico'
   || isStremioManifestPath(pathName);
+
+const isAddonJsonPath = (pathName) =>
+  pathName === '/manifest.json'
+  || pathName === '/stremio/manifest.json'
+  || pathName.startsWith('/stream/')
+  || pathName.startsWith('/stremio/stream/')
+  || pathName.startsWith('/preview/')
+  || pathName.startsWith('/stremio/preview/')
+  || (pathName.startsWith('/configured/') && (pathName.includes('/stream/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')))
+  || (pathName.startsWith('/private/') && (pathName.includes('/stream/') || pathName.includes('/preview/') || pathName.endsWith('/manifest.json')));
+
+const isAddonJsonRequest = (req, pathName) => {
+  if ((req.method || 'GET').toUpperCase() !== 'GET') {
+    return false;
+  }
+
+  if (!isAddonJsonPath(pathName) || (!pathName.endsWith('.json') && !pathName.endsWith('/manifest.json'))) {
+    return false;
+  }
+
+  const accepts = String(req.headers.accept || '').toLowerCase();
+  const fetchDest = String(req.headers['sec-fetch-dest'] || '').toLowerCase();
+
+  return fetchDest !== 'document' && !accepts.includes('text/html');
+};
+
+const isRegisteredPlaybackRequest = (req, pathName) => {
+  if ((req.method || 'GET').toUpperCase() !== 'GET') {
+    return false;
+  }
+
+  if (pathName !== '/stream') {
+    return false;
+  }
+
+  const sourceToken = typeof req.query?.sourceToken === 'string' ? req.query.sourceToken.trim() : '';
+  const sourceId = typeof req.query?.sourceId === 'string' ? req.query.sourceId.trim() : '';
+
+  return sourceToken.length >= 24 || sourceId.length >= 12;
+};
 
 const isExpensiveBotProtectionPath = (pathName) =>
   pathName === '/stream'
@@ -3273,7 +3315,13 @@ const createBotProtection = () => {
   };
 
   return (req, res, next) => {
-    if (!config.BOT_PROTECTION_ENABLED || req.method === 'OPTIONS' || isBotProtectionIgnoredPath(req.path)) {
+    if (
+      !config.BOT_PROTECTION_ENABLED
+      || req.method === 'OPTIONS'
+      || isBotProtectionIgnoredPath(req.path)
+      || isAddonJsonRequest(req, req.path || '')
+      || isRegisteredPlaybackRequest(req, req.path || '')
+    ) {
       next();
       return;
     }
@@ -3557,7 +3605,7 @@ const bootstrap = async () => {
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept, Origin, User-Agent');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept, Origin, User-Agent, Authorization, X-Requested-With, Accept-Language');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -3746,12 +3794,16 @@ const bootstrap = async () => {
   app.get('/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.post('/configure/private-config', streamManager.handleCreatePrivateConfig.bind(streamManager));
+  app.get('/configured/:providerConfig', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/configured/:providerConfig/:qualityConfig/:optionConfig', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/configured/:providerConfig/:qualityConfig/:optionConfig/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
+  app.get('/private/:privateConfigId', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/private/:privateConfigId/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/private/:privateConfigId/stremio/manifest.json', streamManager.handleStremioManifest.bind(streamManager));
   app.get('/stream/:type/:id.json', streamManager.handleStremioStreams.bind(streamManager));
