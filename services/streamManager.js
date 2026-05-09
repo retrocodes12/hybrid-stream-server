@@ -2628,7 +2628,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 76,
+      version: 79,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3527,6 +3527,17 @@ export class StreamManager {
           this.scheduleStremioBackgroundRefresh(refreshInput);
         }, 8_000);
         refreshDelay.unref?.();
+
+        if (parsed.mediaType === 'series') {
+          const hubRefreshDelay = setTimeout(() => {
+            this.scheduleStremioBackgroundRefresh(refreshInput);
+          }, 24_000);
+          hubRefreshDelay.unref?.();
+          const slowHubRefreshDelay = setTimeout(() => {
+            this.scheduleStremioBackgroundRefresh(refreshInput);
+          }, 34_000);
+          slowHubRefreshDelay.unref?.();
+        }
       }
 
       if (cacheResult && shouldCacheEmptyFastResult(result)) {
@@ -3651,6 +3662,17 @@ export class StreamManager {
         this.scheduleStremioBackgroundRefresh(refreshInput);
       }, 8_000);
       refreshDelay.unref?.();
+
+      if (parsed.mediaType === 'series') {
+        const hubRefreshDelay = setTimeout(() => {
+          this.scheduleStremioBackgroundRefresh(refreshInput);
+        }, 24_000);
+        hubRefreshDelay.unref?.();
+        const slowHubRefreshDelay = setTimeout(() => {
+          this.scheduleStremioBackgroundRefresh(refreshInput);
+        }, 34_000);
+        slowHubRefreshDelay.unref?.();
+      }
     }
 
     return stremioStreams;

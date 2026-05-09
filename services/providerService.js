@@ -551,10 +551,10 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   'arabic-cineby': 25
 });
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
-  '4khdhub': 18,
-  '4khdhub_tv': 18,
+  '4khdhub': 28,
+  '4khdhub_tv': 28,
   cinestream: 45,
-  hdhub4u: 18,
+  hdhub4u: 28,
   playimdb: 10,
   playimdb_v2: 10,
   uhdmovies: 45,
@@ -568,10 +568,10 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   streamflix: 12
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
-  '4khdhub': 22_000,
-  '4khdhub_tv': 22_000,
+  '4khdhub': 32_000,
+  '4khdhub_tv': 32_000,
   cinestream: 55_000,
-  hdhub4u: 22_000,
+  hdhub4u: 32_000,
   uhdmovies: 55_000,
   moviesmod: 18_000,
   streamflix: 18_000,
@@ -1872,7 +1872,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v11',
+      version: 'two-phase-v14',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2256,7 +2256,13 @@ export class ProviderService {
 
         const collectProviderResults = async (providerIds) => {
           if (hasExplicitProviders) {
-            return Promise.all(providerIds.map(runProvider));
+            const results = await Promise.all(providerIds.map(runProvider));
+
+            return {
+              results,
+              partial: false,
+              pendingProviders: []
+            };
           }
 
           const requiredEarlyProviders = new Set();
@@ -2314,9 +2320,15 @@ export class ProviderService {
             const pendingRequiredProviders = [...pending.keys()]
               .map((index) => providerIds[index])
               .filter((providerId) => requiredEarlyProviders.has(providerId));
+            const pendingHighValueSeriesProviders = rest.mediaType === 'tv'
+              ? [...pending.keys()]
+                .map((index) => providerIds[index])
+                .filter((providerId) => providerId === '4khdhub' || providerId === '4khdhub_tv' || providerId === 'hdhub4u')
+              : [];
             if (
               results.length >= minCompletedProviders &&
               streamCount >= config.STREMIO_FAST_EARLY_RETURN_STREAMS &&
+              (pendingHighValueSeriesProviders.length === 0 || streamCount >= 6) &&
               pendingRequiredProviders.length === 0
             ) {
               break;
