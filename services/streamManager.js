@@ -2628,7 +2628,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 75,
+      version: 76,
       tmdbId,
       mediaType,
       season: season ?? null,
@@ -3512,6 +3512,23 @@ export class StreamManager {
     });
 
     if (result.streams.length === 0) {
+      if (cacheResult && result.partial) {
+        const refreshInput = {
+          resultCacheKey,
+          baseUrl,
+          parsed,
+          requestedProviders,
+          qualityPriority,
+          streamOptions,
+          tmdbId,
+          privateProviderSettings
+        };
+        const refreshDelay = setTimeout(() => {
+          this.scheduleStremioBackgroundRefresh(refreshInput);
+        }, 8_000);
+        refreshDelay.unref?.();
+      }
+
       if (cacheResult && shouldCacheEmptyFastResult(result)) {
         await this.setCachedStremioStreams(resultCacheKey, []);
       } else if (!cacheResult) {

@@ -674,13 +674,13 @@ const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'v
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'onetouchtv', 'vidsrc', 'vixsrc']);
 const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies', 'onetouchtv']);
 const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'castle', 'moviebox', 'vidlink', 'cinestream']);
-const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'vidsrc', 'vixsrc', 'castle', 'cinestream', 'vidlink', 'moviebox']);
+const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'moviebox', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc', 'castle']);
 const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'animepahe', 'moviebox']);
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
 const ASIAN_DRAMA_FAST_PRIORITY_PROVIDERS = Object.freeze(['kisskh', 'onlykdrama', 'hdhub4u', '4khdhub_tv', '4khdhub', 'moviebox', 'vidlink', 'vixsrc', 'vidsrc', 'cinestream', 'showbox']);
 const PRIMARY_FAST_PROVIDER_IDS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'flixindia', 'tamilian', 'playimdb']);
-const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'cinestream']);
+const DEFAULT_EARLY_RETURN_BLOCKING_PROVIDERS = new Set([]);
 const BROKEN_ANIME_FAST_PROVIDERS = new Set(['anime-sama']);
 const FAST_PROVIDER_STAGGER_DELAYS_MS = Object.freeze([100, 200, 300]);
 const FAST_RESULT_LAST_GOOD_TTL_MS = Math.max(
@@ -748,6 +748,9 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     uhdmovies: 223,
     hdhub4u: 220,
     gramcinema: 212,
+    moviebox: 208,
+    vidlink: 180,
+    cinestream: 175,
     onetouchtv: 130,
     flixindia: 205,
     tamilian: 165,
@@ -1869,7 +1872,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v9',
+      version: 'two-phase-v11',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2279,8 +2282,8 @@ export class ProviderService {
               (PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs) + 2_000
             ), 0);
           const maxFastWaitBeforeRouteTimeout = Math.max(
-            Math.min(config.STREMIO_FAST_MAX_WAIT_MS, 6_500),
-            Math.min(6_500, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS - 10_000)
+            Math.min(config.STREMIO_FAST_MAX_WAIT_MS, 14_000),
+            Math.min(14_000, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS - 8_000)
           );
           const deadline = Date.now() + Math.min(
             Math.max(config.STREMIO_FAST_MAX_WAIT_MS, requiredProviderWaitMs),
@@ -2331,13 +2334,6 @@ export class ProviderService {
               pendingProviders,
               resultCount
             });
-
-            if (resultCount === 0) {
-              const partialReturnError = createHttpError(499, 'Fast search returned empty partial results');
-              for (const providerId of pendingProviders) {
-                providerAbortControllers.get(providerId)?.abort(partialReturnError);
-              }
-            }
           }
 
           return {

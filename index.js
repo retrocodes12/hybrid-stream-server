@@ -3115,6 +3115,7 @@ const isStremioManifestPath = (pathName) =>
 
 const isBotProtectionIgnoredPath = (pathName) =>
   pathName === '/health'
+  || pathName === '/configure/private-config'
   || pathName.startsWith('/admin')
   || pathName.startsWith('/assets/')
   || pathName === '/favicon.ico'
