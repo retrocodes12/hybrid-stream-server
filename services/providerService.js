@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { createHttpError } from './streamManager.js';
+import { PluginProviderRegistry } from '../src/registry/pluginProviderRegistry.js';
 import { Agent } from 'undici';
 
 const require = createRequire(import.meta.url);
@@ -219,6 +220,10 @@ const getProviderCacheVersion = (providerId) => {
 
   if (providerId === 'netmirror') {
     return '40';
+  }
+
+  if (providerId === 'nuvio') {
+    return '2';
   }
 
   return '23';
@@ -534,6 +539,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   kisskh: 15,
   onlykdrama: 18,
   streamflix: 18,
+  nuvio: 18,
   toflix: 25,
   vidsrc: 20,
   vidlink: 20,
@@ -565,6 +571,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   kisskh: 10,
   multivid: 10,
   onlykdrama: 12,
+  nuvio: 16,
   streamflix: 12
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
@@ -582,6 +589,7 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   kisskh: 15_000,
   onlykdrama: 18_000,
   showbox: 45_000,
+  nuvio: 18_000,
   gramcinema: 20_000,
   onetouchtv: 20_000
 });
@@ -606,6 +614,7 @@ const getProviderTimeoutSeconds = (providerId, params = null) => {
   return PROVIDER_TIMEOUT_OVERRIDES_SECONDS[providerId] || config.PROVIDER_TIMEOUT_SECONDS;
 };
 const PROVIDER_PRIORITY = [
+  'nuvio',
   '4khdhub',
   '4khdhub_tv',
   'uhdmovies',
@@ -674,7 +683,7 @@ const WEB_READY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'v
 const DEFAULT_DIVERSITY_FALLBACK_PROVIDERS = Object.freeze(['moviebox', 'streamflix', 'videasy', 'fmovies', 'rgshows', 'multivid', 'playimdb', 'vidzee', 'onetouchtv', 'vidsrc', 'vixsrc']);
 const CATALOG_MOVIE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'vidsrc', 'vixsrc', 'moviebox', 'vidlink', 'cinestream', 'streamflix', 'videasy', 'fmovies', 'onetouchtv']);
 const OLD_TITLE_FALLBACK_PROVIDERS = Object.freeze(['vidsrc', 'vixsrc', 'castle', 'moviebox', 'vidlink', 'cinestream']);
-const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'moviebox', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc', 'castle']);
+const OLD_TITLE_PRIORITY_PROVIDERS = Object.freeze(['nuvio', '4khdhub', '4khdhub_tv', 'uhdmovies', 'hdhub4u', 'moviebox', 'vidlink', 'cinestream', 'vidsrc', 'vixsrc', 'castle']);
 const OLD_TITLE_PRIMARY_PROVIDERS = Object.freeze(['4khdhub', '4khdhub_tv', 'hdhub4u', 'uhdmovies']);
 const UNKNOWN_TV_PROFILE_FALLBACK_PROVIDERS = Object.freeze(['playimdb', 'animekai', 'animeworld', 'animesalt', 'animepahe', 'moviebox']);
 const ANIME_PHASE_ONE_PRIORITY_PROVIDERS = Object.freeze(['animekai', 'animeworld', 'animesalt', 'moviebox', 'kisskh', '4khdhub_tv', '4khdhub']);
@@ -713,6 +722,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     '4khdhub_tv': 168,
     '4khdhub': 166,
     hdhub4u: 150,
+    nuvio: 148,
     'it-animeunity': 120,
     'it-animeworld': 115,
     'it-animesaturn': 110,
@@ -747,6 +757,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     '4khdhub_tv': 225,
     uhdmovies: 223,
     hdhub4u: 220,
+    nuvio: 218,
     gramcinema: 212,
     moviebox: 208,
     vidlink: 180,
@@ -813,6 +824,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   '4khdhub': 165,
   '4khdhub_tv': 160,
   hdhub4u: 150,
+  nuvio: 148,
   uhdmovies: 145,
   vidlink: 120,
   onetouchtv: 116,
@@ -1612,6 +1624,15 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export class ProviderService {
   constructor() {
     this.providers = discoverProviders();
+    this.pluginProviderRegistry = new PluginProviderRegistry({
+      cacheDir: config.CACHE_DIR,
+      logger
+    });
+    for (const providerConfig of this.pluginProviderRegistry.getProviderConfigs()) {
+      if (!DISABLED_PROVIDER_IDS.has(providerConfig.id)) {
+        this.providers.set(providerConfig.id, providerConfig);
+      }
+    }
     this.providerCacheDir = path.join(config.CACHE_DIR, 'provider-results');
     this.fastResultCacheDir = path.join(config.CACHE_DIR, 'fast-results');
     this.moduleCache = new Map();
@@ -1872,7 +1893,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v14',
+      version: 'two-phase-v15',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2325,10 +2346,17 @@ export class ProviderService {
                 .map((index) => providerIds[index])
                 .filter((providerId) => providerId === '4khdhub' || providerId === '4khdhub_tv' || providerId === 'hdhub4u')
               : [];
+            const hasOnlyWeakNuvioResult = results.length > 0
+              && results.every((result) => result.provider === 'nuvio')
+              && streamCount < 3
+              && [...pending.keys()]
+                .map((index) => providerIds[index])
+                .some((providerId) => providerId === 'moviebox' || providerId === 'vidlink' || providerId === 'cinestream');
             if (
               results.length >= minCompletedProviders &&
               streamCount >= config.STREMIO_FAST_EARLY_RETURN_STREAMS &&
               (pendingHighValueSeriesProviders.length === 0 || streamCount >= 6) &&
+              !hasOnlyWeakNuvioResult &&
               pendingRequiredProviders.length === 0
             ) {
               break;
@@ -3402,6 +3430,22 @@ export class ProviderService {
   }
 
   async invokeProvider(providerConfig, providerId, params) {
+    if (providerConfig.kind === 'plugin-adapter') {
+      const adapter = this.pluginProviderRegistry.getAdapter(providerConfig.adapterId);
+
+      if (!adapter) {
+        throw createHttpError(500, `Plugin adapter ${providerConfig.adapterId} is not registered`);
+      }
+
+      return adapter.getStreams({
+        tmdbId: params.tmdbId,
+        mediaType: params.mediaType,
+        season: params.season,
+        episode: params.episode,
+        signal: params.signal
+      });
+    }
+
     if (providerConfig.invocation === 'subprocess') {
       return this.invokeProviderSubprocess(providerConfig, providerId, params);
     }
