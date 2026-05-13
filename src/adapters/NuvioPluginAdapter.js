@@ -10,23 +10,22 @@ const require = createRequire(import.meta.url);
 const DEFAULT_MANIFEST_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/manifest.json';
 const DEFAULT_RAW_BASE_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All-in-One-Nuvio/refs/heads/main/';
 const DEFAULT_PROVIDER_ORDER = Object.freeze([
-  '4khdhubnew',
-  '4khdhub',
   'moviebox',
   'vidlink',
-  'cinestream',
-  'uhdmovies',
-  'hdhub4u',
-  'moviesdrive',
-  'movies4u',
-  'dahmermovies-4k',
   'movieblast',
-  'moviesmod',
   'hdmovie2',
-  'vegamovies',
-  'allmovieland',
   'netmirror',
   'netmirrornew',
+  'movies4u',
+  'moviesdrive',
+  'allmovieland',
+  'cinestream',
+  '4khdhubnew',
+  '4khdhub',
+  'uhdmovies',
+  'hdhub4u',
+  'dahmermovies-4k',
+  'moviesmod',
   'vidsync',
   'videasy',
   'vixsrc',
@@ -45,8 +44,8 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     manifestUrl = DEFAULT_MANIFEST_URL,
     rawBaseUrl = DEFAULT_RAW_BASE_URL,
     providerOrder = DEFAULT_PROVIDER_ORDER,
-    maxProvidersPerRequest = 18,
-    providerTimeoutMs = 7_000,
+    maxProvidersPerRequest = 20,
+    providerTimeoutMs = 8_000,
     overallTimeoutMs = 15_000
   }) {
     super({ id: 'nuvio', logger });
@@ -159,10 +158,19 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       require,
       fetch: globalThis.fetch,
       console: this.createPluginConsole(filename),
+      AbortController,
+      AbortSignal,
+      Headers,
+      Request,
+      Response,
       URL,
       URLSearchParams,
+      TextDecoder,
+      TextEncoder,
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
       Buffer,
       process: {
         env: process.env
@@ -170,6 +178,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       global: {}
     };
     sandbox.global = sandbox;
+    sandbox.globalThis = sandbox;
 
     vm.runInNewContext(script, sandbox, {
       filename,
