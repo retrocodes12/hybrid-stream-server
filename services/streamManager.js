@@ -1301,11 +1301,11 @@ const diversifyStreamsByProvider = (streams, { leadingCount = 5, softLimit = 6 }
 
 const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) => {
   if (!Array.isArray(streams) || streams.length === 0) {
-    return { leadingCount: 5, softLimit: 6 };
+    return { leadingCount: 8, softLimit: 12 };
   }
 
   if (Array.isArray(requestedProviders) && requestedProviders.length > 0) {
-    return { leadingCount: 5, softLimit: 6 };
+    return { leadingCount: 8, softLimit: 12 };
   }
 
   const fallbackProviderSet = new Set(['vidsrc', 'vixsrc', 'cinestream', 'vidlink', 'moviebox']);
@@ -1314,10 +1314,10 @@ const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) =>
   );
 
   if (hasFallbackProviders) {
-    return { leadingCount: 3, softLimit: 2 };
+    return { leadingCount: 6, softLimit: 4 };
   }
 
-  return { leadingCount: 5, softLimit: 6 };
+  return { leadingCount: 8, softLimit: 12 };
 };
 
 const fetchTextWithTimeout = async (url, options = {}, timeout = 8000) => {
@@ -2628,7 +2628,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 86,
+      version: 92,
       tmdbId,
       mediaType,
       season: season ?? null,

@@ -223,7 +223,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'nuvio') {
-    return '8';
+    return '10';
   }
 
   return '23';
@@ -1918,7 +1918,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v21',
+      version: 'two-phase-v25',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2334,8 +2334,8 @@ export class ProviderService {
               (PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS[providerId] || defaultProviderParallelTimeoutMs) + 2_000
             ), 0);
           const maxFastWaitBeforeRouteTimeout = Math.max(
-            Math.min(config.STREMIO_FAST_MAX_WAIT_MS, 14_000),
-            Math.min(14_000, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS - 8_000)
+            Math.min(config.STREMIO_FAST_MAX_WAIT_MS, 19_000),
+            Math.min(19_000, config.STREMIO_STREAM_OVERALL_TIMEOUT_MS - 3_000)
           );
           const deadline = Date.now() + Math.min(
             Math.max(config.STREMIO_FAST_MAX_WAIT_MS, requiredProviderWaitMs),
@@ -2445,7 +2445,7 @@ export class ProviderService {
 
         const perProviderSoftLimit = hasExplicitProviders
           ? Infinity
-          : (allStreams.some((s) => ANIME_SPECIALIST_PROVIDERS.has(s.provider)) ? 2 : 4);
+          : (allStreams.some((s) => ANIME_SPECIALIST_PROVIDERS.has(s.provider)) ? 6 : 10);
 
         const ranked = mergeAndRankProviderStreams(
           settledResults.map((r) => ({ provider: r.provider, streams: r.streams })),
