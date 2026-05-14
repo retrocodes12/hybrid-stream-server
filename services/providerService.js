@@ -223,11 +223,18 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'nuvio') {
-    return '4';
+    return '5';
   }
 
   return '23';
 };
+
+const normalizeProviderMediaType = (mediaType) => {
+  const normalized = String(mediaType || 'movie').trim().toLowerCase();
+  if (normalized === 'series' || normalized === 'tv') return 'tv';
+  return 'movie';
+};
+
 const hasShowboxCredential = (privateProviderSettings = null) => Boolean(
   String(privateProviderSettings?.febboxUiCookie || '').trim()
   || String(process.env.SHOWBOX_UI_TOKEN || process.env.SHOWBOX_COOKIE || '').trim()
@@ -1893,11 +1900,11 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v17',
+      version: 'two-phase-v18',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
-      mediaType: String(mediaType || 'movie').trim().toLowerCase(),
+      mediaType: normalizeProviderMediaType(mediaType),
       season: toOptionalInteger(season),
       episode: toOptionalInteger(episode),
       webReadyOnly: Boolean(streamOptions?.webReadyOnly),
@@ -2507,7 +2514,7 @@ export class ProviderService {
       throw createHttpError(400, 'tmdbId must be a positive integer');
     }
 
-    const normalizedMediaType = String(mediaType || 'movie').trim().toLowerCase();
+    const normalizedMediaType = normalizeProviderMediaType(mediaType);
 
     if (normalizedMediaType !== 'movie' && normalizedMediaType !== 'tv') {
       throw createHttpError(400, 'mediaType must be movie or tv');

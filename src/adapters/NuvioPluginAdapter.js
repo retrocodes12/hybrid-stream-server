@@ -37,6 +37,12 @@ const DEFAULT_PROVIDER_ORDER = Object.freeze([
   'rgshows'
 ]);
 
+const toNuvioMediaType = (mediaType) => {
+  const normalized = String(mediaType || 'movie').trim().toLowerCase();
+  if (normalized === 'series' || normalized === 'tv') return 'tv';
+  return 'movie';
+};
+
 export class NuvioPluginAdapter extends PluginProviderAdapter {
   constructor({
     cache,
@@ -80,7 +86,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
 
   selectPlugins(manifest, request) {
     const scrapers = Array.isArray(manifest?.scrapers) ? manifest.scrapers : [];
-    const mediaType = request.mediaType === 'tv' ? 'tv' : 'movie';
+    const mediaType = toNuvioMediaType(request.mediaType);
     const enabled = scrapers.filter((scraper) =>
       scraper?.enabled !== false
       && scraper?.filename
@@ -108,7 +114,7 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       const rawStreams = await withTimeout(
         () => Promise.resolve(module.getStreams(
           request.tmdbId,
-          request.mediaType,
+          toNuvioMediaType(request.mediaType),
           request.season,
           request.episode
         )),
