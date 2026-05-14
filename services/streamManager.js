@@ -682,6 +682,15 @@ const shouldCacheEmptyFastResult = (result) =>
 const hasForwardHeaders = (headers) =>
   Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
 
+const hasSensitiveForwardHeaders = (headers) => {
+  if (!hasForwardHeaders(headers)) {
+    return false;
+  }
+
+  const headerNames = Object.keys(headers).map((headerName) => headerName.toLowerCase());
+  return headerNames.includes('cookie') || headerNames.includes('authorization');
+};
+
 const getProviderForwardHeaders = (stream) => {
   if (hasForwardHeaders(stream?.headers)) {
     return { ...stream.headers };
@@ -702,6 +711,11 @@ const isTrustedDirectHttpStream = (stream) =>
   Boolean(stream.url) &&
   !hasForwardHeaders(stream.headers) &&
   isHighValueCacheStream(stream);
+
+const isProxyReadyHttpStream = (stream) =>
+  stream.transport === 'http' &&
+  Boolean(stream.url) &&
+  hasSensitiveForwardHeaders(getProviderForwardHeaders(stream));
 
 const isRegisteredProxyOnlyUrl = (streamUrl) => {
   try {
@@ -753,6 +767,10 @@ const needsRegisteredPlaybackProxy = (stream) => {
   }
 
   if (hasForwardHeaders(forwardHeaders)) {
+    if (hasSensitiveForwardHeaders(forwardHeaders)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -994,7 +1012,7 @@ const filterConfiguredStreamsDetailed = (streams, streamOptions) => {
 
     if (stream.transport !== 'http') {
       reason = 'nonHttp';
-    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream)) {
+    } else if (streamOptions.webReadyOnly && !isWebReadyHttpStream(stream) && !isTrustedDirectHttpStream(stream) && !isProxyReadyHttpStream(stream)) {
       reason = 'notWebReady';
     } else if (streamOptions.hideHeavyFormats && hasHeavyFormatTraits(stream)) {
       reason = 'heavyFormat';
@@ -2628,7 +2646,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 92,
+      version: 94,
       tmdbId,
       mediaType,
       season: season ?? null,

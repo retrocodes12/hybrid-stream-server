@@ -223,7 +223,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'nuvio') {
-    return '10';
+    return '11';
   }
 
   return '23';
@@ -1918,7 +1918,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v25',
+      version: 'two-phase-v27',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
