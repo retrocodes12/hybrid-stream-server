@@ -3094,7 +3094,7 @@ export class StreamManager {
 
     res.json({
       id: addonPresentation.addonId,
-      version: '1.0.3',
+      version: '1.0.4',
       name: addonPresentation.addonName,
       description: addonPresentation.description,
       resources: [{
