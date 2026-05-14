@@ -12,6 +12,9 @@ const DEFAULT_RAW_BASE_URL = 'https://raw.githubusercontent.com/D3adlyRocket/All
 const DEFAULT_PROVIDER_ORDER = Object.freeze([
   'moviebox',
   'vidlink',
+  '4khdhubnew',
+  '4khdhub',
+  'hdhub4u',
   'movieblast',
   'hdmovie2',
   'netmirror',
@@ -20,10 +23,7 @@ const DEFAULT_PROVIDER_ORDER = Object.freeze([
   'moviesdrive',
   'allmovieland',
   'cinestream',
-  '4khdhubnew',
-  '4khdhub',
   'uhdmovies',
-  'hdhub4u',
   'dahmermovies-4k',
   'moviesmod',
   'vidsync',
@@ -51,8 +51,8 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     rawBaseUrl = DEFAULT_RAW_BASE_URL,
     providerOrder = DEFAULT_PROVIDER_ORDER,
     maxProvidersPerRequest = 20,
-    providerTimeoutMs = 8_000,
-    overallTimeoutMs = 15_000
+    providerTimeoutMs = 12_000,
+    overallTimeoutMs = 20_000
   }) {
     super({ id: 'nuvio', logger });
     this.cache = cache;

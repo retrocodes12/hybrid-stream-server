@@ -223,7 +223,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'nuvio') {
-    return '5';
+    return '8';
   }
 
   return '23';
@@ -1363,6 +1363,24 @@ const toQualityScore = (quality) => {
   return 0;
 };
 
+const hasUltraHighQualityStream = (streams) =>
+  Array.isArray(streams) && streams.some((stream) => toQualityScore(stream?.quality) >= 2160);
+
+const withFallbackTimeout = async (promise, timeoutMs, fallbackValue) => {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(fallbackValue), timeoutMs);
+        timeoutId.unref?.();
+      })
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const toTransportScore = (url) => {
   const normalized = String(url || '').toLowerCase();
 
@@ -1900,7 +1918,7 @@ export class ProviderService {
     privateProviderSettings = null
   }) {
     return JSON.stringify({
-      version: 'two-phase-v18',
+      version: 'two-phase-v21',
       providers: Array.isArray(providers) ? providers.map((providerId) => String(providerId || '').trim().toLowerCase()) : null,
       tmdbId: toOptionalInteger(tmdbId),
       imdbId: typeof imdbId === 'string' ? imdbId.trim() : null,
@@ -2348,11 +2366,15 @@ export class ProviderService {
             const pendingRequiredProviders = [...pending.keys()]
               .map((index) => providerIds[index])
               .filter((providerId) => requiredEarlyProviders.has(providerId));
-            const pendingHighValueSeriesProviders = rest.mediaType === 'tv'
+            const highValueHubProviders = new Set(['4khdhub', '4khdhub_tv', 'hdhub4u']);
+            const pendingHighValueHubProviders = !hasExplicitProviders
               ? [...pending.keys()]
                 .map((index) => providerIds[index])
-                .filter((providerId) => providerId === '4khdhub' || providerId === '4khdhub_tv' || providerId === 'hdhub4u')
+                .filter((providerId) => highValueHubProviders.has(providerId))
               : [];
+            const hasCompletedHighValueHubProvider = results.some((result) =>
+              highValueHubProviders.has(result.provider) && result.streams.length > 0
+            );
             const hasOnlyWeakNuvioResult = results.length > 0
               && results.every((result) => result.provider === 'nuvio')
               && streamCount < 3
@@ -2362,7 +2384,7 @@ export class ProviderService {
             if (
               results.length >= minCompletedProviders &&
               streamCount >= config.STREMIO_FAST_EARLY_RETURN_STREAMS &&
-              (pendingHighValueSeriesProviders.length === 0 || streamCount >= 6) &&
+              (pendingHighValueHubProviders.length === 0 || hasCompletedHighValueHubProvider) &&
               !hasOnlyWeakNuvioResult &&
               pendingRequiredProviders.length === 0
             ) {
@@ -2687,7 +2709,7 @@ export class ProviderService {
         throw createHttpError(502, `Provider ${providerId} returned an invalid stream payload`);
       }
 
-      const normalizedStreams = streams
+      let normalizedStreams = streams
         .map((stream) => sanitizeProviderStream(stream))
         .filter(Boolean);
 
@@ -2698,6 +2720,36 @@ export class ProviderService {
           mediaType: normalizedMediaType,
           droppedCount: streams.length - normalizedStreams.length
         });
+      }
+
+      if (providerId === 'nuvio') {
+        const fallbackStreams = await this.getNuvioHubFallbackStreams({
+          tmdbId: normalizedTmdbId,
+          mediaType: normalizedMediaType,
+          season: normalizedSeason,
+          episode: normalizedEpisode,
+          privateProviderSettings,
+          signal
+        }, normalizedStreams);
+
+        if (fallbackStreams.length > 0) {
+          normalizedStreams = mergeAndRankProviderStreams(
+            [
+              { provider: 'nuvio', streams: normalizedStreams },
+              { provider: 'nuvio-hub-fallback', streams: fallbackStreams }
+            ],
+            ['4khdhub', 'hdhub4u', 'nuvio'],
+            null,
+            Infinity,
+            privateProviderSettings
+          );
+          logger.info('nuvio hub fallback added streams', {
+            tmdbId: normalizedTmdbId,
+            mediaType: normalizedMediaType,
+            fallbackCount: fallbackStreams.length,
+            resultCount: normalizedStreams.length
+          });
+        }
       }
 
       await this.setCachedResult(cacheKey, normalizedStreams, providerId);
@@ -3478,6 +3530,34 @@ export class ProviderService {
       params.season,
       params.episode
     ));
+  }
+
+  async getNuvioHubFallbackStreams(params, existingStreams = []) {
+    if (hasUltraHighQualityStream(existingStreams)) {
+      return [];
+    }
+
+    const fallbackProviders = params.mediaType === 'tv'
+      ? ['4khdhub', 'hdhub4u']
+      : ['4khdhub', 'hdhub4u'];
+    const fallbackPromise = Promise.allSettled(
+      fallbackProviders.map((provider) => this.getStreams({
+        provider,
+        tmdbId: params.tmdbId,
+        mediaType: params.mediaType,
+        season: params.season,
+        episode: params.episode,
+        privateProviderSettings: params.privateProviderSettings,
+        priorityRequest: true,
+        signal: params.signal,
+        enforceFastTimeout: true
+      }))
+    );
+    const settled = await withFallbackTimeout(fallbackPromise, 8_000, []);
+
+    return (Array.isArray(settled) ? settled : [])
+      .flatMap((result) => result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : [])
+      .filter((stream) => toQualityScore(stream?.quality) >= 1080);
   }
 
   async invokeProviderSubprocess(providerConfig, providerId, params) {

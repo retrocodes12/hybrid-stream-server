@@ -2628,7 +2628,7 @@ export class StreamManager {
 
   buildStremioResultCacheKey({ tmdbId, mediaType, season, episode, providers, qualityPriority, streamOptions, privateProviderSettingsHash = null }) {
     return JSON.stringify({
-      version: 83,
+      version: 86,
       tmdbId,
       mediaType,
       season: season ?? null,
