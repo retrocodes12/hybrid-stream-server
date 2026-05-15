@@ -223,7 +223,7 @@ const getProviderCacheVersion = (providerId) => {
   }
 
   if (providerId === 'nuvio') {
-    return '11';
+    return '12';
   }
 
   if (providerId === 'scrapling-4khdhub') {
@@ -556,7 +556,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   kisskh: 15,
   onlykdrama: 18,
   streamflix: 18,
-  nuvio: 18,
+  nuvio: 24,
   toflix: 25,
   vidsrc: 20,
   vidlink: 20,
@@ -590,7 +590,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   kisskh: 10,
   multivid: 10,
   onlykdrama: 12,
-  nuvio: 16,
+  nuvio: 22,
   streamflix: 12
 });
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
@@ -610,7 +610,7 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   kisskh: 15_000,
   onlykdrama: 18_000,
   showbox: 45_000,
-  nuvio: 18_000,
+  nuvio: 26_000,
   gramcinema: 20_000,
   onetouchtv: 20_000
 });

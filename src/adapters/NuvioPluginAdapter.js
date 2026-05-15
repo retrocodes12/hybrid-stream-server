@@ -54,9 +54,9 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
     manifestUrl = DEFAULT_MANIFEST_URL,
     rawBaseUrl = DEFAULT_RAW_BASE_URL,
     providerOrder = DEFAULT_PROVIDER_ORDER,
-    maxProvidersPerRequest = 20,
+    maxProvidersPerRequest = Infinity,
     providerTimeoutMs = 12_000,
-    overallTimeoutMs = 20_000
+    overallTimeoutMs = 24_000
   }) {
     super({ id: 'nuvio', logger });
     this.cache = cache;
@@ -102,6 +102,10 @@ export class NuvioPluginAdapter extends PluginProviderAdapter {
       ...this.providerOrder.map((id) => byId.get(id)).filter(Boolean),
       ...enabled.filter((scraper) => !this.providerOrder.includes(String(scraper.id || '').toLowerCase()))
     ];
+
+    if (!Number.isFinite(this.maxProvidersPerRequest) || this.maxProvidersPerRequest <= 0) {
+      return ordered;
+    }
 
     return ordered.slice(0, this.maxProvidersPerRequest);
   }
