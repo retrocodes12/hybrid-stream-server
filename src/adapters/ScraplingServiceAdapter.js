@@ -28,7 +28,7 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
 
   async getManifest() {
     return {
-      providers: ['scrapling-hdhub4u']
+      providers: ['scrapling-hdhub4u', 'scrapling-4khdhub']
     };
   }
 
@@ -73,9 +73,15 @@ export class ScraplingServiceAdapter extends PluginProviderAdapter {
       return normalizePluginStreams(payload?.streams || [], {
         adapterId: providerId,
         pluginId: providerId,
-        pluginName: providerId === 'scrapling-hdhub4u' ? 'Scrapling HDHub4u' : providerId
+        pluginName: this.getProviderLabel(providerId)
       });
     }, this.timeoutMs, 'Scrapling adapter timed out');
+  }
+
+  getProviderLabel(providerId) {
+    if (providerId === 'scrapling-hdhub4u') return 'Scrapling HDHub4u';
+    if (providerId === 'scrapling-4khdhub') return 'Scrapling 4KHDHub';
+    return providerId;
   }
 
   async ensureService(signal = null) {

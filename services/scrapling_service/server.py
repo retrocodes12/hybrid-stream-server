@@ -46,6 +46,12 @@ HDHUB4U_DOMAINS = [
     "https://hdhub4u.global",
 ]
 
+FOURKHDHUB_DOMAINS = [
+    "https://4khdhub.link",
+    "https://4khdhub.fans",
+    "https://4khdhub.click",
+]
+
 STREAM_HOST_PATTERNS = [
     "hubcloud",
     "hubcdn",
@@ -153,6 +159,12 @@ def link_score(link: dict[str, str], title: str, year: int, season: int | None =
     return score
 
 
+def title_word_hits(link: dict[str, str], title: str) -> int:
+    text = slug(f"{link.get('label', '')} {link.get('url', '')}")
+    title_words = [word for word in slug(title).split() if len(word) > 2]
+    return sum(1 for word in title_words if word in text)
+
+
 def is_streamish(url: str, label: str = "") -> bool:
     raw = f"{url} {label}".lower()
     return any(token in raw for token in STREAM_HOST_PATTERNS)
@@ -171,6 +183,38 @@ def quality_from_text(text: str) -> str:
         return "Unknown"
     value = match.group(1).lower()
     return "2160p" if value == "4k" else value
+
+
+def size_from_text(text: str) -> str | None:
+    match = re.search(r"\b(\d+(?:\.\d+)?)\s*(GB|MB)\b", text or "", re.I)
+    return f"{match.group(1)} {match.group(2).upper()}" if match else None
+
+
+def make_stream(url: str, title: str, provider: str, source: str, referer: str) -> dict[str, Any]:
+    stream = {
+        "url": url,
+        "title": title,
+        "quality": quality_from_text(f"{title} {url}"),
+        "source": source,
+        "provider": provider,
+        "headers": {"Referer": referer, "User-Agent": USER_AGENT},
+    }
+    size = size_from_text(title)
+    if size:
+        stream["size"] = size
+    return stream
+
+
+def dedupe_streams(streams: list[dict[str, Any]], limit: int = 25) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for stream in streams:
+        url = str(stream.get("url") or "")
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        deduped.append(stream)
+    return deduped[:limit]
 
 
 def scrape_hdhub4u(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -235,14 +279,13 @@ def scrape_hdhub4u(payload: dict[str, Any]) -> list[dict[str, Any]]:
             return
         seen_pages.add(url)
         if is_streamish(url, label):
-            stream_links.append({
-                "url": url,
-                "title": label or title,
-                "quality": quality_from_text(label or url),
-                "source": "Scrapling HDHub4u",
-                "provider": "scrapling-hdhub4u",
-                "headers": {"Referer": f"{urlparse(url).scheme}://{urlparse(url).netloc}/", "User-Agent": USER_AGENT},
-            })
+            stream_links.append(make_stream(
+                url,
+                label or title,
+                "scrapling-hdhub4u",
+                "Scrapling HDHub4u",
+                f"{urlparse(url).scheme}://{urlparse(url).netloc}/",
+            ))
             return
         try:
             html, final_url = fetch_text(url, stealth=False)
@@ -250,37 +293,95 @@ def scrape_hdhub4u(payload: dict[str, Any]) -> list[dict[str, Any]]:
             return
         for link in extract_links(html, final_url):
             if is_streamish(link["url"], link["label"]):
-                stream_links.append({
-                    "url": link["url"],
-                    "title": link["label"] or label or title,
-                    "quality": quality_from_text(f"{link['label']} {link['url']}"),
-                    "source": "Scrapling HDHub4u",
-                    "provider": "scrapling-hdhub4u",
-                    "headers": {"Referer": final_url, "User-Agent": USER_AGENT},
-                })
+                stream_links.append(make_stream(
+                    link["url"],
+                    link["label"] or label or title,
+                    "scrapling-hdhub4u",
+                    "Scrapling HDHub4u",
+                    final_url,
+                ))
             elif should_follow(link["url"], link["label"]):
                 visit(link["url"], link["label"], depth + 1)
 
     for post in post_links[:6]:
         visit(post["url"], post["label"], 0)
 
-    deduped: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
-    for stream in stream_links:
-        url = stream["url"]
-        if url in seen_urls:
+    return dedupe_streams(stream_links)
+
+
+def scrape_4khdhub(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    tmdb_id = int(payload.get("tmdbId") or 0)
+    media_type = str(payload.get("mediaType") or "movie").lower()
+    season = payload.get("season")
+    season_int = int(season) if str(season or "").isdigit() else None
+    details = tmdb_details(tmdb_id, media_type)
+    title = details["title"]
+    year = details["year"]
+
+    queries = [f"{title} {year}".strip(), title]
+    if media_type in {"tv", "series"} and season_int:
+        queries.insert(0, f"{title} Season {season_int}")
+
+    post_links: list[dict[str, str]] = []
+    for domain in FOURKHDHUB_DOMAINS:
+        for query in queries:
+            try:
+                html, final_url = fetch_text(f"{domain}/?s={quote_plus(query)}")
+            except Exception:
+                continue
+            candidates = extract_links(html, final_url)
+            ranked = sorted(
+                (
+                    link for link in candidates
+                    if "/category/" not in link["url"]
+                    and title_word_hits(link, title) > 0
+                    and link_score(link, title, year, season_int) > 0
+                ),
+                key=lambda item: link_score(item, title, year, season_int),
+                reverse=True,
+            )
+            post_links.extend(ranked[:3])
+        if post_links:
+            break
+
+    streams: list[dict[str, Any]] = []
+    for post in post_links[:4]:
+        try:
+            html, final_url = fetch_text(post["url"])
+        except Exception:
             continue
-        seen_urls.add(url)
-        deduped.append(stream)
-    return deduped[:25]
+        blocks = re.findall(r'<div class="download-item\b[\s\S]*?(?=<div class="download-item\b|<script\b|</main>)', html or "", re.I)
+        if not blocks:
+            blocks = [html]
+        for block in blocks:
+            file_title_match = re.search(r'<div class="file-title">([\s\S]*?)</div>', block, re.I)
+            file_title = compact_text(re.sub(r"<[^>]+>", " ", file_title_match.group(1))) if file_title_match else post["label"]
+            header_match = re.search(r'<div class="flex-1[^>]*>([\s\S]*?)</div>', block, re.I)
+            header_title = compact_text(re.sub(r"<[^>]+>", " ", header_match.group(1))) if header_match else ""
+            stream_title = compact_text(file_title or header_title or post["label"])
+            for link in extract_links(block, final_url):
+                if not is_streamish(link["url"], link["label"]):
+                    continue
+                streams.append(make_stream(
+                    link["url"],
+                    stream_title,
+                    "scrapling-4khdhub",
+                    "Scrapling 4KHDHub",
+                    final_url,
+                ))
+
+    return dedupe_streams(streams)
 
 
 def handle_scrape(payload: dict[str, Any]) -> dict[str, Any]:
     provider = str(payload.get("provider") or "").lower()
     start = time.time()
-    if provider != "scrapling-hdhub4u":
+    if provider == "scrapling-hdhub4u":
+        streams = scrape_hdhub4u(payload)
+    elif provider == "scrapling-4khdhub":
+        streams = scrape_4khdhub(payload)
+    else:
         return {"streams": [], "error": f"unsupported provider {provider}"}
-    streams = scrape_hdhub4u(payload)
     return {
         "streams": streams,
         "meta": {

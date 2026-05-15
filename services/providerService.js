@@ -226,6 +226,10 @@ const getProviderCacheVersion = (providerId) => {
     return '11';
   }
 
+  if (providerId === 'scrapling-4khdhub') {
+    return '2';
+  }
+
   return '23';
 };
 
@@ -466,6 +470,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'allyoucanwatch',
   '4khdhub',
   '4khdhub_tv',
+  'scrapling-4khdhub',
   'anime-sama',
   'animekai',
   'animepahe',
@@ -498,6 +503,7 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub',
   '4khdhub_tv',
   'allyoucanwatch',
+  'scrapling-4khdhub',
   'hdhub4u',
   'scrapling-hdhub4u',
   'uhdmovies',
@@ -521,6 +527,7 @@ const EXPLICIT_PROVIDER_HOST_LANE_BONUS = 1;
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
+  'scrapling-4khdhub': 24,
   'scrapling-hdhub4u': 24,
   allyoucanwatch: 45,
   animepahe: 25,
@@ -569,6 +576,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 28,
   '4khdhub_tv': 28,
+  'scrapling-4khdhub': 16,
   'scrapling-hdhub4u': 16,
   cinestream: 45,
   hdhub4u: 28,
@@ -588,6 +596,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 32_000,
   '4khdhub_tv': 32_000,
+  'scrapling-4khdhub': 24_000,
   'scrapling-hdhub4u': 24_000,
   cinestream: 55_000,
   hdhub4u: 32_000,
@@ -608,6 +617,7 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
 const FORCE_FAST_TIMEOUT_PROVIDER_IDS = new Set([
   '4khdhub',
   '4khdhub_tv',
+  'scrapling-4khdhub',
   'scrapling-hdhub4u',
   'hdhub4u'
 ]);
@@ -630,6 +640,7 @@ const PROVIDER_PRIORITY = [
   'nuvio',
   '4khdhub',
   '4khdhub_tv',
+  'scrapling-4khdhub',
   'uhdmovies',
   'hdhub4u',
   'scrapling-hdhub4u',
@@ -769,6 +780,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
   indian: Object.freeze({
     '4khdhub': 230,
     '4khdhub_tv': 225,
+    'scrapling-4khdhub': 224,
     uhdmovies: 223,
     hdhub4u: 220,
     'scrapling-hdhub4u': 219,
@@ -838,6 +850,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
 const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   '4khdhub': 165,
   '4khdhub_tv': 160,
+  'scrapling-4khdhub': 158,
   hdhub4u: 150,
   'scrapling-hdhub4u': 149,
   nuvio: 148,
@@ -920,6 +933,7 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   multivid: 'MultiVid',
   nakios: 'Nakios',
   gramcinema: 'GramCinema',
+  'scrapling-4khdhub': 'Scrapling 4KHDHub',
   'scrapling-hdhub4u': 'Scrapling HDHub4u',
   onetouchtv: 'OneTouchTV',
   playimdb: 'PlayIMDb',

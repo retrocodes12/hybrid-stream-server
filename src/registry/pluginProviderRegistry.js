@@ -32,6 +32,13 @@ export class PluginProviderRegistry {
         kind: 'plugin-adapter',
         adapterId: 'scrapling',
         hostKey: 'plugin:scrapling-hdhub4u'
+      },
+      {
+        id: 'scrapling-4khdhub',
+        label: 'Scrapling 4KHDHub',
+        kind: 'plugin-adapter',
+        adapterId: 'scrapling',
+        hostKey: 'plugin:scrapling-4khdhub'
       }
     ];
   }
