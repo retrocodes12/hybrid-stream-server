@@ -475,6 +475,7 @@ const NO_EMPTY_CACHE_PROVIDERS = new Set([
   'fmovies',
   'gramcinema',
   'hdhub4u',
+  'scrapling-hdhub4u',
   'hdmovie2',
   'kisskh',
   'moviesmod',
@@ -498,6 +499,7 @@ const PRIORITY_EMPTY_CACHE_PROVIDERS = new Set([
   '4khdhub_tv',
   'allyoucanwatch',
   'hdhub4u',
+  'scrapling-hdhub4u',
   'uhdmovies',
   'flixindia',
   'gramcinema',
@@ -519,6 +521,7 @@ const EXPLICIT_PROVIDER_HOST_LANE_BONUS = 1;
 const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 18,
   '4khdhub_tv': 18,
+  'scrapling-hdhub4u': 24,
   allyoucanwatch: 45,
   animepahe: 25,
   brazucaplay: 20,
@@ -566,6 +569,7 @@ const PROVIDER_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
   '4khdhub': 28,
   '4khdhub_tv': 28,
+  'scrapling-hdhub4u': 16,
   cinestream: 45,
   hdhub4u: 28,
   playimdb: 10,
@@ -584,6 +588,7 @@ const PROVIDER_FAST_TIMEOUT_OVERRIDES_SECONDS = Object.freeze({
 const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
   '4khdhub': 32_000,
   '4khdhub_tv': 32_000,
+  'scrapling-hdhub4u': 24_000,
   cinestream: 55_000,
   hdhub4u: 32_000,
   uhdmovies: 55_000,
@@ -603,6 +608,7 @@ const PROVIDER_PARALLEL_TIMEOUT_OVERRIDES_MS = Object.freeze({
 const FORCE_FAST_TIMEOUT_PROVIDER_IDS = new Set([
   '4khdhub',
   '4khdhub_tv',
+  'scrapling-hdhub4u',
   'hdhub4u'
 ]);
 const getProviderTimeoutSeconds = (providerId, params = null) => {
@@ -626,6 +632,7 @@ const PROVIDER_PRIORITY = [
   '4khdhub_tv',
   'uhdmovies',
   'hdhub4u',
+  'scrapling-hdhub4u',
   'vidlink',
   'cinestream',
   'moviebox',
@@ -764,6 +771,7 @@ const CONTENT_PROVIDER_BOOSTS = Object.freeze({
     '4khdhub_tv': 225,
     uhdmovies: 223,
     hdhub4u: 220,
+    'scrapling-hdhub4u': 219,
     nuvio: 218,
     gramcinema: 212,
     moviebox: 208,
@@ -831,6 +839,7 @@ const PROVIDER_RELIABILITY_SCORES = Object.freeze({
   '4khdhub': 165,
   '4khdhub_tv': 160,
   hdhub4u: 150,
+  'scrapling-hdhub4u': 149,
   nuvio: 148,
   uhdmovies: 145,
   vidlink: 120,
@@ -911,6 +920,7 @@ const PROVIDER_LABEL_OVERRIDES = Object.freeze({
   multivid: 'MultiVid',
   nakios: 'Nakios',
   gramcinema: 'GramCinema',
+  'scrapling-hdhub4u': 'Scrapling HDHub4u',
   onetouchtv: 'OneTouchTV',
   playimdb: 'PlayIMDb',
   playimdb_v2: 'PlayIMDb V2',
@@ -1676,6 +1686,7 @@ export class ProviderService {
   async initialize() {
     await mkdir(this.providerCacheDir, { recursive: true });
     await mkdir(this.fastResultCacheDir, { recursive: true });
+    await this.pluginProviderRegistry.initialize();
     setTimeout(() => {
       this.removeExpiredDiskEntries().catch((error) => {
         logger.warn('provider cache cleanup after startup failed', { error });
@@ -3497,6 +3508,7 @@ export class ProviderService {
       }
 
       return adapter.getStreams({
+        providerId,
         tmdbId: params.tmdbId,
         mediaType: params.mediaType,
         season: params.season,
