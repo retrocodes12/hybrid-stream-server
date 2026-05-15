@@ -1,7 +1,0 @@
-node_modules/
-cache/
-.agents/
-skills-lock.json
-services/scrapling_service/.venv/
-__pycache__/
-*.pyc
