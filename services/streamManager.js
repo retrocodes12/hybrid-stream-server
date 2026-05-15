@@ -1293,6 +1293,29 @@ const getProviderPriorityScore = (stream, providerOrder) => {
   return (providerOrder.length - index) * 1500;
 };
 
+const getStreamDiversityProviderId = (stream) => {
+  const sourceProvider = String(stream?.sourceProvider || '').trim().toLowerCase();
+
+  if (sourceProvider) {
+    return sourceProvider;
+  }
+
+  const pluginProvider = String(stream?.pluginProvider || '').trim().toLowerCase();
+  const providerId = String(stream?.provider || 'default').trim().toLowerCase() || 'default';
+
+  if (pluginProvider) {
+    return `${providerId}:${pluginProvider}`;
+  }
+
+  const sourceSite = String(stream?.sourceSite || '').trim().toLowerCase();
+
+  if (sourceSite) {
+    return `${providerId}:${sourceSite}`;
+  }
+
+  return providerId;
+};
+
 const diversifyStreamsByProvider = (streams, { leadingCount = 5, softLimit = 6 } = {}) => {
   if (!Array.isArray(streams) || streams.length <= leadingCount) {
     return streams;
@@ -1303,7 +1326,7 @@ const diversifyStreamsByProvider = (streams, { leadingCount = 5, softLimit = 6 }
   const providerCounts = new Map();
 
   for (const stream of streams) {
-    const providerId = String(stream.provider || 'default').trim().toLowerCase();
+    const providerId = getStreamDiversityProviderId(stream);
     const currentCount = providerCounts.get(providerId) || 0;
 
     if (output.length < leadingCount || currentCount < softLimit) {
@@ -1323,6 +1346,13 @@ const getStreamDiversityOptions = (streams, { requestedProviders = [] } = {}) =>
   }
 
   if (Array.isArray(requestedProviders) && requestedProviders.length > 0) {
+    const normalizedRequestedProviders = requestedProviders.map((provider) => String(provider || '').trim().toLowerCase());
+    const diversitySourceCount = new Set(streams.map((stream) => getStreamDiversityProviderId(stream))).size;
+
+    if (normalizedRequestedProviders.length === 1 && normalizedRequestedProviders[0] === 'nuvio' && diversitySourceCount >= 4) {
+      return { leadingCount: 5, softLimit: 4 };
+    }
+
     return { leadingCount: 8, softLimit: 12 };
   }
 
